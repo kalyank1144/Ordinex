@@ -1,0 +1,69 @@
+/**
+ * Ordinex Core - Event-Sourcing Foundation
+ * 
+ * This package provides the deterministic, event-driven core for Ordinex.
+ * All components are based on 03_API_DATA_SPEC.md and 05_TECHNICAL_IMPLEMENTATION_SPEC.md
+ */
+
+export const version = '0.0.0';
+
+// Export types
+export * from './types';
+
+// Export event-sourcing components
+export { EventStore } from './eventStore';
+export { EventBus, EventSubscriber } from './eventBus';
+export { StateReducer, createStateReducer } from './stateReducer';
+export { ScopeManager, DEFAULT_SCOPE_CONTRACT } from './scopeManager';
+export type { ScopeValidationResult } from './scopeManager';
+
+// Export lifecycle and mode management
+export { TaskLifecycleController, TaskLifecycleState } from './taskLifecycle';
+export { ModeManager, Action, ModeValidationResult } from './modeManager';
+
+// Export approval and checkpoint managers
+export { 
+  ApprovalManager, 
+  ApprovalType, 
+  ApprovalDecision, 
+  ApprovalScope,
+  ApprovalRequest,
+  ApprovalResolution 
+} from './approvalManager';
+export { 
+  CheckpointManager, 
+  RestoreMethod, 
+  CheckpointMetadata, 
+  CheckpointSnapshot 
+} from './checkpointManager';
+
+// Export retrieval components
+export { Indexer } from './retrieval/indexer';
+export { Retriever } from './retrieval/retriever';
+export * from './retrieval/types';
+
+// Export tool execution and diff management
+export {
+  ToolExecutor,
+  InMemoryEvidenceStore,
+  ToolResult,
+  ToolInvocation,
+  EvidenceStore
+} from './toolExecutor';
+export {
+  DiffManager,
+  DiffOperation,
+  FileDiff,
+  DiffProposal,
+  DiffApplicationResult
+} from './diffManager';
+
+// Export autonomy controller
+export {
+  AutonomyController,
+  DEFAULT_A1_BUDGETS,
+  AutonomyBudgets,
+  AutonomyState,
+  IterationResult,
+  PreconditionCheck
+} from './autonomyController';

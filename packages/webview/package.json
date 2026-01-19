@@ -1,0 +1,17 @@
+{
+  "name": "webview",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Webview UI for Ordinex",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "scripts": {
+    "build": "tsc -p ./",
+    "clean": "rm -rf dist",
+    "test": "echo 'No tests yet'"
+  },
+  "devDependencies": {
+    "@types/node": "^20.10.0",
+    "typescript": "^5.3.3"
+  }
+}

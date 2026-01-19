@@ -1,0 +1,19 @@
+{
+  "name": "ordinex",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Deterministic, event-driven VS Code extension",
+  "scripts": {
+    "dev": "pnpm --filter extension dev",
+    "build": "pnpm -r build",
+    "test": "pnpm -r test",
+    "clean": "pnpm -r clean"
+  },
+  "devDependencies": {
+    "typescript": "^5.3.3"
+  },
+  "engines": {
+    "node": ">=18.0.0",
+    "pnpm": ">=8.0.0"
+  }
+}
