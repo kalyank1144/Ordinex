@@ -38,6 +38,14 @@
       {
         "command": "ordinex.openPanel",
         "title": "Ordinex: Open Panel"
+      },
+      {
+        "command": "ordinex.setApiKey",
+        "title": "Ordinex: Set API Key"
+      },
+      {
+        "command": "ordinex.clearApiKey",
+        "title": "Ordinex: Clear API Key"
       }
     ]
   },

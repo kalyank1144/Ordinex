@@ -57,6 +57,13 @@ export {
   DiffProposal,
   DiffApplicationResult
 } from './diffManager';
+export {
+  generateDiffProposal,
+  isFileInScope,
+  validateDiffAgainstScope,
+  DiffProposalInput,
+  DiffProposalOutput
+} from './diffProposalGenerator';
 
 // Export autonomy controller
 export {
@@ -67,3 +74,65 @@ export {
   IterationResult,
   PreconditionCheck
 } from './autonomyController';
+
+// Export repair orchestrator
+export {
+  RepairOrchestrator,
+  DiagnosisResult,
+  RepairIterationResult
+} from './repairOrchestrator';
+
+// Export test runner
+export {
+  TestRunner,
+  FileTestEvidenceStore,
+  TestCommand,
+  TestResult,
+  TestEvidenceStore
+} from './testRunner';
+
+// Export mode classifier and plan generator
+export {
+  classifyPrompt,
+  shouldRequireConfirmation,
+  ClassificationResult
+} from './modeClassifier';
+export {
+  generateTemplatePlan,
+  generateLLMPlan,
+  PlanPayload,
+  StructuredPlan
+} from './planGenerator';
+
+// Export run exporter
+export {
+  exportRun,
+  redactSecrets,
+  ExportOptions,
+  ExportMetadata,
+  ExportResult
+} from './runExporter';
+
+// Export LLM service
+export {
+  LLMService,
+  LLMConfig,
+  LLMStreamChunk,
+  LLMResponse
+} from './llmService';
+
+// Export Answer context collector
+export {
+  collectAnswerContext,
+  buildAnswerModeSystemMessage,
+  AnswerContextBundle,
+  ContextCollectionOptions
+} from './answerContextCollector';
+
+// Export Plan context collector
+export {
+  collectPlanContext,
+  buildPlanModeSystemMessage,
+  PlanContextBundle,
+  PlanContextCollectionOptions
+} from './planContextCollector';

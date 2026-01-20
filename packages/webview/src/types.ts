@@ -58,30 +58,55 @@ export type TaskStatus = 'ready' | 'running' | 'paused' | 'awaiting_approval' | 
 export type TabName = 'mission' | 'systems' | 'logs';
 
 export type EventType =
+  // Core Lifecycle
   | 'intent_received'
   | 'mode_set'
   | 'plan_created'
   | 'mission_breakdown_created'
   | 'mission_selected'
   | 'stage_changed'
+  | 'final'
+  // Retrieval
   | 'retrieval_started'
   | 'retrieval_completed'
   | 'retrieval_failed'
+  // Tool Execution
   | 'tool_start'
   | 'tool_end'
+  // Approval
   | 'approval_requested'
   | 'approval_resolved'
+  // Diff / Edit
   | 'diff_proposed'
   | 'diff_applied'
+  // Checkpoint
   | 'checkpoint_created'
   | 'checkpoint_restored'
+  // Error / Control
   | 'failure_detected'
   | 'execution_paused'
   | 'execution_resumed'
   | 'execution_stopped'
+  | 'mode_violation'
+  // Scope Control
   | 'scope_expansion_requested'
   | 'scope_expansion_resolved'
-  | 'final';
+  // Plan Integrity / Routing
+  | 'plan_deviation_detected'
+  | 'model_fallback_used'
+  // Autonomy (A1)
+  | 'autonomy_started'
+  | 'iteration_started'
+  | 'repair_attempted'
+  | 'iteration_failed'
+  | 'iteration_succeeded'
+  | 'budget_exhausted'
+  | 'autonomy_halted'
+  | 'autonomy_completed'
+  // ANSWER Mode
+  | 'context_collected'
+  | 'stream_delta'
+  | 'stream_complete';
 
 export interface Event {
   event_id: string;
@@ -110,6 +135,18 @@ export interface CheckpointInfo {
   event_count: number;
 }
 
+/**
+ * Evidence object schema (mirrors core Evidence type)
+ */
+export interface Evidence {
+  evidence_id: string;
+  type: 'log' | 'diff' | 'file' | 'test' | 'error';
+  source_event_id: string;
+  content_ref: string;
+  summary: string;
+  created_at: string;
+}
+
 export interface MissionControlState {
   // Tab management
   activeTab: TabName;
@@ -129,6 +166,12 @@ export interface MissionControlState {
   
   // Logs tab: raw event list
   events: Event[];
+  
+  // Evidence storage (keyed by evidence_id)
+  evidence: Record<string, Evidence>;
+  
+  // Evidence content cache (for loaded content)
+  evidenceContent: Record<string, string>;
   
   // Composer
   selectedModel: string;

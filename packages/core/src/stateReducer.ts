@@ -122,8 +122,10 @@ export class StateReducer {
         break;
 
       case 'plan_created':
+        // In PLAN mode, plan creation completes the task
+        // User must then explicitly switch to MISSION mode to execute
         if (newState.mode === 'PLAN') {
-          newState.status = 'complete';
+          newState.status = 'paused';  // Paused, waiting for approval to switch to MISSION
         }
         break;
 
@@ -225,6 +227,9 @@ export class StateReducer {
       case 'model_fallback_used':
       case 'mode_violation':
       case 'repair_attempted':
+      case 'context_collected':
+      case 'stream_delta':
+      case 'stream_complete':
         // These events are logged but don't change core task state
         // They contribute to narration and evidence
         break;

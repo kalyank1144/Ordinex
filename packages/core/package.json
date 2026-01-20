@@ -18,6 +18,7 @@
     "test:watch": "vitest"
   },
   "dependencies": {
-    "uuid": "^13.0.0"
+    "uuid": "^13.0.0",
+    "@anthropic-ai/sdk": "^0.32.1"
   }
 }

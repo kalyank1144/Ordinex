@@ -49,7 +49,11 @@ export type EventType =
   | 'iteration_succeeded'
   | 'budget_exhausted'
   | 'autonomy_halted'
-  | 'autonomy_completed';
+  | 'autonomy_completed'
+  // ANSWER Mode
+  | 'context_collected'
+  | 'stream_delta'
+  | 'stream_complete';
 
 export const CANONICAL_EVENT_TYPES: readonly EventType[] = [
   'intent_received',
@@ -87,6 +91,9 @@ export const CANONICAL_EVENT_TYPES: readonly EventType[] = [
   'budget_exhausted',
   'autonomy_halted',
   'autonomy_completed',
+  'context_collected',
+  'stream_delta',
+  'stream_complete',
 ] as const;
 
 export type Mode = 'ANSWER' | 'PLAN' | 'MISSION';
