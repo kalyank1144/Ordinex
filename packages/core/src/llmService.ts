@@ -490,6 +490,259 @@ export class LLMService {
     }
   }
 
+  /**
+   * Generate edit patches for MISSION mode EDIT stage
+   * Returns structured patches for file changes
+   */
+  async generateEditPatches(params: {
+    stepText: string;
+    repoContextSummary: string;
+    files: Array<{ path: string; content: string }>;
+    config: LLMConfig;
+  }): Promise<{
+    patches: Array<{
+      path: string;
+      action: 'update' | 'create' | 'delete';
+      content?: string;
+    }>;
+  }> {
+    const { stepText, repoContextSummary, files, config } = params;
+
+    const userSelectedModel = config.model;
+    const actualModel = MODEL_MAP[userSelectedModel] || DEFAULT_MODEL;
+
+    // Build system prompt for edit generation
+    const systemPrompt = `You are in MISSION EDIT stage. Your task is to generate file edits to accomplish the given step.
+
+CRITICAL RULES:
+- Output ONLY valid JSON, no markdown formatting, no explanations, no code blocks
+- Return patches that fully replace file contents
+- Use "update" for modifying existing files, "create" for new files, "delete" to remove files
+- For update/create, the "content" field MUST be a STRING containing the FULL file content
+- DO NOT nest the content in an object - it must be a flat string with properly escaped quotes and newlines
+- For delete, omit the "content" field
+- Escape all special characters in content strings: use \\n for newlines, \\" for quotes, \\\\ for backslashes
+
+OUTPUT SCHEMA (strict JSON only):
+{
+  "patches": [
+    { "path": "relative/path/to/file", "action": "update", "content": "full file content as a STRING with escaped newlines \\n and quotes \\"" },
+    { "path": "another/file", "action": "create", "content": "full new file content as a STRING" },
+    { "path": "old/file", "action": "delete" }
+  ]
+}
+
+IMPORTANT: The "content" field must be a STRING, NOT an object or array. It should contain the raw file content with proper JSON string escaping.
+
+Repository Context:
+${repoContextSummary}
+
+Current Files to Edit:
+${files.map(f => `--- ${f.path} ---\n${f.content}`).join('\n\n')}`;
+
+    const userPrompt = `Step to implement: ${stepText}
+
+Generate the necessary file changes to complete this step. Output ONLY the JSON object with patches array.`;
+
+    // Emit tool_start
+    const toolStartEventId = this.generateId();
+    await this.eventBus.publish({
+      event_id: toolStartEventId,
+      task_id: this.taskId,
+      timestamp: new Date().toISOString(),
+      type: 'tool_start',
+      mode: this.mode,
+      stage: this.stage,
+      payload: {
+        tool: 'llm_edit',
+        model: actualModel,
+        max_tokens: config.maxTokens || 4096,
+      },
+      evidence_ids: [],
+      parent_event_id: null,
+    });
+
+    try {
+      // Call Anthropic API (non-streaming for structured output)
+      const response = await this.callAnthropicForEdit(
+        userPrompt,
+        systemPrompt,
+        config.apiKey,
+        actualModel,
+        config.maxTokens || 4096
+      );
+
+      // Parse JSON response with robust extraction
+      let patches;
+      try {
+        patches = this.extractPatchesFromResponse(response.content);
+
+        if (!Array.isArray(patches)) {
+          throw new Error('Response does not contain patches array');
+        }
+      } catch (parseError) {
+        // Retry once with corrective prompt
+        console.warn('[LLMService] First parse failed, retrying with corrective prompt');
+        console.warn('[LLMService] Parse error:', parseError);
+        console.warn('[LLMService] Response preview:', response.content.substring(0, 500));
+        
+        const retryPrompt = `The previous response was not valid JSON. Please provide ONLY a JSON object with this exact structure, no markdown formatting, no code blocks, no explanations:
+
+{ "patches": [ { "path": "file.ts", "action": "update", "content": "..." } ] }
+
+CRITICAL: Ensure all string content is properly escaped. Use double quotes for JSON strings, escape backslashes and quotes inside content.
+
+Step to implement: ${stepText}`;
+
+        const retryResponse = await this.callAnthropicForEdit(
+          retryPrompt,
+          systemPrompt,
+          config.apiKey,
+          actualModel,
+          config.maxTokens || 8192 // Increase tokens for retry
+        );
+
+        try {
+          patches = this.extractPatchesFromResponse(retryResponse.content);
+
+          if (!Array.isArray(patches)) {
+            throw new Error('Retry response does not contain patches array');
+          }
+        } catch (retryParseError) {
+          // Both attempts failed - log full response for debugging
+          console.error('[LLMService] Failed to parse after retry');
+          console.error('[LLMService] Original response:', response.content);
+          console.error('[LLMService] Retry response:', retryResponse.content);
+          
+          throw new Error(
+            `Failed to parse LLM response as JSON after retry: ${retryParseError instanceof Error ? retryParseError.message : String(retryParseError)}`
+          );
+        }
+      }
+
+      // Emit tool_end with success
+      await this.eventBus.publish({
+        event_id: this.generateId(),
+        task_id: this.taskId,
+        timestamp: new Date().toISOString(),
+        type: 'tool_end',
+        mode: this.mode,
+        stage: this.stage,
+        payload: {
+          tool: 'llm_edit',
+          status: 'success',
+          model: actualModel,
+          patches_count: patches.length,
+          usage: response.usage,
+        },
+        evidence_ids: [],
+        parent_event_id: toolStartEventId,
+      });
+
+      return { patches };
+    } catch (error) {
+      // Emit tool_end with failure
+      await this.eventBus.publish({
+        event_id: this.generateId(),
+        task_id: this.taskId,
+        timestamp: new Date().toISOString(),
+        type: 'tool_end',
+        mode: this.mode,
+        stage: this.stage,
+        payload: {
+          tool: 'llm_edit',
+          status: 'failed',
+          error: error instanceof Error ? error.message : 'Unknown error',
+        },
+        evidence_ids: [],
+        parent_event_id: toolStartEventId,
+      });
+
+      throw error;
+    }
+  }
+
+  /**
+   * Call Anthropic API for edit generation (non-streaming)
+   */
+  private async callAnthropicForEdit(
+    userPrompt: string,
+    systemPrompt: string,
+    apiKey: string,
+    model: string,
+    maxTokens: number
+  ): Promise<LLMResponse> {
+    const Anthropic = await this.loadAnthropicSDK();
+    
+    const client = new Anthropic({
+      apiKey: apiKey,
+    });
+
+    const response = await client.messages.create({
+      model: model,
+      max_tokens: maxTokens,
+      system: systemPrompt,
+      messages: [
+        {
+          role: 'user',
+          content: userPrompt,
+        },
+      ],
+    });
+
+    // Extract text content
+    const content = response.content
+      .filter((block: any) => block.type === 'text')
+      .map((block: any) => block.text)
+      .join('');
+
+    return {
+      content,
+      model: model,
+      usage: response.usage ? {
+        input_tokens: response.usage.input_tokens,
+        output_tokens: response.usage.output_tokens,
+      } : undefined,
+    };
+  }
+
+  /**
+   * Extract patches from LLM response with robust JSON extraction
+   * Handles markdown code blocks, leading/trailing whitespace, etc.
+   */
+  private extractPatchesFromResponse(content: string): any[] {
+    // Remove markdown code block formatting if present
+    let cleanedContent = content.trim();
+    
+    // Check for markdown JSON code blocks
+    const jsonBlockMatch = cleanedContent.match(/```json\s*([\s\S]*?)\s*```/);
+    if (jsonBlockMatch) {
+      cleanedContent = jsonBlockMatch[1].trim();
+    } else {
+      // Check for generic code blocks
+      const codeBlockMatch = cleanedContent.match(/```\s*([\s\S]*?)\s*```/);
+      if (codeBlockMatch) {
+        cleanedContent = codeBlockMatch[1].trim();
+      }
+    }
+
+    // Try to extract JSON object if there's surrounding text
+    const jsonMatch = cleanedContent.match(/\{[\s\S]*\}/);
+    if (jsonMatch) {
+      cleanedContent = jsonMatch[0];
+    }
+
+    // Parse JSON
+    const parsed = JSON.parse(cleanedContent);
+
+    // Extract patches array
+    if (parsed.patches && Array.isArray(parsed.patches)) {
+      return parsed.patches;
+    }
+
+    throw new Error('No patches array found in response');
+  }
+
   private generateId(): string {
     return Date.now().toString(36) + Math.random().toString(36).substring(2);
   }

@@ -168,22 +168,67 @@ function renderApprovalDetails(approvalType: string, details: Record<string, unk
   }
 
   if (approvalType === 'apply_diff') {
-    const filesChanged = details.files_changed as string[] | undefined;
+    // Handle both array and object types for files_changed
+    let filesChanged: Array<{path: string; action: string; added_lines: number; removed_lines: number}> | undefined;
+    
+    const rawFilesChanged = details.files_changed;
+    if (Array.isArray(rawFilesChanged)) {
+      filesChanged = rawFilesChanged as Array<{path: string; action: string; added_lines: number; removed_lines: number}>;
+    } else {
+      // Log for debugging
+      console.warn('[ApprovalCard] files_changed is not an array:', typeof rawFilesChanged, rawFilesChanged);
+      filesChanged = undefined;
+    }
+    
     const additions = details.additions as number | undefined;
     const deletions = details.deletions as number | undefined;
+    
+    // Calculate total lines if not provided
+    let totalAdded = additions;
+    let totalRemoved = deletions;
+    if (filesChanged && (totalAdded === undefined || totalRemoved === undefined)) {
+      totalAdded = filesChanged.reduce((sum, f) => sum + (f.added_lines || 0), 0);
+      totalRemoved = filesChanged.reduce((sum, f) => sum + (f.removed_lines || 0), 0);
+    }
+    
+    console.log('[ApprovalCard] Rendering approval details:', {
+      filesChanged,
+      totalAdded,
+      totalRemoved,
+      filesChangedType: typeof filesChanged,
+      isArray: Array.isArray(filesChanged)
+    });
+    
     return `
       ${filesChanged && filesChanged.length > 0 ? `
         <div class="detail-row">
           <span class="detail-label">Files:</span>
-          <span class="detail-value">${filesChanged.join(', ')}</span>
+          <div class="detail-value">
+            ${filesChanged.map(f => {
+              // Ensure f.path exists and is a string
+              const filePath = f && typeof f === 'object' && f.path ? String(f.path) : '[unknown]';
+              const addedLines = f && typeof f === 'object' ? (f.added_lines || 0) : 0;
+              const removedLines = f && typeof f === 'object' ? (f.removed_lines || 0) : 0;
+              
+              return `
+                <div class="file-change-item">
+                  <code>${escapeHtml(filePath)}</code>
+                  <span class="file-stats">
+                    ${addedLines > 0 ? `<span class="stat-add">+${addedLines}</span>` : ''}
+                    ${removedLines > 0 ? `<span class="stat-remove">-${removedLines}</span>` : ''}
+                  </span>
+                </div>
+              `;
+            }).join('')}
+          </div>
         </div>
       ` : ''}
-      ${additions !== undefined || deletions !== undefined ? `
+      ${totalAdded !== undefined || totalRemoved !== undefined ? `
         <div class="detail-row">
-          <span class="detail-label">Changes:</span>
+          <span class="detail-label">Total Changes:</span>
           <span class="detail-value">
-            ${additions !== undefined ? `+${additions}` : ''} 
-            ${deletions !== undefined ? `-${deletions}` : ''}
+            ${totalAdded !== undefined && totalAdded > 0 ? `<span class="stat-add">+${totalAdded}</span>` : ''} 
+            ${totalRemoved !== undefined && totalRemoved > 0 ? `<span class="stat-remove">-${totalRemoved}</span>` : ''}
           </span>
         </div>
       ` : ''}

@@ -137,6 +137,20 @@ export class StateReducer {
         newState.status = 'running';
         break;
 
+      case 'mission_started':
+        newState.status = 'running';
+        break;
+
+      case 'step_started':
+        // Step execution is starting
+        // State tracking happens via stage_changed
+        break;
+
+      case 'step_completed':
+        // Step execution completed
+        // Advance to next step (tracked in mission executor)
+        break;
+
       case 'approval_requested':
         newState.status = 'paused';
         newState.pending_approvals.push({

@@ -15,7 +15,7 @@ import { EventBus } from './eventBus';
 import { Event, Mode, Stage } from './types';
 import { randomUUID } from 'crypto';
 
-export type ApprovalType = 'terminal' | 'apply_diff' | 'scope_expansion';
+export type ApprovalType = 'terminal' | 'apply_diff' | 'scope_expansion' | 'plan_approval';
 export type ApprovalDecision = 'approved' | 'denied' | 'edit_requested';
 export type ApprovalScope = 'once' | 'always' | 'session';
 
@@ -55,6 +55,9 @@ export class ApprovalManager {
    * Request approval for an action
    * Returns a Promise that resolves when approval is granted/denied
    * BLOCKS execution until resolved
+   * 
+   * FOR PLAN APPROVALS: Idempotent - checks for existing pending approval
+   * before creating a new one
    */
   async requestApproval(
     taskId: string,
@@ -64,6 +67,27 @@ export class ApprovalManager {
     description: string,
     details: Record<string, unknown> = {}
   ): Promise<ApprovalResolution> {
+    // For plan_approval type, check if there's already a pending approval
+    // with the same plan_id to ensure idempotency
+    if (type === 'plan_approval' && details.plan_id) {
+      const existingApproval = Array.from(this.pendingApprovals.values()).find(
+        req => req.type === 'plan_approval' && 
+               (req.details.plan_id === details.plan_id)
+      );
+
+      if (existingApproval) {
+        // Return existing approval - reuse the same resolver
+        const resolver = this.approvalResolvers.get(existingApproval.approval_id);
+        if (resolver) {
+          console.log(`Reusing existing plan approval: ${existingApproval.approval_id}`);
+          return new Promise<ApprovalResolution>((resolve, reject) => {
+            // This is a new promise, but we'll resolve it when the original resolves
+            this.approvalResolvers.set(existingApproval.approval_id, { resolve, reject });
+          });
+        }
+      }
+    }
+
     const approvalId = randomUUID();
     const timestamp = new Date().toISOString();
 
@@ -194,6 +218,40 @@ export class ApprovalManager {
    */
   getPendingApproval(approvalId: string): ApprovalRequest | undefined {
     return this.pendingApprovals.get(approvalId);
+  }
+
+  /**
+   * Cancel/supersede pending approvals for a specific plan version
+   * Used when a plan is revised to invalidate old approvals
+   */
+  async supersedePlanApprovals(
+    taskId: string,
+    mode: Mode,
+    stage: Stage,
+    oldPlanId: string,
+    reason: string = 'superseded'
+  ): Promise<void> {
+    const approvalIdsToCancel: string[] = [];
+
+    // Find all pending plan approvals for the old plan_id
+    for (const [approvalId, request] of this.pendingApprovals.entries()) {
+      if (request.type === 'plan_approval' && request.details.plan_id === oldPlanId) {
+        approvalIdsToCancel.push(approvalId);
+      }
+    }
+
+    // Cancel each pending approval
+    for (const approvalId of approvalIdsToCancel) {
+      await this.resolveApproval(
+        taskId,
+        mode,
+        stage,
+        approvalId,
+        'denied',
+        'once',
+        { reason }
+      );
+    }
   }
 
   /**

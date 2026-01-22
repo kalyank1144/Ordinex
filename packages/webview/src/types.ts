@@ -62,8 +62,12 @@ export type EventType =
   | 'intent_received'
   | 'mode_set'
   | 'plan_created'
+  | 'plan_revised'
   | 'mission_breakdown_created'
   | 'mission_selected'
+  | 'mission_started'
+  | 'step_started'
+  | 'step_completed'
   | 'stage_changed'
   | 'final'
   // Retrieval
@@ -106,7 +110,13 @@ export type EventType =
   // ANSWER Mode
   | 'context_collected'
   | 'stream_delta'
-  | 'stream_complete';
+  | 'stream_complete'
+  // Prompt Quality Gate (PLAN mode)
+  | 'prompt_assessed'
+  | 'prompt_rewritten'
+  | 'clarification_requested'
+  | 'clarification_presented'
+  | 'clarification_received';
 
 export interface Event {
   event_id: string;

@@ -10,6 +10,9 @@ import {
   shouldRequireConfirmation, 
   generateTemplatePlan,
   generateLLMPlan,
+  refinePlan,
+  shouldBreakIntoMissions,
+  StructuredPlan,
   Evidence,
   TestRunner,
   FileTestEvidenceStore,
@@ -29,7 +32,23 @@ import {
   buildAnswerModeSystemMessage,
   AnswerContextBundle,
   collectPlanContext,
-  buildPlanModeSystemMessage
+  buildPlanModeSystemMessage,
+  MissionExecutor,
+  PromptQualityJudge,
+  combinePromptWithClarification,
+  PromptQualityAssessment,
+  AssessmentContext,
+  // New Plan Enhancer imports
+  collectLightContext,
+  assessPromptClarity,
+  shouldShowClarification,
+  generateClarificationOptions,
+  buildEnrichedPrompt,
+  buildFallbackPrompt,
+  isClarificationPending,
+  getPendingClarificationOptions,
+  LightContextBundle,
+  ClarificationOption
 } from 'core';
 
 class MissionControlViewProvider implements vscode.WebviewViewProvider {
@@ -116,6 +135,23 @@ class MissionControlViewProvider implements vscode.WebviewViewProvider {
 
       case 'ordinex:resolvePlanApproval':
         await this.handleResolvePlanApproval(message, webview);
+        break;
+
+      case 'ordinex:resolveApproval':
+        await this.handleResolveApproval(message, webview);
+        break;
+
+      case 'ordinex:refinePlan':
+        await this.handleRefinePlan(message, webview);
+        break;
+
+      // Clarification handlers (PLAN mode v2)
+      case 'ordinex:selectClarificationOption':
+        await this.handleSelectClarificationOption(message, webview);
+        break;
+
+      case 'ordinex:skipClarification':
+        await this.handleSkipClarification(message, webview);
         break;
 
       default:
@@ -348,119 +384,109 @@ class MissionControlViewProvider implements vscode.WebviewViewProvider {
     }
 
     try {
-      // Get events for this task to extract context
+      console.log('[handleExecutePlan] Starting MISSION execution for task:', taskId);
+
+      // Get events to extract the approved plan
       const events = this.eventStore?.getEventsByTaskId(taskId) || [];
-      const intentEvent = events.find((e: Event) => e.type === 'intent_received');
-      const prompt = intentEvent?.payload.prompt as string || 'Execute task';
-
-      // 1. Emit stage_changed → retrieve
-      await this.emitEvent({
-        event_id: this.generateId(),
-        task_id: taskId,
-        timestamp: new Date().toISOString(),
-        type: 'stage_changed',
-        mode: this.currentMode,
-        stage: 'retrieve',
-        payload: {
-          from: this.currentStage,
-          to: 'retrieve',
-        },
-        evidence_ids: [],
-        parent_event_id: null,
-      });
-
-      this.currentStage = 'retrieve';
-
-      // 2. Emit retrieval_started
-      const retrievalId = this.generateId();
-      await this.emitEvent({
-        event_id: retrievalId,
-        task_id: taskId,
-        timestamp: new Date().toISOString(),
-        type: 'retrieval_started',
-        mode: this.currentMode,
-        stage: 'retrieve',
-        payload: {
-          query: prompt,
-          retrieval_id: retrievalId,
-          constraints: {
-            max_files: 10,
-            max_lines: 400,
-          },
-        },
-        evidence_ids: [],
-        parent_event_id: null,
-      });
-
-      // Send initial events to webview
-      await this.sendEventsToWebview(webview, taskId);
-
-      // 3. Perform V1 retrieval (simulated for now - would use real retriever in production)
-      // TODO: Wire up actual Indexer + Retriever from packages/core/src/retrieval/
-      // For now, we'll simulate the retrieval process
       
-      // Simulated retrieval results
-      const filesConsidered = 15;
-      const filesSelected = 8;
-      const totalLinesIncluded = 245;
-      const evidenceIds: string[] = [];
+      // Find the most recent plan (plan_created or plan_revised)
+      const planEvents = events.filter((e: Event) => 
+        e.type === 'plan_created' || e.type === 'plan_revised'
+      );
+      const planEvent = planEvents[planEvents.length - 1];
 
-      // Create evidence objects for retrieval results
-      for (let i = 0; i < filesSelected; i++) {
-        const evidenceId = this.generateId();
-        evidenceIds.push(evidenceId);
-        
-        // In production, this would create actual Evidence objects
-        // with file excerpts from the retriever
+      if (!planEvent) {
+        throw new Error('No plan found to execute');
       }
 
-      // 4. Emit retrieval_completed
-      await this.emitEvent({
-        event_id: this.generateId(),
-        task_id: taskId,
-        timestamp: new Date().toISOString(),
-        type: 'retrieval_completed',
-        mode: this.currentMode,
-        stage: 'retrieve',
-        payload: {
-          retrieval_id: retrievalId,
-          result_count: filesSelected,
-          files_considered: filesConsidered,
-          files_selected: filesSelected,
-          total_lines_included: totalLinesIncluded,
-          top_reasons: ['lexical_match', 'active_file'],
-          summary: `Retrieved ${filesSelected} file(s) with ${totalLinesIncluded} total lines`,
-        },
-        evidence_ids: evidenceIds,
-        parent_event_id: retrievalId,
+      const plan = planEvent.payload as unknown as StructuredPlan;
+      console.log('[handleExecutePlan] Found plan with', plan.steps?.length || 0, 'steps');
+
+      // Initialize required components
+      if (!this.eventStore) {
+        throw new Error('EventStore not initialized');
+      }
+
+      const workspaceRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+      if (!workspaceRoot) {
+        throw new Error('No workspace folder open');
+      }
+
+      // Get API key for LLM calls
+      const apiKey = await this._context.secrets.get('ordinex.apiKey');
+      if (!apiKey) {
+        vscode.window.showErrorMessage('Ordinex API key not configured. Please run "Ordinex: Set API Key" command.');
+        throw new Error('No API key configured');
+      }
+
+      // Get model ID from intent event or use default
+      const intentEvent = events.find((e: Event) => e.type === 'intent_received');
+      const modelId = (intentEvent?.payload.model_id as string) || 'claude-3-haiku';
+
+      const eventBus = new EventBus(this.eventStore);
+      const checkpointDir = path.join(this._context.globalStorageUri.fsPath, 'checkpoints');
+      const checkpointManager = new CheckpointManager(eventBus, checkpointDir);
+      const approvalManager = new ApprovalManager(eventBus);
+
+      // Subscribe to events from MissionExecutor
+      eventBus.subscribe(async (event) => {
+        // Events are already persisted by MissionExecutor's eventBus
+        // We just need to send updated events to webview in real-time
+        await this.sendEventsToWebview(webview, taskId);
       });
 
-      // Send final events to webview
-      await this.sendEventsToWebview(webview, taskId);
+      // Prepare LLM config for edit stage
+      const llmConfig = {
+        apiKey,
+        model: modelId,
+        maxTokens: 4096
+      };
 
-      console.log('Execute plan completed successfully');
+      // Create MissionExecutor with new required dependencies
+      const missionExecutor = new MissionExecutor(
+        taskId,
+        eventBus,
+        checkpointManager,
+        approvalManager,
+        workspaceRoot,
+        llmConfig,
+        null,  // retriever - TODO: wire up later
+        null,  // diffManager - TODO: wire up later
+        null,  // testRunner - TODO: wire up later
+        null   // repairOrchestrator - TODO: wire up later
+      );
+
+      console.log('[handleExecutePlan] MissionExecutor created, starting execution...');
+
+      // Execute the plan (runs asynchronously)
+      missionExecutor.executePlan(plan).catch(error => {
+        console.error('[handleExecutePlan] Mission execution error:', error);
+        vscode.window.showErrorMessage(`Mission execution failed: ${error}`);
+      });
+
+      console.log('[handleExecutePlan] Mission execution started');
 
     } catch (error) {
       console.error('Error handling executePlan:', error);
       
-      // Emit retrieval_failed
+      // Emit failure_detected
       await this.emitEvent({
         event_id: this.generateId(),
         task_id: taskId,
         timestamp: new Date().toISOString(),
-        type: 'retrieval_failed',
+        type: 'failure_detected',
         mode: this.currentMode,
-        stage: 'retrieve',
+        stage: this.currentStage,
         payload: {
+          kind: 'execution_start_failed',
           error: error instanceof Error ? error.message : 'Unknown error',
-          reason: 'unexpected_error',
         },
         evidence_ids: [],
         parent_event_id: null,
       });
 
       await this.sendEventsToWebview(webview, taskId);
-      vscode.window.showErrorMessage(`Retrieval failed: ${error}`);
+      vscode.window.showErrorMessage(`Failed to start execution: ${error}`);
     }
   }
 
@@ -1050,8 +1076,20 @@ This demonstrates the diff proposal pipeline without requiring LLM integration.
     }
   }
 
+  // Store light context for use in selection handling
+  private planModeContext: LightContextBundle | null = null;
+  private planModeOriginalPrompt: string | null = null;
+
   /**
-   * Handle PLAN mode: Generate LLM-based project-aware plan
+   * Handle PLAN mode: Deterministic Ground → Ask → Plan pipeline
+   * 
+   * Flow:
+   * 1. Collect light context (< 3s)
+   * 2. Assess prompt clarity (heuristic, no LLM)
+   * 3. If low/medium clarity: show clarification card, pause
+   * 4. On selection: build enriched prompt, generate LLM plan
+   * 
+   * NEVER emits tool_start tool="llm_answer" in PLAN mode
    */
   private async handlePlanMode(
     userPrompt: string,
@@ -1059,109 +1097,157 @@ This demonstrates the diff proposal pipeline without requiring LLM integration.
     modelId: string,
     webview: vscode.Webview
   ): Promise<void> {
-    console.log('=== PLAN MODE START ===');
+    const LOG_PREFIX = '[Ordinex:PlanEnhancement]';
+    console.log('=== PLAN MODE START (Deterministic v2) ===');
     console.log('Prompt:', userPrompt);
     console.log('Task ID:', taskId);
     console.log('Model ID:', modelId);
     
     try {
-      // 1. Get API key from SecretStorage
-      console.log('Step 1: Getting API key from SecretStorage...');
-      const apiKey = await this._context.secrets.get('ordinex.apiKey');
-      console.log('API key retrieved:', apiKey ? `YES (length: ${apiKey.length})` : 'NO');
-      
-      if (!apiKey) {
-        // No API key - emit failure and prompt user to set it
-        await this.emitEvent({
-          event_id: this.generateId(),
-          task_id: taskId,
-          timestamp: new Date().toISOString(),
-          type: 'failure_detected',
-          mode: this.currentMode,
-          stage: this.currentStage,
-          payload: {
-            error: 'No API key configured',
-            suggestion: 'Run command "Ordinex: Set API Key" to configure your Anthropic API key',
-          },
-          evidence_ids: [],
-          parent_event_id: null,
-        });
+      // Store original prompt for later use
+      this.planModeOriginalPrompt = userPrompt;
 
-        await this.sendEventsToWebview(webview, taskId);
-        
-        vscode.window.showErrorMessage(
-          'Ordinex API key not found. Please run "Ordinex: Set API Key" command.',
-          'Set API Key'
-        ).then(action => {
-          if (action === 'Set API Key') {
-            vscode.commands.executeCommand('ordinex.setApiKey');
-          }
-        });
-        
-        return;
-      }
-
-      // 2. Collect project context for PLAN mode
+      // 1. Get workspace root
       const workspaceRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
       if (!workspaceRoot) {
         vscode.window.showErrorMessage('No workspace folder open');
         return;
       }
 
-      // Get open files from VS Code
-      const openFiles = vscode.workspace.textDocuments
-        .filter(doc => doc.uri.scheme === 'file')
-        .map(doc => ({
-          path: vscode.workspace.asRelativePath(doc.uri),
-          content: doc.getText()
-        }));
-
-      console.log('Step 2: Collecting project context for planning...');
+      // 2. LIGHT CONTEXT COLLECTION (< 3s budget)
+      console.log(`${LOG_PREFIX} Step 1: Collecting light context...`);
       
-      // Initialize event bus for context collection events
-      if (!this.eventStore) {
-        throw new Error('EventStore not initialized');
-      }
-      const eventBus = new EventBus(this.eventStore);
+      const lightContext = await collectLightContext(workspaceRoot);
+      this.planModeContext = lightContext; // Store for selection handling
 
-      // Generate LLM-based plan with project context
-      const plan = await generateLLMPlan(
-        userPrompt,
-        taskId,
-        eventBus,
-        {
-          apiKey,
-          model: modelId,
-          maxTokens: 4096,
-        },
-        workspaceRoot,
-        openFiles
-      );
-
-      console.log('Step 3: Plan generated successfully');
-      console.log('Plan goal:', plan.goal);
-      console.log('Plan steps:', plan.steps.length);
-
-      // Emit plan_created event with the structured plan
+      // Emit context_collected event with level:"light"
       await this.emitEvent({
         event_id: this.generateId(),
         task_id: taskId,
         timestamp: new Date().toISOString(),
-        type: 'plan_created',
+        type: 'context_collected',
         mode: this.currentMode,
         stage: this.currentStage,
-        payload: plan as unknown as Record<string, unknown>,
+        payload: {
+          level: 'light',
+          stack: lightContext.stack,
+          top_dirs: lightContext.top_dirs,
+          anchor_files: lightContext.anchor_files,
+          todo_count: lightContext.todo_count,
+          files_scanned: lightContext.files_scanned,
+          scan_duration_ms: lightContext.scan_duration_ms
+        },
         evidence_ids: [],
         parent_event_id: null,
       });
 
-      // Send updated events to webview
       await this.sendEventsToWebview(webview, taskId);
+      console.log(`${LOG_PREFIX} ✓ Light context collected in ${lightContext.scan_duration_ms}ms`);
 
-      console.log('PLAN mode completed successfully');
+      // 3. PROMPT ASSESSMENT (Heuristic only, no LLM)
+      console.log(`${LOG_PREFIX} Step 2: Assessing prompt clarity (heuristic)...`);
+      
+      const assessment = assessPromptClarity(userPrompt, lightContext.anchor_files);
+
+      // Emit prompt_assessed event
+      await this.emitEvent({
+        event_id: this.generateId(),
+        task_id: taskId,
+        timestamp: new Date().toISOString(),
+        type: 'prompt_assessed',
+        mode: this.currentMode,
+        stage: this.currentStage,
+        payload: {
+          clarity: assessment.clarity,
+          clarity_score: assessment.clarity_score,
+          intent: assessment.intent,
+          reasoning: assessment.reasoning
+        },
+        evidence_ids: [],
+        parent_event_id: null,
+      });
+
+      await this.sendEventsToWebview(webview, taskId);
+      console.log(`${LOG_PREFIX} ✓ Prompt assessed: clarity=${assessment.clarity}, score=${assessment.clarity_score}`);
+
+      // Optional: Show hint if intent is answer_like and clarity is high
+      if (assessment.intent === 'answer_like' && assessment.clarity === 'high') {
+        vscode.window.showInformationMessage(
+          'This looks like a question. You can also use ANSWER mode.',
+          'Switch to ANSWER'
+        ).then(action => {
+          if (action === 'Switch to ANSWER') {
+            // User can manually switch - we don't auto-switch per spec
+          }
+        });
+      }
+
+      // 4. CLARIFICATION DECISION
+      const needsClarification = shouldShowClarification(assessment, userPrompt);
+
+      if (needsClarification) {
+        // SHOW CLARIFICATION CARD
+        console.log(`${LOG_PREFIX} ⚠️ Clarity ${assessment.clarity} - showing clarification card`);
+        
+        // Generate deterministic options
+        const options = generateClarificationOptions(lightContext, userPrompt);
+        console.log(`${LOG_PREFIX} Generated ${options.length} options:`, options.map(o => o.id));
+
+        // Emit clarification_presented event
+        await this.emitEvent({
+          event_id: this.generateId(),
+          task_id: taskId,
+          timestamp: new Date().toISOString(),
+          type: 'clarification_presented',
+          mode: this.currentMode,
+          stage: this.currentStage,
+          payload: {
+            task_id: taskId,
+            options: options,
+            fallback_option_id: 'fallback-suggest',
+            anchor_files_count: lightContext.anchor_files.length
+          },
+          evidence_ids: [],
+          parent_event_id: null,
+        });
+
+        // Emit execution_paused with awaiting_selection
+        await this.emitEvent({
+          event_id: this.generateId(),
+          task_id: taskId,
+          timestamp: new Date().toISOString(),
+          type: 'execution_paused',
+          mode: this.currentMode,
+          stage: this.currentStage,
+          payload: {
+            reason: 'awaiting_selection',
+            description: 'Choose a focus area to generate a targeted plan'
+          },
+          evidence_ids: [],
+          parent_event_id: null,
+        });
+
+        await this.sendEventsToWebview(webview, taskId);
+
+        // Send clarification data to webview for rendering
+        webview.postMessage({
+          type: 'ordinex:clarificationPresented',
+          task_id: taskId,
+          options: options,
+          fallback_option_id: 'fallback-suggest',
+          anchor_files_count: lightContext.anchor_files.length
+        });
+
+        console.log(`${LOG_PREFIX} 🛑 Execution paused - awaiting user selection`);
+        return; // Stop here - wait for user selection
+      }
+
+      // HIGH CLARITY: Skip clarification, go directly to LLM plan
+      console.log(`${LOG_PREFIX} ✓ High clarity - skipping clarification, generating plan directly`);
+      await this.generateAndEmitPlan(userPrompt, taskId, modelId, webview, lightContext, null);
 
     } catch (error) {
-      console.error('Error in PLAN mode:', error);
+      console.error(`${LOG_PREFIX} Error in PLAN mode:`, error);
 
       // Emit failure_detected event
       await this.emitEvent({
@@ -1183,6 +1269,190 @@ This demonstrates the diff proposal pipeline without requiring LLM integration.
 
       vscode.window.showErrorMessage(`PLAN mode failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
     }
+  }
+
+  /**
+   * Generate and emit LLM plan (called after clarification selection or for high clarity)
+   */
+  private async generateAndEmitPlan(
+    userPrompt: string,
+    taskId: string,
+    modelId: string,
+    webview: vscode.Webview,
+    lightContext: LightContextBundle,
+    selectedOption: ClarificationOption | null
+  ): Promise<void> {
+    const LOG_PREFIX = '[Ordinex:PlanEnhancement]';
+    
+    // Get API key
+    const apiKey = await this._context.secrets.get('ordinex.apiKey');
+    if (!apiKey) {
+      await this.emitEvent({
+        event_id: this.generateId(),
+        task_id: taskId,
+        timestamp: new Date().toISOString(),
+        type: 'failure_detected',
+        mode: this.currentMode,
+        stage: this.currentStage,
+        payload: {
+          error: 'No API key configured',
+          suggestion: 'Run command "Ordinex: Set API Key" to configure your Anthropic API key',
+        },
+        evidence_ids: [],
+        parent_event_id: null,
+      });
+
+      await this.sendEventsToWebview(webview, taskId);
+      
+      vscode.window.showErrorMessage(
+        'Ordinex API key not found. Please run "Ordinex: Set API Key" command.',
+        'Set API Key'
+      ).then(action => {
+        if (action === 'Set API Key') {
+          vscode.commands.executeCommand('ordinex.setApiKey');
+        }
+      });
+      
+      return;
+    }
+
+    const workspaceRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath!;
+    const openFiles = vscode.workspace.textDocuments
+      .filter(doc => doc.uri.scheme === 'file')
+      .map(doc => ({
+        path: vscode.workspace.asRelativePath(doc.uri),
+        content: doc.getText()
+      }));
+
+    if (!this.eventStore) {
+      throw new Error('EventStore not initialized');
+    }
+    const eventBus = new EventBus(this.eventStore);
+
+    // Build the final prompt
+    let finalPrompt: string;
+    
+    if (selectedOption) {
+      // User selected a focus area OR clicked skip/fallback
+      if (selectedOption.id === 'fallback-suggest') {
+        finalPrompt = buildFallbackPrompt(userPrompt, lightContext);
+        console.log(`${LOG_PREFIX} Using fallback prompt for idea suggestions`);
+      } else {
+        finalPrompt = buildEnrichedPrompt(userPrompt, selectedOption, lightContext);
+        console.log(`${LOG_PREFIX} Using enriched prompt for focus: ${selectedOption.title}`);
+      }
+    } else {
+      // High clarity, no selection needed - use original prompt
+      finalPrompt = userPrompt;
+      console.log(`${LOG_PREFIX} Using original prompt (high clarity)`);
+    }
+
+    // Emit tool_start for llm_plan (NOT llm_answer)
+    await this.emitEvent({
+      event_id: this.generateId(),
+      task_id: taskId,
+      timestamp: new Date().toISOString(),
+      type: 'tool_start',
+      mode: this.currentMode,
+      stage: this.currentStage,
+      payload: {
+        tool: 'llm_plan',
+        tool_name: 'llm_plan',
+        prompt_length: finalPrompt.length,
+        focus: selectedOption?.title || 'original_prompt'
+      },
+      evidence_ids: [],
+      parent_event_id: null,
+    });
+
+    await this.sendEventsToWebview(webview, taskId);
+
+    console.log(`${LOG_PREFIX} Step 3: Generating LLM plan...`);
+    
+    const plan = await generateLLMPlan(
+      finalPrompt,
+      taskId,
+      eventBus,
+      {
+        apiKey,
+        model: modelId,
+        maxTokens: 4096,
+      },
+      workspaceRoot,
+      openFiles
+    );
+
+    // Emit tool_end for llm_plan
+    await this.emitEvent({
+      event_id: this.generateId(),
+      task_id: taskId,
+      timestamp: new Date().toISOString(),
+      type: 'tool_end',
+      mode: this.currentMode,
+      stage: this.currentStage,
+      payload: {
+        tool: 'llm_plan',
+        tool_name: 'llm_plan',
+        success: true,
+        steps_count: plan.steps.length
+      },
+      evidence_ids: [],
+      parent_event_id: null,
+    });
+
+    console.log(`${LOG_PREFIX} Step 4: Plan generated successfully`);
+    console.log(`${LOG_PREFIX} Plan goal:`, plan.goal);
+    console.log(`${LOG_PREFIX} Plan steps:`, plan.steps.length);
+
+    // Emit plan_created event with the structured plan
+    await this.emitEvent({
+      event_id: this.generateId(),
+      task_id: taskId,
+      timestamp: new Date().toISOString(),
+      type: 'plan_created',
+      mode: this.currentMode,
+      stage: this.currentStage,
+      payload: plan as unknown as Record<string, unknown>,
+      evidence_ids: [],
+      parent_event_id: null,
+    });
+
+    // Send updated events to webview
+    await this.sendEventsToWebview(webview, taskId);
+
+    // Also send plan created message
+    webview.postMessage({
+      type: 'ordinex:planCreated',
+      task_id: taskId,
+      plan: plan
+    });
+
+    console.log(`${LOG_PREFIX} PLAN mode completed successfully`);
+  }
+
+  /**
+   * Infer technology stack from file names and extensions
+   */
+  private inferStack(files: string[], openFiles: string[]): string[] {
+    const stack: Set<string> = new Set();
+
+    const allFiles = [...files, ...openFiles];
+
+    // Check for common technology indicators
+    if (allFiles.some(f => f.includes('package.json'))) stack.add('Node.js');
+    if (allFiles.some(f => f.endsWith('.ts') || f.endsWith('.tsx'))) stack.add('TypeScript');
+    if (allFiles.some(f => f.endsWith('.jsx') || f.includes('react'))) stack.add('React');
+    if (allFiles.some(f => f.includes('vue'))) stack.add('Vue');
+    if (allFiles.some(f => f.includes('angular'))) stack.add('Angular');
+    if (allFiles.some(f => f.endsWith('.py'))) stack.add('Python');
+    if (allFiles.some(f => f.endsWith('.java'))) stack.add('Java');
+    if (allFiles.some(f => f.endsWith('.go'))) stack.add('Go');
+    if (allFiles.some(f => f.endsWith('.rs'))) stack.add('Rust');
+    if (allFiles.some(f => f.includes('Cargo.toml'))) stack.add('Rust');
+    if (allFiles.some(f => f.includes('go.mod'))) stack.add('Go');
+    if (allFiles.some(f => f.includes('requirements.txt') || f.includes('setup.py'))) stack.add('Python');
+
+    return Array.from(stack);
   }
 
   private async handleExportRun(message: any, webview: vscode.Webview) {
@@ -1292,13 +1562,35 @@ This demonstrates the diff proposal pipeline without requiring LLM integration.
       const events = this.eventStore?.getEventsByTaskId(task_id) || [];
       const planEvent = events.find((e: Event) => e.event_id === plan_id);
 
-      if (!planEvent || planEvent.type !== 'plan_created') {
+      if (!planEvent || (planEvent.type !== 'plan_created' && planEvent.type !== 'plan_revised')) {
         console.error('Plan event not found');
+        return;
+      }
+
+      // Check for existing pending approval for this plan (idempotent)
+      const existingApproval = events.find((e: Event) => 
+        e.type === 'approval_requested' &&
+        e.payload.approval_type === 'plan_approval' &&
+        e.payload.details && (e.payload.details as any).plan_id === plan_id &&
+        // Check if not already resolved
+        !events.some((re: Event) => 
+          re.type === 'approval_resolved' && 
+          re.payload.approval_id === e.payload.approval_id
+        )
+      );
+
+      if (existingApproval) {
+        console.log('Plan approval already pending, not creating duplicate');
+        // Just re-send events to update UI
+        await this.sendEventsToWebview(webview, task_id);
         return;
       }
 
       const plan = planEvent.payload;
       const approvalId = this.generateId();
+
+      // Check if plan is too large/complex
+      const sizeCheck = shouldBreakIntoMissions(plan as any as StructuredPlan);
 
       // Emit approval_requested event
       await this.emitEvent({
@@ -1317,7 +1609,8 @@ This demonstrates the diff proposal pipeline without requiring LLM integration.
             goal: (plan as any).goal || '',
             steps_count: ((plan as any).steps || []).length,
             scope_contract: (plan as any).scope_contract || {},
-            risks: (plan as any).risks || []
+            risks: (plan as any).risks || [],
+            size_check: sizeCheck
           },
           risk_level: 'low'
         },
@@ -1325,7 +1618,7 @@ This demonstrates the diff proposal pipeline without requiring LLM integration.
         parent_event_id: plan_id,
       });
 
-      // Emit execution_paused
+      // Emit execution_paused with specific reason
       await this.emitEvent({
         event_id: this.generateId(),
         task_id: task_id,
@@ -1334,7 +1627,8 @@ This demonstrates the diff proposal pipeline without requiring LLM integration.
         mode: this.currentMode,
         stage: this.currentStage,
         payload: {
-          reason: 'Awaiting plan approval'
+          reason: 'awaiting_plan_approval',
+          description: 'Waiting for plan approval before proceeding'
         },
         evidence_ids: [],
         parent_event_id: null,
@@ -1412,7 +1706,7 @@ This demonstrates the diff proposal pipeline without requiring LLM integration.
 
         this.currentMode = 'MISSION';
 
-        // Emit execution_paused (ready for Execute Plan)
+        // Emit execution_paused with specific reason (ready for Execute Plan)
         await this.emitEvent({
           event_id: this.generateId(),
           task_id: task_id,
@@ -1421,7 +1715,8 @@ This demonstrates the diff proposal pipeline without requiring LLM integration.
           mode: 'MISSION',
           stage: this.currentStage,
           payload: {
-            reason: 'Awaiting Execute Plan action'
+            reason: 'awaiting_execute_plan',
+            description: 'Plan approved - ready to execute'
           },
           evidence_ids: [],
           parent_event_id: null,
@@ -1436,7 +1731,8 @@ This demonstrates the diff proposal pipeline without requiring LLM integration.
           mode: this.currentMode,
           stage: this.currentStage,
           payload: {
-            reason: 'Plan rejected'
+            reason: 'plan_rejected',
+            description: 'Plan rejected by user'
           },
           evidence_ids: [],
           parent_event_id: null,
@@ -1451,6 +1747,333 @@ This demonstrates the diff proposal pipeline without requiring LLM integration.
     } catch (error) {
       console.error('Error handling resolvePlanApproval:', error);
       vscode.window.showErrorMessage(`Failed to resolve plan approval: ${error}`);
+    }
+  }
+
+  private async handleResolveApproval(message: any, webview: vscode.Webview) {
+    const { task_id, approval_id, decision } = message;
+
+    if (!task_id || !approval_id || !decision) {
+      console.error('Missing required fields in resolveApproval');
+      return;
+    }
+
+    try {
+      // Get events to find the approval request
+      const events = this.eventStore?.getEventsByTaskId(task_id) || [];
+      const approvalRequest = events.find(
+        (e: Event) => e.type === 'approval_requested' && e.payload.approval_id === approval_id
+      );
+
+      if (!approvalRequest) {
+        console.error('Approval request not found');
+        return;
+      }
+
+      const approved = decision === 'approved';
+
+      // Emit approval_resolved event
+      await this.emitEvent({
+        event_id: this.generateId(),
+        task_id: task_id,
+        timestamp: new Date().toISOString(),
+        type: 'approval_resolved',
+        mode: this.currentMode,
+        stage: this.currentStage,
+        payload: {
+          approval_id: approval_id,
+          decision: decision,
+          approved: approved,
+          decided_at: new Date().toISOString()
+        },
+        evidence_ids: [],
+        parent_event_id: approvalRequest.event_id,
+      });
+
+      // Send updated events to webview
+      await this.sendEventsToWebview(webview, task_id);
+
+      console.log('Approval resolved:', { approval_id, approved, decision });
+
+    } catch (error) {
+      console.error('Error handling resolveApproval:', error);
+      vscode.window.showErrorMessage(`Failed to resolve approval: ${error}`);
+    }
+  }
+
+  private async handleRefinePlan(message: any, webview: vscode.Webview) {
+    const { task_id, plan_id, refinement_text } = message;
+
+    if (!task_id || !plan_id || !refinement_text) {
+      console.error('Missing required fields in refinePlan');
+      return;
+    }
+
+    try {
+      // Get API key
+      const apiKey = await this._context.secrets.get('ordinex.apiKey');
+      if (!apiKey) {
+        vscode.window.showErrorMessage('API key not configured');
+        return;
+      }
+
+      // Get events to extract plan and original prompt
+      const events = this.eventStore?.getEventsByTaskId(task_id) || [];
+      const planEvent = events.find((e: Event) => e.event_id === plan_id);
+      const intentEvent = events.find((e: Event) => e.type === 'intent_received');
+
+      if (!planEvent || (planEvent.type !== 'plan_created' && planEvent.type !== 'plan_revised')) {
+        console.error('Plan event not found');
+        return;
+      }
+
+      const originalPlan = planEvent.payload as any as StructuredPlan;
+      const originalPrompt = (intentEvent?.payload.prompt as string) || '';
+
+      // Get workspace info
+      const workspaceRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+      if (!workspaceRoot) {
+        vscode.window.showErrorMessage('No workspace folder open');
+        return;
+      }
+
+      const openFiles = vscode.workspace.textDocuments
+        .filter(doc => doc.uri.scheme === 'file')
+        .map(doc => ({
+          path: vscode.workspace.asRelativePath(doc.uri),
+          content: doc.getText()
+        }));
+
+      // Initialize event bus
+      if (!this.eventStore) {
+        throw new Error('EventStore not initialized');
+      }
+      const eventBus = new EventBus(this.eventStore);
+
+      // Cancel pending approvals for old plan
+      const pendingApprovals = events.filter((e: Event) => 
+        e.type === 'approval_requested' &&
+        e.payload.approval_type === 'plan_approval' &&
+        e.payload.details && (e.payload.details as any).plan_id === plan_id &&
+        // Check if not already resolved
+        !events.some((re: Event) => 
+          re.type === 'approval_resolved' && 
+          re.payload.approval_id === e.payload.approval_id
+        )
+      );
+
+      for (const approval of pendingApprovals) {
+        await this.emitEvent({
+          event_id: this.generateId(),
+          task_id: task_id,
+          timestamp: new Date().toISOString(),
+          type: 'approval_resolved',
+          mode: this.currentMode,
+          stage: this.currentStage,
+          payload: {
+            approval_id: approval.payload.approval_id,
+            decision: 'denied',
+            approved: false,
+            reason: 'superseded',
+            decided_at: new Date().toISOString()
+          },
+          evidence_ids: [],
+          parent_event_id: approval.event_id,
+        });
+      }
+
+      // Show progress notification
+      await vscode.window.withProgress({
+        location: vscode.ProgressLocation.Notification,
+        title: 'Refining Plan',
+        cancellable: false
+      }, async (progress) => {
+        progress.report({ message: 'Calling LLM to refine plan...' });
+
+        // Call refinePlan
+        const revisedPlan = await refinePlan(
+          originalPlan,
+          originalPrompt,
+          refinement_text,
+          task_id,
+          eventBus,
+          {
+            apiKey,
+            model: 'claude-3-haiku',
+            maxTokens: 4096
+          },
+          workspaceRoot,
+          openFiles
+        );
+
+        // Emit plan_revised event
+        await this.emitEvent({
+          event_id: this.generateId(),
+          task_id: task_id,
+          timestamp: new Date().toISOString(),
+          type: 'plan_revised',
+          mode: this.currentMode,
+          stage: this.currentStage,
+          payload: {
+            ...revisedPlan,
+            previous_plan_id: plan_id,
+            refinement_instruction: refinement_text
+          } as unknown as Record<string, unknown>,
+          evidence_ids: [],
+          parent_event_id: plan_id,
+        });
+
+        // Send updated events to webview
+        await this.sendEventsToWebview(webview, task_id);
+
+        console.log('Plan refined successfully');
+      });
+
+    } catch (error) {
+      console.error('Error handling refinePlan:', error);
+      vscode.window.showErrorMessage(`Failed to refine plan: ${error}`);
+    }
+  }
+
+  /**
+   * Handle clarification option selection (PLAN mode v2)
+   */
+  private async handleSelectClarificationOption(message: any, webview: vscode.Webview) {
+    const { task_id, option_id } = message;
+    const LOG_PREFIX = '[Ordinex:PlanEnhancement]';
+
+    if (!task_id || !option_id) {
+      console.error('Missing required fields in selectClarificationOption');
+      return;
+    }
+
+    console.log(`${LOG_PREFIX} Selection received: option_id=${option_id}`);
+
+    try {
+      // Get events to find the clarification_presented event and extract options
+      const events = this.eventStore?.getEventsByTaskId(task_id) || [];
+      const clarificationEvent = events.find((e: Event) => e.type === 'clarification_presented');
+
+      if (!clarificationEvent) {
+        console.error('No clarification_presented event found');
+        vscode.window.showErrorMessage('Failed to send selection. Please try again.');
+        return;
+      }
+
+      const options = clarificationEvent.payload.options as ClarificationOption[];
+      const selectedOption = options.find((o: ClarificationOption) => o.id === option_id);
+
+      if (!selectedOption) {
+        console.error('Selected option not found:', option_id);
+        vscode.window.showErrorMessage('Failed to send selection. Please try again.');
+        return;
+      }
+
+      // Emit clarification_received event
+      await this.emitEvent({
+        event_id: this.generateId(),
+        task_id: task_id,
+        timestamp: new Date().toISOString(),
+        type: 'clarification_received',
+        mode: this.currentMode,
+        stage: this.currentStage,
+        payload: {
+          option_id: selectedOption.id,
+          title: selectedOption.title
+        },
+        evidence_ids: [],
+        parent_event_id: null,
+      });
+
+      await this.sendEventsToWebview(webview, task_id);
+
+      // Get original prompt and context
+      const intentEvent = events.find((e: Event) => e.type === 'intent_received');
+      const userPrompt = this.planModeOriginalPrompt || (intentEvent?.payload.prompt as string) || '';
+      const modelId = (intentEvent?.payload.model_id as string) || 'sonnet-4.5';
+
+      // Use stored context or re-collect
+      const lightContext = this.planModeContext;
+      if (!lightContext) {
+        console.error('No light context available');
+        vscode.window.showErrorMessage('Plan generation failed. Try again or choose "Skip and suggest ideas".');
+        return;
+      }
+
+      // Generate plan with selected option
+      console.log(`${LOG_PREFIX} Generating plan with focus: ${selectedOption.title}`);
+      await this.generateAndEmitPlan(userPrompt, task_id, modelId, webview, lightContext, selectedOption);
+
+    } catch (error) {
+      console.error('Error handling selectClarificationOption:', error);
+      vscode.window.showErrorMessage('Plan generation failed. Try again or choose "Skip and suggest ideas".');
+    }
+  }
+
+  /**
+   * Handle skip clarification (PLAN mode v2)
+   * Skip NEVER pauses - always generates a useful plan
+   */
+  private async handleSkipClarification(message: any, webview: vscode.Webview) {
+    const { task_id } = message;
+    const LOG_PREFIX = '[Ordinex:PlanEnhancement]';
+
+    if (!task_id) {
+      console.error('Missing task_id in skipClarification');
+      return;
+    }
+
+    console.log(`${LOG_PREFIX} Skip clarification - generating fallback plan`);
+
+    try {
+      // Get events to find context
+      const events = this.eventStore?.getEventsByTaskId(task_id) || [];
+      const intentEvent = events.find((e: Event) => e.type === 'intent_received');
+      const userPrompt = this.planModeOriginalPrompt || (intentEvent?.payload.prompt as string) || '';
+      const modelId = (intentEvent?.payload.model_id as string) || 'sonnet-4.5';
+
+      // Use stored context or re-collect
+      const lightContext = this.planModeContext;
+      if (!lightContext) {
+        console.error('No light context available');
+        vscode.window.showErrorMessage('Plan generation failed. Please try again.');
+        return;
+      }
+
+      // Create fallback option
+      const fallbackOption: ClarificationOption = {
+        id: 'fallback-suggest',
+        title: 'Suggest ideas based on analysis',
+        description: 'Let me analyze and suggest 5–8 feature ideas grouped by effort',
+        evidence: ['Will suggest 5–8 ideas grouped by effort']
+      };
+
+      // Emit clarification_received for skip
+      await this.emitEvent({
+        event_id: this.generateId(),
+        task_id: task_id,
+        timestamp: new Date().toISOString(),
+        type: 'clarification_received',
+        mode: this.currentMode,
+        stage: this.currentStage,
+        payload: {
+          option_id: 'fallback-suggest',
+          title: 'Skip - suggest ideas',
+          skipped: true
+        },
+        evidence_ids: [],
+        parent_event_id: null,
+      });
+
+      await this.sendEventsToWebview(webview, task_id);
+
+      // Generate plan with fallback option
+      console.log(`${LOG_PREFIX} Generating fallback plan with idea suggestions`);
+      await this.generateAndEmitPlan(userPrompt, task_id, modelId, webview, lightContext, fallbackOption);
+
+    } catch (error) {
+      console.error('Error handling skipClarification:', error);
+      vscode.window.showErrorMessage('Plan generation failed. Please try again.');
     }
   }
 

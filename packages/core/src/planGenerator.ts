@@ -153,6 +153,18 @@ export async function generateLLMPlan(
       allowed_tools: ['read']
     };
 
+    // Validate plan is project-specific (not generic) - for debugging only
+    const validation = validatePlanSpecificity(plan, contextBundle);
+    if (!validation.isSpecific) {
+      console.warn('⚠️ [PLAN DEBUG] Plan may be too generic:', validation.reasons);
+      console.warn('[PLAN DEBUG] Goal:', plan.goal);
+      console.warn('[PLAN DEBUG] Steps:', plan.steps.map(s => s.description).join('; '));
+      
+      // NOTE: We log for debugging but DO NOT add warnings to the UI
+      // The validation may have false positives, so we trust the LLM output
+      // Future: Implement automatic retry with enhanced prompt instead of warning user
+    }
+
     return plan;
   } catch (error) {
     console.error('Failed to parse LLM plan:', error);
@@ -383,6 +395,236 @@ function generateTemplateSteps(prompt: string, mode: Mode): PlanPayload['steps']
       },
     ];
   }
+}
+
+/**
+ * Refine an existing plan with user feedback
+ * Returns a revised plan with incremented version
+ */
+export async function refinePlan(
+  originalPlan: StructuredPlan,
+  originalPrompt: string,
+  refinementInstruction: string,
+  taskId: string,
+  eventBus: EventBus,
+  llmConfig: LLMConfig,
+  workspaceRoot: string,
+  openFiles?: Array<{ path: string; content?: string }>
+): Promise<StructuredPlan> {
+  // Collect project context (same as original plan generation)
+  const contextBundle = await collectPlanContext({
+    workspaceRoot,
+    openFiles,
+    maxFileLines: 300,
+    maxTreeDepth: 3,
+    maxFilesToInclude: 10
+  });
+
+  // Build system message with PLAN mode constraints
+  const systemMessage = buildPlanModeSystemMessage(contextBundle);
+
+  // Create LLM service for PLAN mode
+  const llmService = new LLMService(taskId, eventBus, 'PLAN', 'none');
+
+  // Build refinement prompt that includes original plan + refinement instruction
+  const refinementPrompt = `# Plan Refinement Request
+
+## Original Task
+${originalPrompt}
+
+## Current Plan
+${JSON.stringify(originalPlan, null, 2)}
+
+## Refinement Request
+${refinementInstruction}
+
+Please revise the plan based on the refinement request. Return a complete updated plan in JSON format with the same structure as the original plan, but incorporating the requested changes.`;
+
+  // Call LLM and get revised plan
+  let fullResponse = '';
+  const response = await llmService.streamAnswerWithContext(
+    refinementPrompt,
+    systemMessage,
+    llmConfig,
+    (chunk) => {
+      if (!chunk.done) {
+        fullResponse += chunk.delta;
+      }
+    }
+  );
+
+  // Parse JSON response
+  try {
+    const jsonMatch = response.content.match(/\{[\s\S]*\}/);
+    if (!jsonMatch) {
+      throw new Error('No JSON object found in LLM response');
+    }
+
+    const revisedPlan: StructuredPlan = JSON.parse(jsonMatch[0]);
+
+    // Validate required fields
+    if (!revisedPlan.goal || !revisedPlan.steps || !Array.isArray(revisedPlan.steps)) {
+      throw new Error('Invalid plan structure: missing required fields');
+    }
+
+    // Set defaults for optional fields
+    revisedPlan.assumptions = revisedPlan.assumptions || [];
+    revisedPlan.success_criteria = revisedPlan.success_criteria || [];
+    revisedPlan.risks = revisedPlan.risks || [];
+    revisedPlan.scope_contract = revisedPlan.scope_contract || {
+      max_files: 10,
+      max_lines: 1000,
+      allowed_tools: ['read']
+    };
+
+    return revisedPlan;
+  } catch (error) {
+    console.error('Failed to parse refined plan:', error);
+    
+    // If refinement fails, return original plan with note
+    return {
+      ...originalPlan,
+      assumptions: [
+        ...(originalPlan.assumptions || []),
+        'Plan refinement failed - returning original plan'
+      ]
+    };
+  }
+}
+
+/**
+ * Check if a plan is too large/complex for single execution
+ * Returns true if plan should be broken into missions
+ */
+export function shouldBreakIntoMissions(plan: StructuredPlan): {
+  shouldBreak: boolean;
+  reason?: string;
+} {
+  const steps = plan.steps || [];
+  
+  // Heuristic 1: More than 6 steps
+  if (steps.length > 6) {
+    return {
+      shouldBreak: true,
+      reason: `Plan has ${steps.length} steps (max recommended: 6)`
+    };
+  }
+
+  // Heuristic 2: Check for "major feature" indicators in step descriptions
+  const majorFeatureKeywords = [
+    'implement',
+    'create',
+    'build',
+    'develop',
+    'design',
+    'refactor',
+    'migrate',
+    'integrate'
+  ];
+
+  let majorFeatureCount = 0;
+  for (const step of steps) {
+    const description = step.description.toLowerCase();
+    if (majorFeatureKeywords.some(keyword => description.includes(keyword))) {
+      majorFeatureCount++;
+    }
+  }
+
+  if (majorFeatureCount > 2) {
+    return {
+      shouldBreak: true,
+      reason: `Plan contains ${majorFeatureCount} major features (max recommended: 2)`
+    };
+  }
+
+  // Plan is reasonable size for single execution
+  return {
+    shouldBreak: false
+  };
+}
+
+/**
+ * Validate that a plan is project-specific (not generic)
+ * Returns validation result with specificity check
+ */
+function validatePlanSpecificity(
+  plan: StructuredPlan,
+  context: PlanContextBundle
+): { isSpecific: boolean; reasons: string[] } {
+  const reasons: string[] = [];
+  
+  // Check 1: Does goal mention any specific files from context?
+  const contextFiles = [
+    ...context.files.map(f => f.path),
+    ...context.open_files.map(f => f.path)
+  ];
+  
+  const goalLower = plan.goal.toLowerCase();
+  const hasFileReference = contextFiles.some(file => {
+    const fileName = file.split('/').pop()?.toLowerCase() || '';
+    const fileBase = fileName.replace(/\.[^/.]+$/, ''); // remove extension
+    return goalLower.includes(fileName) || goalLower.includes(fileBase);
+  });
+  
+  // Check 2: Do steps mention specific files or packages?
+  let specificStepCount = 0;
+  for (const step of plan.steps) {
+    const stepLower = step.description.toLowerCase();
+    
+    // Check for file references
+    const hasStepFileRef = contextFiles.some(file => {
+      const fileName = file.split('/').pop()?.toLowerCase() || '';
+      const fileBase = fileName.replace(/\.[^/.]+$/, '');
+      return stepLower.includes(fileName) || stepLower.includes(fileBase);
+    });
+    
+    // Check for directory references (src/, components/, etc.)
+    const hasDirectoryRef = /src\/|components\/|lib\/|utils\/|pages\/|api\/|services\//.test(stepLower);
+    
+    // Check for package/technology references from stack
+    const hasTechRef = context.inferred_stack.some(tech => 
+      stepLower.includes(tech.toLowerCase())
+    );
+    
+    if (hasStepFileRef || hasDirectoryRef || hasTechRef) {
+      specificStepCount++;
+    }
+  }
+  
+  // Check 3: Generic warning keywords
+  const genericKeywords = [
+    'enhance the application',
+    'improve user experience',
+    'additional features',
+    'align with project goals',
+    'follow best practices',
+    'meet project standards',
+    'analyze user requirements',
+    'identify new features'
+  ];
+  
+  const hasGenericKeywords = genericKeywords.some(keyword => 
+    goalLower.includes(keyword) || 
+    plan.steps.some(step => step.description.toLowerCase().includes(keyword))
+  );
+  
+  // Validation logic
+  if (!hasFileReference && specificStepCount === 0) {
+    reasons.push('No specific file or directory references found in goal or steps');
+  }
+  
+  if (specificStepCount < Math.floor(plan.steps.length / 2)) {
+    reasons.push(`Only ${specificStepCount} out of ${plan.steps.length} steps reference specific project elements`);
+  }
+  
+  if (hasGenericKeywords) {
+    reasons.push('Plan contains generic keywords that could apply to any project');
+  }
+  
+  // Plan is specific if it has no validation failures
+  const isSpecific = reasons.length === 0;
+  
+  return { isSpecific, reasons };
 }
 
 /**

@@ -10,6 +10,9 @@ import { renderCheckpointCreatedCard } from './CheckpointCreatedCard';
 import { renderTestResultCard, renderNoTestRunnerCard, renderRunTestsButton } from './TestResultCard';
 import { renderContextCollectedCard, renderAnswerStreamCard } from './AnswerCard';
 import { renderPlanCard } from './PlanCard';
+import { renderApprovalCard } from './ApprovalCard';
+import { getPendingApprovalById } from '../selectors/approvalSelectors';
+import { renderClarificationCard } from './ClarificationCard';
 
 export interface EventCardConfig {
   icon: string;
@@ -48,6 +51,16 @@ export const EVENT_CARD_MAP: Record<EventType, EventCardConfig> = {
       return `${steps.length} steps${criteriaStr ? ' | ' + criteriaStr : ' | A clear, actionable plan is created and approved'}`;
     }
   },
+  plan_revised: {
+    icon: '📝',
+    title: 'Plan Revised',
+    color: 'var(--vscode-charts-purple)',
+    getSummary: (e) => {
+      const plan = (e.payload.plan || e.payload) as any;
+      const steps = plan?.steps || [];
+      return `${steps.length} steps (revised)`;
+    }
+  },
   mission_breakdown_created: {
     icon: '🎯',
     title: 'Mission Breakdown Created',
@@ -62,6 +75,36 @@ export const EVENT_CARD_MAP: Record<EventType, EventCardConfig> = {
     title: 'Mission Selected',
     color: 'var(--vscode-charts-blue)',
     getSummary: (e) => `Mission ID: ${(e.payload.mission_id as string) || 'unknown'}`
+  },
+  mission_started: {
+    icon: '🚀',
+    title: 'Mission Started',
+    color: 'var(--vscode-charts-green)',
+    getSummary: (e) => {
+      const stepsCount = e.payload.steps_count as number || 0;
+      const goal = e.payload.goal as string || '';
+      return `${stepsCount} steps | ${goal}`;
+    }
+  },
+  step_started: {
+    icon: '▶️',
+    title: 'Step Started',
+    color: 'var(--vscode-charts-blue)',
+    getSummary: (e) => {
+      const stepIndex = e.payload.step_index as number;
+      const description = e.payload.description as string || '';
+      return `Step ${stepIndex + 1}: ${description}`;
+    }
+  },
+  step_completed: {
+    icon: '✅',
+    title: 'Step Completed',
+    color: 'var(--vscode-charts-green)',
+    getSummary: (e) => {
+      const success = e.payload.success as boolean;
+      const stepIndex = e.payload.step_index as number;
+      return `Step ${stepIndex + 1} ${success ? 'completed successfully' : 'failed'}`;
+    }
   },
   stage_changed: {
     icon: '🔄',
@@ -331,6 +374,52 @@ export const EVENT_CARD_MAP: Record<EventType, EventCardConfig> = {
     title: 'Stream Complete',
     color: 'var(--vscode-charts-green)',
     getSummary: () => 'Streaming finished'
+  },
+
+  // Prompt Quality Gate (PLAN mode)
+  prompt_assessed: {
+    icon: '🔍',
+    title: 'Prompt Assessed',
+    color: 'var(--vscode-charts-purple)',
+    getSummary: (e) => {
+      const clarity = e.payload.clarity as string || 'unknown';
+      const intent = e.payload.intent as string || 'plan_like';
+      const score = e.payload.clarity_score as number;
+      return `Clarity: ${clarity}${score !== undefined ? ` (${score})` : ''} | Intent: ${intent}`;
+    }
+  },
+  prompt_rewritten: {
+    icon: '📝',
+    title: 'Prompt Refined',
+    color: 'var(--vscode-charts-yellow)',
+    getSummary: (e) => 'Prompt rewritten for better plan generation'
+  },
+  clarification_requested: {
+    icon: '❓',
+    title: 'Clarification Needed',
+    color: 'var(--vscode-charts-orange)',
+    getSummary: (e) => {
+      const question = e.payload.question as string || '';
+      return question.length > 60 ? question.substring(0, 60) + '...' : question;
+    }
+  },
+  clarification_presented: {
+    icon: '🎯',
+    title: 'Choose Focus Area',
+    color: 'var(--vscode-charts-purple)',
+    getSummary: (e) => {
+      const options = (e.payload.options as any[]) || [];
+      return `${options.length} options available`;
+    }
+  },
+  clarification_received: {
+    icon: '💬',
+    title: 'Focus Selected',
+    color: 'var(--vscode-charts-green)',
+    getSummary: (e) => {
+      const title = e.payload.title as string || 'Selection made';
+      return title;
+    }
   }
 };
 
@@ -351,6 +440,11 @@ export const STAGE_CONFIG: Record<Stage, { title: string; icon: string; color: s
  * Uses specialized renderers for certain event types
  */
 export function renderEventCard(event: Event, taskId?: string): string {
+  // DEBUG: Log event type and whether we have a config for it
+  console.log('[MissionFeed] renderEventCard called for type:', event.type);
+  console.log('[MissionFeed] EVENT_CARD_MAP has config:', event.type in EVENT_CARD_MAP);
+  console.log('[MissionFeed] Config value:', EVENT_CARD_MAP[event.type]);
+  
   // ANSWER mode specialized renderers
   if (event.type === 'context_collected') {
     return renderContextCollectedCard(event);
@@ -368,6 +462,26 @@ export function renderEventCard(event: Event, taskId?: string): string {
   // Skip rendering stream_complete events (streaming completion handled by UI)
   if (event.type === 'stream_complete') {
     return '';
+  }
+  
+  // PLAN mode clarification card (v2 deterministic pipeline)
+  if (event.type === 'clarification_presented' && taskId) {
+    return renderClarificationCard(event, taskId);
+  }
+  
+  // Skip clarification_received (it's informational, not a card)
+  if (event.type === 'clarification_received') {
+    const title = event.payload.title as string || 'Focus selected';
+    return `
+      <div class="event-card">
+        <div class="event-card-header">
+          <span class="event-icon" style="color: var(--vscode-charts-green)">✓</span>
+          <span class="event-type">Focus Selected</span>
+          <span class="event-timestamp">${formatTimestamp(event.timestamp)}</span>
+        </div>
+        <div class="event-summary">${escapeHtml(title)}</div>
+      </div>
+    `;
   }
   
   // PLAN mode specialized renderer
@@ -528,6 +642,33 @@ export function renderMissionTimeline(events: Event[]): string {
       items.push(renderedCard);
     }
 
+    // INLINE APPROVAL RENDERING: After approval_requested, render inline approval card
+    if (event.type === 'approval_requested' && taskId) {
+      const approvalId = event.payload.approval_id as string;
+      
+      // Check if this approval is still pending (not yet resolved)
+      const isPending = getPendingApprovalById(events, approvalId);
+      
+      if (isPending) {
+        // Render inline approval card
+        items.push(renderApprovalCard({
+          approvalEvent: event,
+          onApprove: (id) => {}, // Handler is in global scope
+          onReject: (id) => {}   // Handler is in global scope
+        }));
+      }
+    }
+
+    // INLINE EXECUTE BUTTON: After execution_paused with awaiting_execute_plan, show Execute Plan button
+    if (event.type === 'execution_paused' && taskId) {
+      const reason = event.payload.reason as string;
+      
+      // ONLY show Execute Plan button when reason is EXACTLY "awaiting_execute_plan" (after approval)
+      if (reason === 'awaiting_execute_plan') {
+        items.push(renderExecutePlanButton(taskId));
+      }
+    }
+
     // After diff_applied, show "Run Tests" button (if not already run)
     if (event.type === 'diff_applied' && !testAlreadyRun && taskId) {
       items.push(renderRunTestsButton(taskId));
@@ -543,6 +684,22 @@ export function renderMissionTimeline(events: Event[]): string {
   }
 
   return items.join('');
+}
+
+/**
+ * Render Execute Plan button (inline CTA)
+ */
+function renderExecutePlanButton(taskId: string): string {
+  return `
+    <div class="inline-action-button">
+      <button class="execute-plan-btn" onclick="handleExecutePlan('${taskId}')">
+        ▶️ Execute Plan
+      </button>
+      <div class="action-hint">
+        Click to begin executing the approved plan
+      </div>
+    </div>
+  `;
 }
 
 /**

@@ -1004,6 +1004,153 @@ export function getWebviewContent(): string {
       flex-shrink: 0;
     }
 
+    /* ===== CLARIFICATION CARD (PLAN mode v2) ===== */
+    .clarification-card {
+      background: var(--vscode-editor-background);
+      border: 1px solid var(--vscode-panel-border);
+      border-radius: 8px;
+      padding: 16px;
+      margin: 12px 0;
+    }
+
+    .clarification-card[data-state="selecting"] .clarification-btn:not(.selected) {
+      opacity: 0.5;
+      pointer-events: none;
+    }
+
+    .clarification-card[data-state="processing"] .clarification-options,
+    .clarification-card[data-state="processing"] .clarification-skip {
+      display: none;
+    }
+
+    .clarification-card[data-state="processing"] .clarification-processing {
+      display: flex !important;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      padding: 20px;
+      color: var(--vscode-descriptionForeground);
+    }
+
+    .clarification-card-header {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-weight: 600;
+      font-size: 14px;
+      color: var(--vscode-editor-foreground);
+    }
+
+    .clarification-icon {
+      font-size: 18px;
+    }
+
+    .clarification-card-subtitle {
+      font-size: 12px;
+      color: var(--vscode-descriptionForeground);
+      margin: 8px 0 16px 0;
+    }
+
+    .clarification-options {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+
+    .clarification-btn {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      width: 100%;
+      padding: 12px;
+      background: var(--vscode-button-secondaryBackground);
+      border: 1px solid var(--vscode-panel-border);
+      border-radius: 6px;
+      cursor: pointer;
+      text-align: left;
+      color: var(--vscode-editor-foreground);
+      transition: background 0.15s, border-color 0.15s;
+    }
+
+    .clarification-btn:hover {
+      background: var(--vscode-button-secondaryHoverBackground);
+      border-color: var(--vscode-focusBorder);
+    }
+
+    .clarification-btn:disabled {
+      cursor: not-allowed;
+      opacity: 0.5;
+    }
+
+    .clarification-btn.selected {
+      border-color: var(--vscode-focusBorder);
+      background: var(--vscode-button-secondaryHoverBackground);
+    }
+
+    .clarification-btn-content {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+      flex: 1;
+    }
+
+    .clarification-btn-title {
+      font-weight: 600;
+      font-size: 13px;
+    }
+
+    .clarification-btn-desc {
+      font-size: 11px;
+      color: var(--vscode-descriptionForeground);
+    }
+
+    .clarification-btn-evidence {
+      font-size: 10px;
+      color: var(--vscode-textLink-foreground);
+      font-style: italic;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      max-width: 280px;
+    }
+
+    .clarification-btn-spinner {
+      animation: spin 1s linear infinite;
+    }
+
+    .clarification-skip {
+      margin-top: 12px;
+      text-align: center;
+    }
+
+    .clarification-skip-link {
+      background: none;
+      border: none;
+      color: var(--vscode-textLink-foreground);
+      font-size: 12px;
+      cursor: pointer;
+      padding: 4px 8px;
+    }
+
+    .clarification-skip-link:hover {
+      text-decoration: underline;
+    }
+
+    .clarification-processing {
+      padding: 20px;
+      text-align: center;
+    }
+
+    .processing-spinner {
+      animation: spin 1s linear infinite;
+      display: inline-block;
+    }
+
+    @keyframes spin {
+      0% { transform: rotate(0deg); }
+      100% { transform: rotate(360deg); }
+    }
+
     /* ===== RESPONSIVE ===== */
     @media (max-width: 350px) {
       .composer-controls {
@@ -1505,19 +1652,12 @@ export function getWebviewContent(): string {
         const items = [];
         const pendingApprovals = getPendingApprovals(events);
 
-        // Show pending approvals at the top
+        // OPTIONAL: Show pending approvals summary at the top (not interactive, just FYI)
         if (pendingApprovals.length > 0) {
-          items.push('<div class="approval-section-header">⚠️ Pending Approvals</div>');
-          for (const approval of pendingApprovals) {
-            items.push(renderApprovalCard(approval.requestEvent));
-          }
+          items.push(\`<div class="approval-section-header" style="background: var(--vscode-inputValidation-warningBackground); padding: 8px 12px; border-radius: 4px; font-size: 11px; margin-bottom: 12px;">⚠️ \${pendingApprovals.length} Pending Approval(s) - see below in timeline</div>\`);
         }
 
-        // Show "Execute Plan" CTA if conditions are met
-        const executePlanCTA = renderExecutePlanCTA(events);
-        if (executePlanCTA) {
-          items.push(executePlanCTA);
-        }
+        // NO top-level Execute Plan button - only inline after execution_paused event
 
         let currentStage = 'none';
 
@@ -1540,6 +1680,51 @@ export function getWebviewContent(): string {
           // Render event card
           items.push(renderEventCard(event));
           
+          // INLINE APPROVAL: After approval_requested event, render inline approval card
+          if (event.type === 'approval_requested') {
+            const approvalId = event.payload.approval_id;
+            // Check if this approval is still pending
+            const isPending = pendingApprovals.find(p => p.approvalId === approvalId);
+            if (isPending) {
+              items.push(renderApprovalCard(event));
+            }
+          }
+          
+          // INLINE EXECUTE BUTTON: After execution_paused with reason=awaiting_execute_plan, show Execute Plan button inline
+          if (event.type === 'execution_paused') {
+            const reason = event.payload.reason || '';
+            // ONLY show inline button when reason is awaiting_execute_plan (after plan approval)
+            if (reason === 'awaiting_execute_plan') {
+              items.push(\`
+                <div style="margin: 16px 0; padding: 16px; background: var(--vscode-editor-inactiveSelectionBackground); border: 2px solid var(--vscode-charts-green); border-radius: 6px; animation: fadeIn 0.3s ease-in;">
+                  <button 
+                    onclick="handleExecutePlan()" 
+                    style="
+                      width: 100%; 
+                      padding: 12px 20px; 
+                      font-size: 14px; 
+                      font-weight: 700; 
+                      background: var(--vscode-charts-green); 
+                      color: #fff; 
+                      border: none; 
+                      border-radius: 6px; 
+                      cursor: pointer; 
+                      transition: all 0.2s ease; 
+                      box-shadow: 0 2px 8px rgba(40, 167, 69, 0.3);
+                    " 
+                    onmouseover="this.style.transform = 'translateY(-2px)'; this.style.boxShadow = '0 4px 12px rgba(40, 167, 69, 0.5)';" 
+                    onmouseout="this.style.transform = 'translateY(0)'; this.style.boxShadow = '0 2px 8px rgba(40, 167, 69, 0.3)';"
+                  >
+                    🚀 Execute Plan
+                  </button>
+                  <div style="text-align: center; margin-top: 8px; font-size: 11px; color: var(--vscode-descriptionForeground); font-style: italic;">
+                    ✓ Plan approved - Click to begin execution
+                  </div>
+                </div>
+              \`);
+            }
+          }
+          
           // Show streaming answer card after tool_start for llm_answer
           // Only show if we have streaming data AND this is the tool_start event
           if (event.type === 'tool_start' && event.payload.tool === 'llm_answer' && state.streamingAnswer && state.streamingAnswer.text) {
@@ -1550,73 +1735,7 @@ export function getWebviewContent(): string {
         return items.join('');
       }
 
-      // Render "Execute Plan" CTA when appropriate
-      function renderExecutePlanCTA(events) {
-        // Conditions:
-        // 1. effectiveMode === MISSION
-        // 2. plan_created exists
-        // 3. execution has not started yet (no retrieval_started)
-        // 4. no pending approvals
-
-        // Get effective mode from latest mode_set event
-        let effectiveMode = null;
-        for (let i = events.length - 1; i >= 0; i--) {
-          if (events[i].type === 'mode_set') {
-            effectiveMode = events[i].payload.effectiveMode || events[i].payload.mode;
-            break;
-          }
-        }
-
-        if (effectiveMode !== 'MISSION') {
-          return null;
-        }
-
-        // Check if plan_created exists
-        const hasPlan = events.some(e => e.type === 'plan_created');
-        if (!hasPlan) {
-          return null;
-        }
-
-        // Check if retrieval has started (execution started)
-        const retrievalStarted = events.some(e => e.type === 'retrieval_started');
-        if (retrievalStarted) {
-          return null;
-        }
-
-        // Check for pending approvals
-        const pendingApprovals = hasPendingApprovals(events);
-        const isDisabled = pendingApprovals;
-
-        return \`
-          <div style="margin: 16px 0;">
-            <button 
-              id="executePlanBtn" 
-              class="execute-plan-btn" 
-              onclick="handleExecutePlan()"
-              \${isDisabled ? 'disabled' : ''}
-              style="
-                width: 100%;
-                padding: 12px 20px;
-                font-size: 14px;
-                font-weight: 700;
-                background: var(--vscode-charts-green);
-                color: #fff;
-                border: none;
-                border-radius: 6px;
-                cursor: \${isDisabled ? 'not-allowed' : 'pointer'};
-                transition: all 0.2s ease;
-                opacity: \${isDisabled ? '0.5' : '1'};
-                box-shadow: 0 2px 8px rgba(40, 167, 69, 0.3);
-              "
-              onmouseover="if (!this.disabled) this.style.transform = 'translateY(-2px)'; if (!this.disabled) this.style.boxShadow = '0 4px 12px rgba(40, 167, 69, 0.5)';"
-              onmouseout="this.style.transform = 'translateY(0)'; this.style.boxShadow = '0 2px 8px rgba(40, 167, 69, 0.3)';"
-            >
-              🚀 Execute Plan
-            </button>
-            \${isDisabled ? '<div style="text-align: center; margin-top: 8px; font-size: 11px; color: var(--vscode-descriptionForeground);">Resolve pending approvals first</div>' : ''}
-          </div>
-        \`;
-      }
+      // REMOVED: renderExecutePlanCTA() - Execute Plan button is now ONLY rendered inline after execution_paused event
 
       // Render Stage Header
       function renderStageHeader(stage) {
@@ -1729,8 +1848,94 @@ export function getWebviewContent(): string {
         \`;
       }
 
+      // Render Clarification Card (PLAN mode v2)
+      function renderClarificationCard(event) {
+        const taskId = event.task_id;
+        const options = event.payload.options || [];
+        const anchorFilesCount = event.payload.anchor_files_count || 0;
+        const fallbackOptionId = event.payload.fallback_option_id || 'fallback-suggest';
+
+        // Build header text based on context quality
+        const headerText = anchorFilesCount > 0
+          ? \`Based on your project structure • \${anchorFilesCount} relevant files found\`
+          : 'Based on project analysis • Limited context available';
+
+        // Build option buttons HTML
+        const optionsHtml = options.map(opt => {
+          const evidenceText = (opt.evidence || []).length > 0
+            ? opt.evidence.slice(0, 3).join(', ')
+            : '';
+          
+          const isSkip = opt.id === fallbackOptionId || opt.id === 'fallback-suggest';
+          const buttonClass = isSkip ? 'clarification-btn skip-btn' : 'clarification-btn';
+          
+          return \`
+            <button 
+              class="\${buttonClass}" 
+              data-option-id="\${escapeHtml(opt.id)}"
+              data-task-id="\${escapeHtml(taskId)}"
+              onclick="handleClarificationSelect('\${escapeHtml(taskId)}', '\${escapeHtml(opt.id)}')"
+            >
+              <div class="clarification-btn-content">
+                <span class="clarification-btn-title">\${escapeHtml(opt.title)}</span>
+                <span class="clarification-btn-desc">\${escapeHtml(opt.description)}</span>
+                \${evidenceText ? \`<span class="clarification-btn-evidence">\${escapeHtml(evidenceText)}</span>\` : ''}
+              </div>
+              <span class="clarification-btn-spinner" style="display: none;">⏳</span>
+            </button>
+          \`;
+        }).join('');
+
+        return \`
+          <div class="clarification-card" id="clarification-card-\${escapeHtml(taskId)}" data-state="idle">
+            <div class="clarification-card-header">
+              <span class="clarification-icon">🎯</span>
+              <span class="clarification-title">Choose a Focus Area</span>
+            </div>
+            <div class="clarification-card-subtitle">
+              \${escapeHtml(headerText)}
+            </div>
+            <div class="clarification-options">
+              \${optionsHtml}
+            </div>
+            <div class="clarification-skip">
+              <button 
+                class="clarification-skip-link" 
+                onclick="handleClarificationSkip('\${escapeHtml(taskId)}')"
+              >
+                Skip and let me suggest ideas →
+              </button>
+            </div>
+            <div class="clarification-processing" style="display: none;">
+              <span class="processing-spinner">⏳</span>
+              <span class="processing-text">Generating plan...</span>
+            </div>
+          </div>
+        \`;
+      }
+
       // Render Event Card
       function renderEventCard(event) {
+        // Special handling for clarification_presented - render interactive card
+        if (event.type === 'clarification_presented') {
+          return renderClarificationCard(event);
+        }
+
+        // Special handling for clarification_received - simple confirmation
+        if (event.type === 'clarification_received') {
+          const title = event.payload.title || 'Selection made';
+          return \`
+            <div class="event-card" style="border-left-color: var(--vscode-charts-green);">
+              <div class="event-card-header">
+                <span class="event-icon" style="color: var(--vscode-charts-green);">✅</span>
+                <span class="event-type">Focus Selected</span>
+                <span class="event-timestamp">\${formatTimestamp(event.timestamp)}</span>
+              </div>
+              <div class="event-summary">\${escapeHtml(title)}</div>
+            </div>
+          \`;
+        }
+
         // Special handling for plan_created - render detailed PlanCard
         if (event.type === 'plan_created') {
           console.log('🔍 [PLAN DEBUG] plan_created event detected!');
@@ -1796,6 +2001,53 @@ export function getWebviewContent(): string {
             title: 'Mode Set',
             color: 'var(--vscode-charts-purple)',
             getSummary: (e) => \`Mode: \${e.payload.mode || e.mode}\`
+          },
+          model_fallback_used: {
+            icon: '🔄',
+            title: 'Model Fallback',
+            color: 'var(--vscode-charts-orange)',
+            getSummary: (e) => {
+              const requested = e.payload.requested_model || e.payload.userSelectedModel || 'unknown';
+              const fallback = e.payload.fallback_model || e.payload.actualModel || 'used fallback';
+              // If we don't have fallback but have actualModel, show that
+              if (!e.payload.fallback_model && e.payload.actualModel) {
+                return \`Using: \${fallback}\`;
+              }
+              return \`\${requested} → \${fallback}\`;
+            }
+          },
+          prompt_assessed: {
+            icon: '🔍',
+            title: 'Prompt Assessed',
+            color: 'var(--vscode-charts-blue)',
+            getSummary: (e) => {
+              const clarity = e.payload.clarity || 'unknown';
+              const intent = e.payload.intent || e.payload.detected_intent || 'plan_like';
+              const score = e.payload.clarity_score;
+              return \`Clarity: \${clarity}\${score !== undefined ? ' (' + score + ')' : ''} | Intent: \${intent}\`;
+            }
+          },
+          clarification_requested: {
+            icon: '❓',
+            title: 'Clarification Requested',
+            color: 'var(--vscode-charts-yellow)',
+            getSummary: (e) => {
+              const questions = e.payload.questions || [];
+              const missingInfo = e.payload.missing_info || [];
+              if (questions.length > 0) {
+                return \`\${questions.length} question(s) - please provide more details\`;
+              }
+              if (missingInfo.length > 0) {
+                return \`Missing: \${missingInfo.join(', ')}\`;
+              }
+              return 'Please provide more details';
+            }
+          },
+          clarification_received: {
+            icon: '✅',
+            title: 'Clarification Received',
+            color: 'var(--vscode-charts-green)',
+            getSummary: (e) => e.payload.clarification || 'User provided clarification'
           },
           plan_created: {
             icon: '📋',
@@ -1939,11 +2191,65 @@ export function getWebviewContent(): string {
             title: 'Project Context Collected',
             color: 'var(--vscode-charts-blue)',
             getSummary: (e) => {
+              // Check if this is PLAN mode light context
+              if (e.payload.level === 'light') {
+                const filesScanned = e.payload.files_scanned || 0;
+                const anchorFiles = (e.payload.anchor_files || []).length;
+                const stack = e.payload.stack || 'unknown';
+                const todoCount = e.payload.todo_count;
+                return \`\${filesScanned} files scanned, \${anchorFiles} anchor files\${stack !== 'unknown' ? ' | Stack: ' + stack : ''}\${todoCount ? ' | TODOs: ' + todoCount : ''}\`;
+              }
+              // ANSWER mode context
               const filesCount = (e.payload.files_included || []).length;
               const totalLines = e.payload.total_lines || 0;
               const stack = (e.payload.inferred_stack || []).join(', ');
               return \`\${filesCount} files, \${totalLines} lines\${stack ? ' | Stack: ' + stack : ''}\`;
             }
+          },
+          mission_started: {
+            icon: '🚀',
+            title: 'Mission Started',
+            color: 'var(--vscode-charts-green)',
+            getSummary: (e) => {
+              const stepsCount = e.payload.steps_count || 0;
+              const goal = e.payload.goal || '';
+              return \`\${stepsCount} steps | \${goal}\`;
+            }
+          },
+          step_started: {
+            icon: '▶️',
+            title: 'Step Started',
+            color: 'var(--vscode-charts-blue)',
+            getSummary: (e) => {
+              const stepIndex = e.payload.step_index || 0;
+              const description = e.payload.description || '';
+              return \`Step \${stepIndex + 1}: \${description}\`;
+            }
+          },
+          step_completed: {
+            icon: '✅',
+            title: 'Step Completed',
+            color: 'var(--vscode-charts-green)',
+            getSummary: (e) => {
+              const success = e.payload.success !== false;
+              const stepIndex = e.payload.step_index || 0;
+              return \`Step \${stepIndex + 1} \${success ? 'completed successfully' : 'failed'}\`;
+            }
+          },
+          clarification_presented: {
+            icon: '🎯',
+            title: 'Choose Focus Area',
+            color: 'var(--vscode-charts-purple)',
+            getSummary: (e) => {
+              const options = (e.payload.options || []);
+              return \`\${options.length} options available\`;
+            }
+          },
+          clarification_received: {
+            icon: '✅',
+            title: 'Focus Selected',
+            color: 'var(--vscode-charts-green)',
+            getSummary: (e) => e.payload.title || 'Selection made'
           }
         };
         return eventCardMap[type];
@@ -2532,6 +2838,142 @@ export function getWebviewContent(): string {
           }, 1000);
         }
       };
+
+      // ===== CLARIFICATION HANDLERS (PLAN mode v2) =====
+      // Track selection state to prevent duplicates
+      let clarificationSelectionInProgress = false;
+
+      window.handleClarificationSelect = function(taskId, optionId) {
+        // Prevent duplicate clicks
+        if (clarificationSelectionInProgress) {
+          console.log('[ClarificationCard] Selection already in progress, ignoring');
+          return;
+        }
+
+        const card = document.getElementById('clarification-card-' + taskId);
+        if (!card) {
+          console.error('[ClarificationCard] Card not found');
+          return;
+        }
+
+        const currentState = card.getAttribute('data-state');
+        if (currentState !== 'idle') {
+          console.log('[ClarificationCard] Not in idle state, ignoring click');
+          return;
+        }
+
+        // Set selecting state immediately
+        clarificationSelectionInProgress = true;
+        card.setAttribute('data-state', 'selecting');
+
+        // Find and highlight the selected button
+        const buttons = card.querySelectorAll('.clarification-btn');
+        buttons.forEach(btn => {
+          const btnOptionId = btn.getAttribute('data-option-id');
+          if (btnOptionId === optionId) {
+            btn.classList.add('selected');
+            const spinner = btn.querySelector('.clarification-btn-spinner');
+            if (spinner) spinner.style.display = 'inline-block';
+          }
+          btn.disabled = true;
+        });
+
+        // Disable skip link
+        const skipLink = card.querySelector('.clarification-skip-link');
+        if (skipLink) skipLink.disabled = true;
+
+        // Send selection to extension
+        if (typeof vscode !== 'undefined') {
+          vscode.postMessage({
+            type: 'ordinex:selectClarificationOption',
+            task_id: taskId,
+            option_id: optionId
+          });
+          
+          // Transition to processing after short delay
+          setTimeout(() => {
+            card.setAttribute('data-state', 'processing');
+          }, 500);
+        } else {
+          console.error('[ClarificationCard] VS Code API not available');
+          // Reset state on error
+          clarificationSelectionInProgress = false;
+          card.setAttribute('data-state', 'idle');
+          buttons.forEach(btn => {
+            btn.classList.remove('selected');
+            const spinner = btn.querySelector('.clarification-btn-spinner');
+            if (spinner) spinner.style.display = 'none';
+            btn.disabled = false;
+          });
+          if (skipLink) skipLink.disabled = false;
+        }
+      };
+
+      window.handleClarificationSkip = function(taskId) {
+        // Prevent duplicate clicks
+        if (clarificationSelectionInProgress) {
+          console.log('[ClarificationCard] Selection already in progress, ignoring skip');
+          return;
+        }
+
+        const card = document.getElementById('clarification-card-' + taskId);
+        if (!card) {
+          console.error('[ClarificationCard] Card not found');
+          return;
+        }
+
+        const currentState = card.getAttribute('data-state');
+        if (currentState !== 'idle') {
+          console.log('[ClarificationCard] Not in idle state, ignoring skip');
+          return;
+        }
+
+        // Set selecting state immediately
+        clarificationSelectionInProgress = true;
+        card.setAttribute('data-state', 'selecting');
+
+        // Disable all buttons
+        const buttons = card.querySelectorAll('.clarification-btn');
+        buttons.forEach(btn => {
+          btn.disabled = true;
+        });
+
+        const skipLink = card.querySelector('.clarification-skip-link');
+        if (skipLink) {
+          skipLink.textContent = 'Generating ideas...';
+          skipLink.disabled = true;
+        }
+
+        // Send skip to extension
+        if (typeof vscode !== 'undefined') {
+          vscode.postMessage({
+            type: 'ordinex:skipClarification',
+            task_id: taskId
+          });
+          
+          // Transition to processing after short delay
+          setTimeout(() => {
+            card.setAttribute('data-state', 'processing');
+          }, 500);
+        } else {
+          console.error('[ClarificationCard] VS Code API not available');
+          // Reset state on error
+          clarificationSelectionInProgress = false;
+          card.setAttribute('data-state', 'idle');
+          buttons.forEach(btn => {
+            btn.disabled = false;
+          });
+          if (skipLink) {
+            skipLink.textContent = 'Skip and let me suggest ideas →';
+            skipLink.disabled = false;
+          }
+        }
+      };
+
+      // Reset clarification state when events update
+      function resetClarificationState() {
+        clarificationSelectionInProgress = false;
+      }
 
       // ===== EDIT/CANCEL PLAN HANDLERS =====
       window.handleEditPlan = function(taskId, planEventId) {

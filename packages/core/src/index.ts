@@ -100,6 +100,8 @@ export {
 export {
   generateTemplatePlan,
   generateLLMPlan,
+  refinePlan,
+  shouldBreakIntoMissions,
   PlanPayload,
   StructuredPlan
 } from './planGenerator';
@@ -136,3 +138,34 @@ export {
   PlanContextBundle,
   PlanContextCollectionOptions
 } from './planContextCollector';
+
+// Export Mission executor
+export {
+  MissionExecutor
+} from './missionExecutor';
+
+// Export Prompt Quality Judge
+export {
+  PromptQualityJudge,
+  combinePromptWithClarification,
+  PromptQualityAssessment,
+  AssessmentContext
+} from './promptQualityJudge';
+
+// Export Plan Enhancer (deterministic PLAN mode pipeline)
+export {
+  collectLightContext,
+  assessPromptClarity,
+  shouldShowClarification,
+  generateClarificationOptions,
+  buildEnrichedPrompt,
+  buildFallbackPrompt,
+  isClarificationPending,
+  getPendingClarificationOptions,
+  LightContextBundle,
+  PromptAssessment,
+  ClarificationOption,
+  ClarificationPresented,
+  CONTEXT_TIMEOUT_MS,
+  TODO_SCAN_TIMEOUT_MS
+} from './planEnhancer';
