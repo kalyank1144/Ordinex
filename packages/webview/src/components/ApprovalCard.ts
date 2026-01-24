@@ -169,16 +169,40 @@ function renderApprovalDetails(approvalType: string, details: Record<string, unk
 
   if (approvalType === 'apply_diff') {
     // Handle both array and object types for files_changed
-    let filesChanged: Array<{path: string; action: string; added_lines: number; removed_lines: number}> | undefined;
+    let filesChanged: Array<{path: string; action?: string; added_lines?: number; removed_lines?: number}> = [];
     
     const rawFilesChanged = details.files_changed;
+    
+    // COMPREHENSIVE LOGGING
+    console.log('[ApprovalCard] DEBUG apply_diff details:', JSON.stringify(details, null, 2));
+    console.log('[ApprovalCard] rawFilesChanged type:', typeof rawFilesChanged);
+    console.log('[ApprovalCard] rawFilesChanged isArray:', Array.isArray(rawFilesChanged));
+    console.log('[ApprovalCard] rawFilesChanged value:', rawFilesChanged);
+    
     if (Array.isArray(rawFilesChanged)) {
-      filesChanged = rawFilesChanged as Array<{path: string; action: string; added_lines: number; removed_lines: number}>;
+      filesChanged = rawFilesChanged.map(file => {
+        console.log('[ApprovalCard] Processing file:', file, 'type:', typeof file);
+        
+        if (typeof file === 'string') {
+          return { path: file };
+        } else if (file && typeof file === 'object') {
+          const result = {
+            path: file.path || String(file),
+            action: file.action,
+            added_lines: file.added_lines,
+            removed_lines: file.removed_lines
+          };
+          console.log('[ApprovalCard] Mapped to:', result);
+          return result;
+        }
+        console.log('[ApprovalCard] Fallback for:', file);
+        return { path: String(file) };
+      });
     } else {
-      // Log for debugging
-      console.warn('[ApprovalCard] files_changed is not an array:', typeof rawFilesChanged, rawFilesChanged);
-      filesChanged = undefined;
+      console.error('[ApprovalCard] files_changed is not an array!', typeof rawFilesChanged, rawFilesChanged);
     }
+    
+    console.log('[ApprovalCard] Final filesChanged:', filesChanged);
     
     const additions = details.additions as number | undefined;
     const deletions = details.deletions as number | undefined;
@@ -191,13 +215,7 @@ function renderApprovalDetails(approvalType: string, details: Record<string, unk
       totalRemoved = filesChanged.reduce((sum, f) => sum + (f.removed_lines || 0), 0);
     }
     
-    console.log('[ApprovalCard] Rendering approval details:', {
-      filesChanged,
-      totalAdded,
-      totalRemoved,
-      filesChangedType: typeof filesChanged,
-      isArray: Array.isArray(filesChanged)
-    });
+    console.log('[ApprovalCard] Rendering approval with', filesChanged.length, 'files');
     
     return `
       ${filesChanged && filesChanged.length > 0 ? `

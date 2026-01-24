@@ -11,7 +11,7 @@
  * - Risk assessment
  */
 
-import { Mode } from './types';
+import { Mode, PlanMeta } from './types';
 import { EventBus } from './eventBus';
 import { LLMService, LLMConfig } from './llmService';
 import { 
@@ -23,6 +23,9 @@ import {
 /**
  * Structured plan output schema (STRICT)
  * This is what the LLM must produce in PLAN mode
+ * 
+ * planMeta is OPTIONAL advisory metadata for Step 26 detection.
+ * Plans without planMeta still work (backward compatible).
  */
 export interface StructuredPlan {
   goal: string;
@@ -34,11 +37,18 @@ export interface StructuredPlan {
     allowed_tools: string[];
   };
   steps: Array<{
-    id: string;
+    step_id: string;
     description: string;
     expected_evidence: string[];
   }>;
   risks: string[];
+  
+  /**
+   * Advisory metadata for Step 26 large plan detection.
+   * LLM provides estimates; Step 26 uses them deterministically.
+   * OPTIONAL for backward compatibility.
+   */
+  planMeta?: PlanMeta;
 }
 
 /**
@@ -182,17 +192,17 @@ export async function generateLLMPlan(
       },
       steps: [
         {
-          id: 'step_1',
+          step_id: 'step_1',
           description: 'Analyze requirements',
           expected_evidence: ['Project files examined']
         },
         {
-          id: 'step_2',
+          step_id: 'step_2',
           description: 'Implement solution',
           expected_evidence: ['Files modified']
         },
         {
-          id: 'step_3',
+          step_id: 'step_3',
           description: 'Verify results',
           expected_evidence: ['Tests passed']
         }

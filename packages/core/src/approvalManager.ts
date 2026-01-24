@@ -102,6 +102,20 @@ export class ApprovalManager {
     // Store pending approval
     this.pendingApprovals.set(approvalId, request);
 
+    // COMPREHENSIVE LOGGING
+    console.log('[ApprovalManager] ========== REQUESTING APPROVAL ==========');
+    console.log('[ApprovalManager] Type:', type);
+    console.log('[ApprovalManager] Description:', description);
+    console.log('[ApprovalManager] Details object:', details);
+    console.log('[ApprovalManager] Details JSON:', JSON.stringify(details, null, 2));
+    if (details.files_changed) {
+      console.log('[ApprovalManager] files_changed type:', typeof details.files_changed);
+      console.log('[ApprovalManager] files_changed isArray:', Array.isArray(details.files_changed));
+      console.log('[ApprovalManager] files_changed value:', details.files_changed);
+      console.log('[ApprovalManager] files_changed JSON:', JSON.stringify(details.files_changed, null, 2));
+    }
+    console.log('[ApprovalManager] ==========================================');
+
     // Emit approval_requested event (blocks execution)
     const event: Event = {
       event_id: randomUUID(),
@@ -120,6 +134,9 @@ export class ApprovalManager {
       parent_event_id: null,
     };
 
+    console.log('[ApprovalManager] Event payload.details:', event.payload.details);
+    console.log('[ApprovalManager] Event payload JSON:', JSON.stringify(event.payload, null, 2));
+
     await this.eventBus.publish(event);
 
     // Create a Promise that will be resolved when approval is granted/denied
@@ -131,6 +148,7 @@ export class ApprovalManager {
   /**
    * Resolve an approval request
    * Called by UI or approval handler
+   * IDEMPOTENT: If already resolved, logs warning and returns (no-op)
    */
   async resolveApproval(
     taskId: string,
@@ -143,7 +161,9 @@ export class ApprovalManager {
   ): Promise<void> {
     const request = this.pendingApprovals.get(approvalId);
     if (!request) {
-      throw new Error(`No pending approval found with id: ${approvalId}`);
+      // Idempotent: already resolved or never existed
+      console.warn(`[ApprovalManager] No pending approval found with id: ${approvalId} (already resolved or duplicate)`);
+      return;
     }
 
     const timestamp = new Date().toISOString();
@@ -167,6 +187,7 @@ export class ApprovalManager {
       payload: {
         approval_id: approvalId,
         decision,
+        approved: decision === 'approved', // Add boolean for UI compatibility
         scope,
         modified_details: modifiedDetails,
       },
@@ -252,6 +273,39 @@ export class ApprovalManager {
         { reason }
       );
     }
+  }
+
+  /**
+   * Cancel all pending approvals for a specific task
+   * Used when task is aborted or restarted
+   */
+  async cancelAllPending(
+    taskId: string,
+    mode: Mode,
+    stage: Stage,
+    reason: string = 'task_cancelled'
+  ): Promise<number> {
+    const approvalIdsToCancel: string[] = [];
+
+    // Collect all pending approval IDs
+    for (const [approvalId] of this.pendingApprovals.entries()) {
+      approvalIdsToCancel.push(approvalId);
+    }
+
+    // Cancel each pending approval by denying with reason
+    for (const approvalId of approvalIdsToCancel) {
+      await this.resolveApproval(
+        taskId,
+        mode,
+        stage,
+        approvalId,
+        'denied',
+        'once',
+        { reason }
+      );
+    }
+
+    return approvalIdsToCancel.length;
   }
 
   /**

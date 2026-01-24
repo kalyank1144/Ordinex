@@ -25,6 +25,14 @@ import { LLMService, LLMConfig } from './llmService';
 import { randomUUID } from 'crypto';
 import * as fs from 'fs/promises';
 import * as path from 'path';
+// New imports for spec-compliant EDIT flow
+import { selectEditContext, buildBaseShaMap, FileContextEntry } from './excerptSelector';
+import { LLMEditTool, DEFAULT_EDIT_CONSTRAINTS, DEFAULT_PRECONDITIONS, LLMEditStepInput } from './llmEditTool';
+import { createDiffId, createCheckpointId } from './atomicDiffApply';
+import { EditEvidenceManager, buildDiffProposedPayload, buildDiffAppliedPayload } from './editEvidenceManager';
+import { ParsedDiff } from './unifiedDiffParser';
+import { WorkspaceWriter, CheckpointManager as WorkspaceCheckpointManager, FilePatch } from './workspaceAdapter';
+import { computeFullSha } from './shaUtils';
 
 /**
  * Execution state for MISSION mode
@@ -51,6 +59,8 @@ interface StepExecutionResult {
 
 /**
  * MissionExecutor orchestrates step-by-step execution of approved plans
+ * 
+ * PHASE 4: Now accepts WorkspaceWriter and WorkspaceCheckpointManager for real file operations
  */
 export class MissionExecutor {
   private readonly taskId: string;
@@ -63,9 +73,12 @@ export class MissionExecutor {
   private readonly repairOrchestrator: RepairOrchestrator | null;
   private readonly workspaceRoot: string;
   private readonly llmConfig: LLMConfig;
+  private readonly workspaceWriter: WorkspaceWriter | null;
+  private readonly workspaceCheckpointMgr: WorkspaceCheckpointManager | null;
   private executionState: MissionExecutionState | null = null;
   private readonly mode: Mode = 'MISSION';
   private retrievalResults: Array<{ path: string; score: number }> = [];
+  private appliedDiffIds = new Set<string>(); // Idempotency guard
 
   constructor(
     taskId: string,
@@ -74,6 +87,8 @@ export class MissionExecutor {
     approvalManager: ApprovalManager,
     workspaceRoot: string,
     llmConfig: LLMConfig,
+    workspaceWriter: WorkspaceWriter | null = null,
+    workspaceCheckpointMgr: WorkspaceCheckpointManager | null = null,
     retriever: Retriever | null = null,
     diffManager: DiffManager | null = null,
     testRunner: TestRunner | null = null,
@@ -85,6 +100,8 @@ export class MissionExecutor {
     this.approvalManager = approvalManager;
     this.workspaceRoot = workspaceRoot;
     this.llmConfig = llmConfig;
+    this.workspaceWriter = workspaceWriter;
+    this.workspaceCheckpointMgr = workspaceCheckpointMgr;
     this.retriever = retriever;
     this.diffManager = diffManager;
     this.testRunner = testRunner;
@@ -220,7 +237,7 @@ export class MissionExecutor {
       }
 
       // Mark step as completed
-      this.executionState.completedSteps.push(step.id);
+      this.executionState.completedSteps.push(step.step_id);
       this.executionState.currentStepIndex++;
     }
   }
@@ -232,7 +249,7 @@ export class MissionExecutor {
     step: StructuredPlan['steps'][0],
     stepIndex: number
   ): Promise<StepExecutionResult> {
-    const stepId = step.id;
+    const stepId = step.step_id;
     const description = step.description;
 
     // Determine stage from step description
@@ -298,26 +315,90 @@ export class MissionExecutor {
           break;
       }
 
-      // Emit step_completed
-      await this.emitEvent({
-        event_id: randomUUID(),
-        task_id: this.taskId,
-        timestamp: new Date().toISOString(),
-        type: 'step_completed',
-        mode: this.mode,
-        stage,
-        payload: {
-          step_id: stepId,
-          step_index: stepIndex,
-          success: stageResult.success,
-        },
-        evidence_ids: [],
-        parent_event_id: null,
-      });
+      // PHASE 4: Emit step_completed ONLY on success, step_failed on failure
+      if (stageResult.success) {
+        await this.emitEvent({
+          event_id: randomUUID(),
+          task_id: this.taskId,
+          timestamp: new Date().toISOString(),
+          type: 'step_completed',
+          mode: this.mode,
+          stage,
+          payload: {
+            step_id: stepId,
+            step_index: stepIndex,
+            success: true,
+          },
+          evidence_ids: [],
+          parent_event_id: null,
+        });
+      } else {
+        // PHASE 3: Emit failure_detected for stage failures (not already emitted)
+        // Check if stage already emitted failure (indicated by pauseReason)
+        const alreadyEmittedFailure = stageResult.pauseReason && [
+          'no_files_selected',
+          'llm_cannot_edit',
+          'invalid_diff_format',
+          'empty_diff',
+          'stale_context',
+          'diff_rejected',
+          'edit_step_error',
+        ].includes(stageResult.pauseReason);
+
+        if (!alreadyEmittedFailure) {
+          // Generic failure - emit failure_detected here
+          await this.emitEvent({
+            event_id: randomUUID(),
+            task_id: this.taskId,
+            timestamp: new Date().toISOString(),
+            type: 'failure_detected',
+            mode: this.mode,
+            stage,
+            payload: {
+              reason: 'step_execution_failed',
+              step_id: stepId,
+              error: stageResult.error || 'Step execution failed',
+              stage,
+            },
+            evidence_ids: [],
+            parent_event_id: null,
+          });
+        }
+
+        // Emit step_failed to clearly terminate step
+        await this.emitEvent({
+          event_id: randomUUID(),
+          task_id: this.taskId,
+          timestamp: new Date().toISOString(),
+          type: 'step_failed',
+          mode: this.mode,
+          stage,
+          payload: {
+            step_id: stepId,
+            step_index: stepIndex,
+            success: false,
+            reason: stageResult.pauseReason || 'execution_failed',
+            error: stageResult.error,
+          },
+          evidence_ids: [],
+          parent_event_id: null,
+        });
+      }
 
       return stageResult;
     } catch (error) {
-      // Step execution failed
+      // PHASE 3: Unexpected exception in executeStep
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      const stackPreview = error instanceof Error && error.stack 
+        ? error.stack.substring(0, 500) 
+        : undefined;
+      
+      console.error('[MissionExecutor] Step execution threw exception:', errorMessage);
+      if (stackPreview) {
+        console.error('[MissionExecutor] Stack preview:', stackPreview);
+      }
+
+      // Emit failure_detected with stack preview
       await this.emitEvent({
         event_id: randomUUID(),
         task_id: this.taskId,
@@ -326,9 +407,30 @@ export class MissionExecutor {
         mode: this.mode,
         stage,
         payload: {
-          kind: 'step_execution_failed',
+          reason: 'step_execution_exception',
           step_id: stepId,
-          error: error instanceof Error ? error.message : String(error),
+          error: errorMessage,
+          stack_preview: stackPreview,
+          stage,
+        },
+        evidence_ids: [],
+        parent_event_id: null,
+      });
+
+      // Emit step_failed
+      await this.emitEvent({
+        event_id: randomUUID(),
+        task_id: this.taskId,
+        timestamp: new Date().toISOString(),
+        type: 'step_failed',
+        mode: this.mode,
+        stage,
+        payload: {
+          step_id: stepId,
+          step_index: stepIndex,
+          success: false,
+          reason: 'exception',
+          error: errorMessage,
         },
         evidence_ids: [],
         parent_event_id: null,
@@ -337,7 +439,7 @@ export class MissionExecutor {
       return {
         success: false,
         stage,
-        error: error instanceof Error ? error.message : String(error),
+        error: errorMessage,
       };
     }
   }
@@ -388,7 +490,7 @@ export class MissionExecutor {
       payload: {
         retrieval_id: retrievalId,
         query: step.description,
-        step_id: step.id,
+        step_id: step.step_id,
       },
       evidence_ids: [],
       parent_event_id: null,
@@ -416,17 +518,73 @@ export class MissionExecutor {
   }
 
   /**
-   * Execute edit stage step - UPGRADED with real LLM code generation
+   * Execute edit stage step - SPEC-COMPLIANT with unified diff flow
+   * 
+   * Event flow:
+   * step_started → stage_changed { stage: "edit" } → tool_start { tool: "llm_edit_step" }
+   * → tool_end → diff_proposed → approval_requested → approval_resolved
+   * → checkpoint_created → diff_applied → step_completed
    */
   private async executeEditStep(step: StructuredPlan['steps'][0]): Promise<StepExecutionResult> {
-    console.log(`[MissionExecutor] Executing edit step: ${step.description}`);
+    console.log(`[MissionExecutor] Executing edit step (spec-compliant): ${step.description}`);
     
+    // Check dependencies
+    if (!this.workspaceWriter || !this.workspaceCheckpointMgr) {
+      throw new Error('WorkspaceWriter and WorkspaceCheckpointManager required for edit operations');
+    }
+
+    // Initialize managers
+    const evidenceManager = new EditEvidenceManager(this.workspaceRoot);
+    const llmEditTool = new LLMEditTool(this.taskId, this.eventBus, this.mode);
+
+    let diffId: string | undefined = undefined; // Declare at function scope for error handling
+
     try {
-      // 1. Select target files deterministically
-      const targetFiles = await this.selectTargetFiles();
+      // ====================================================================
+      // STEP 3: DETERMINISTIC EXCERPT SELECTION STRATEGY
+      // ====================================================================
+      console.log('[MissionExecutor] Selecting edit context...');
       
-      if (targetFiles.length === 0) {
-        // No files to edit - pause and ask user
+      const readFile = async (filePath: string): Promise<string> => {
+        const fullPath = path.join(this.workspaceRoot, filePath);
+        return fs.readFile(fullPath, 'utf-8');
+      };
+
+      // Build fallback files list
+      const fallbackFiles = [
+        'package.json',
+        'src/index.ts', 'src/index.js',
+        'src/main.ts', 'src/main.js',
+        'src/App.ts', 'src/App.tsx', 'src/App.jsx',
+      ];
+
+      const contextResult = await selectEditContext(
+        {
+          retrievalResults: this.retrievalResults.length > 0 ? this.retrievalResults : undefined,
+          fallbackFiles,
+        },
+        step.description,
+        readFile,
+        { maxFiles: 6, maxTotalLines: 400 }
+      );
+
+      if (contextResult.file_context.length === 0) {
+        // No files to edit - emit failure and pause
+        await this.emitEvent({
+          event_id: randomUUID(),
+          task_id: this.taskId,
+          timestamp: new Date().toISOString(),
+          type: 'failure_detected',
+          mode: this.mode,
+          stage: 'edit',
+          payload: {
+            reason: 'no_files_selected',
+            details: { message: 'No files selected for editing. Please specify target files.' },
+          },
+          evidence_ids: [],
+          parent_event_id: null,
+        });
+
         await this.emitEvent({
           event_id: randomUUID(),
           task_id: this.taskId,
@@ -435,8 +593,8 @@ export class MissionExecutor {
           mode: this.mode,
           stage: 'edit',
           payload: {
-            reason: 'need_target_file',
-            message: 'No files selected for editing. Please specify target files.',
+            reason: 'needs_user_decision',
+            step_id: step.step_id,
           },
           evidence_ids: [],
           parent_event_id: null,
@@ -446,24 +604,50 @@ export class MissionExecutor {
           success: false,
           stage: 'edit',
           shouldPause: true,
-          pauseReason: 'need_target_file',
+          pauseReason: 'no_files_selected',
         };
       }
 
-      // 2. Call LLM to generate edit patches
-      const llmService = new LLMService(this.taskId, this.eventBus, this.mode, 'edit');
-      
-      const repoContextSummary = `Working directory: ${this.workspaceRoot}\nStep: ${step.description}`;
-      
-      const patchResult = await llmService.generateEditPatches({
-        stepText: step.description,
-        repoContextSummary,
-        files: targetFiles,
-        config: this.llmConfig,
+      console.log(`[MissionExecutor] Selected ${contextResult.file_context.length} files, ${contextResult.total_lines} lines`);
+
+      // Persist context selection evidence
+      await evidenceManager.persistContextSelectionEvidence({
+        step_id: step.step_id,
+        files: contextResult.evidence.files,
+        total_lines: contextResult.total_lines,
+        selection_method: contextResult.selection_method,
       });
 
-      // Check if LLM returned empty patches
-      if (!patchResult.patches || patchResult.patches.length === 0) {
+      // ====================================================================
+      // STEP 4: CALL llm_edit_step FROM EDIT STAGE
+      // ====================================================================
+      console.log('[MissionExecutor] Calling llm_edit_step...');
+
+      const llmInput: LLMEditStepInput = {
+        task_id: this.taskId,
+        step_id: step.step_id,
+        step_text: step.description,
+        repo_signals: {
+          stack: 'typescript/nodejs',
+          top_dirs: ['src', 'packages'],
+        },
+        file_context: contextResult.file_context,
+        constraints: DEFAULT_EDIT_CONSTRAINTS,
+        preconditions: DEFAULT_PRECONDITIONS,
+      };
+
+      const llmResult = await llmEditTool.execute(llmInput, this.llmConfig);
+
+      // ====================================================================
+      // STEP 5: VALIDATE TOOL OUTPUT STRICTLY
+      // ====================================================================
+      if (!llmResult.success || !llmResult.output || !llmResult.parsed_diff) {
+        const errorType = llmResult.error?.type || 'unknown';
+        const errorMessage = llmResult.error?.message || 'LLM edit tool failed';
+
+        console.error(`[MissionExecutor] LLM edit tool failed: ${errorMessage}`);
+
+        // Emit failure_detected
         await this.emitEvent({
           event_id: randomUUID(),
           task_id: this.taskId,
@@ -472,8 +656,26 @@ export class MissionExecutor {
           mode: this.mode,
           stage: 'edit',
           payload: {
-            kind: 'llm_no_changes',
-            error: 'LLM returned no patches',
+            reason: errorType === 'validation_error' ? 'llm_cannot_edit' : 
+                    errorType === 'parse_error' ? 'invalid_diff_format' :
+                    errorType === 'schema_error' ? 'invalid_diff_format' : 'llm_error',
+            details: llmResult.error?.details || { message: errorMessage },
+          },
+          evidence_ids: [],
+          parent_event_id: null,
+        });
+
+        await this.emitEvent({
+          event_id: randomUUID(),
+          task_id: this.taskId,
+          timestamp: new Date().toISOString(),
+          type: 'execution_paused',
+          mode: this.mode,
+          stage: 'edit',
+          payload: {
+            reason: 'needs_user_decision',
+            step_id: step.step_id,
+            error_type: errorType,
           },
           evidence_ids: [],
           parent_event_id: null,
@@ -482,15 +684,80 @@ export class MissionExecutor {
         return {
           success: false,
           stage: 'edit',
-          error: 'LLM returned no patches',
+          shouldPause: true,
+          pauseReason: errorType,
+          error: errorMessage,
         };
       }
 
-      // 3. Build diff proposal with files_changed
-      const filesChanged = await this.buildFilesChanged(patchResult.patches);
-      const diffId = randomUUID();
+      const { output: llmOutput, parsed_diff: parsedDiff } = llmResult;
 
-      // 4. Emit diff_proposed
+      // Check for empty diff
+      if (parsedDiff.files.length === 0) {
+        await this.emitEvent({
+          event_id: randomUUID(),
+          task_id: this.taskId,
+          timestamp: new Date().toISOString(),
+          type: 'failure_detected',
+          mode: this.mode,
+          stage: 'edit',
+          payload: {
+            reason: 'empty_diff',
+            details: { confidence: llmOutput.confidence, notes: llmOutput.notes },
+          },
+          evidence_ids: [],
+          parent_event_id: null,
+        });
+
+        await this.emitEvent({
+          event_id: randomUUID(),
+          task_id: this.taskId,
+          timestamp: new Date().toISOString(),
+          type: 'execution_paused',
+          mode: this.mode,
+          stage: 'edit',
+          payload: {
+            reason: 'needs_user_decision',
+            step_id: step.step_id,
+          },
+          evidence_ids: [],
+          parent_event_id: null,
+        });
+
+        return {
+          success: false,
+          stage: 'edit',
+          shouldPause: true,
+          pauseReason: 'empty_diff',
+        };
+      }
+
+      // ====================================================================
+      // STEP 6: PERSIST PROPOSED DIFF AS EVIDENCE
+      // ====================================================================
+      diffId = createDiffId(this.taskId, step.step_id);
+      console.log(`[MissionExecutor] Persisting diff evidence: ${diffId}`);
+
+      const { manifestPath } = await evidenceManager.persistProposedDiff({
+        diff_id: diffId,
+        task_id: this.taskId,
+        step_id: step.step_id,
+        unified_diff: llmOutput.unified_diff,
+        parsed_diff: parsedDiff,
+        source_context: contextResult.evidence.files,
+        total_lines_sent: contextResult.total_lines,
+        llm_output: llmOutput,
+      });
+
+      // Emit diff_proposed
+      const diffProposedPayload = buildDiffProposedPayload({
+        diff_id: diffId,
+        step_id: step.step_id,
+        parsed_diff: parsedDiff,
+        llm_output: llmOutput,
+        manifest_path: manifestPath,
+      });
+
       await this.emitEvent({
         event_id: randomUUID(),
         task_id: this.taskId,
@@ -498,40 +765,45 @@ export class MissionExecutor {
         type: 'diff_proposed',
         mode: this.mode,
         stage: 'edit',
-        payload: {
-          diff_id: diffId,
-          step_id: step.id,
-          summary: `Changes for: ${step.description}`,
-          change_intent: step.description,
-          risk_level: filesChanged.length > 1 ? 'high' : 'medium',
-          files_changed: filesChanged,
-        },
-        evidence_ids: [],
+        payload: diffProposedPayload,
+        evidence_ids: [path.basename(manifestPath)],
         parent_event_id: null,
       });
 
-      // 5. Request approval (BLOCKING)
+      // ====================================================================
+      // STEP 7: WIRE APPROVAL (REUSE EXISTING INFRASTRUCTURE)
+      // ====================================================================
       console.log('[MissionExecutor] Requesting approval for diff...');
-      console.log('[MissionExecutor] Diff ID:', diffId);
-      console.log('[MissionExecutor] Files changed:', JSON.stringify(filesChanged, null, 2));
-      
+
+      // Idempotency check - prevent duplicate approvals for same diff
+      if (this.appliedDiffIds.has(diffId)) {
+        console.warn(`[MissionExecutor] Diff ${diffId} already processed (idempotency guard)`);
+        return { success: true, stage: 'edit' };
+      }
+
+      console.log('[MissionExecutor] Requesting approval for diff...');
+
       const approval = await this.approvalManager.requestApproval(
         this.taskId,
         this.mode,
         'edit',
         'apply_diff',
-        `Apply changes for: ${step.description}`,
+        `Apply changes to ${parsedDiff.files.length} file(s) (+${parsedDiff.totalAdditions}/-${parsedDiff.totalDeletions} lines)`,
         {
           diff_id: diffId,
-          files_changed: filesChanged,
+          files_changed: parsedDiff.files.map(f => ({
+            path: f.newPath !== '/dev/null' ? f.newPath : f.oldPath,
+            added_lines: f.additions,  // FIX: Match field name expected by ApprovalCard
+            removed_lines: f.deletions, // FIX: Match field name expected by ApprovalCard
+          })),
+          evidence_id: path.basename(manifestPath),
         }
       );
 
-      console.log('[MissionExecutor] Approval received:', approval.decision);
-      console.log('[MissionExecutor] Approval details:', JSON.stringify(approval, null, 2));
+      console.log(`[MissionExecutor] Approval decision: ${approval.decision}`);
 
       if (approval.decision === 'denied') {
-        // User rejected - pause execution
+        // User rejected - emit execution_paused with diff_rejected reason
         await this.emitEvent({
           event_id: randomUUID(),
           task_id: this.taskId,
@@ -541,7 +813,8 @@ export class MissionExecutor {
           stage: 'edit',
           payload: {
             reason: 'diff_rejected',
-            message: 'User rejected proposed changes',
+            diff_id: diffId,
+            step_id: step.step_id,
           },
           evidence_ids: [],
           parent_event_id: null,
@@ -555,44 +828,178 @@ export class MissionExecutor {
         };
       }
 
-      // 6. Create checkpoint before applying (if needed)
-      if (filesChanged.length > 1 || filesChanged.some(f => f.action === 'delete')) {
-        await this.checkpointManager.createCheckpoint(
-          this.taskId,
-          this.mode,
-          'edit',
-          `Before applying: ${step.description}`,
-          filesChanged.map(f => f.path)
-        );
-      }
-
-      // 7. Apply changes (write files)
-      console.log('[MissionExecutor] Applying patches to disk...');
-      console.log('[MissionExecutor] Number of patches:', patchResult.patches.length);
+      // ====================================================================
+      // STEP 8: CHECKPOINT + ATOMIC APPLY + ROLLBACK (V1 Full Content Strategy)
+      // ====================================================================
       
-      const appliedFiles: string[] = [];
-      const failedFiles: Array<{ file: string; error: string }> = [];
+      // Mark diff as being processed (idempotency - moved here after approval)
+      this.appliedDiffIds.add(diffId);
+      console.log(`[MissionExecutor] Diff ${diffId} marked for application`);
 
-      for (const patch of patchResult.patches) {
-        console.log(`[MissionExecutor] Applying patch: ${patch.path} (action: ${patch.action})`);
-        try {
-          await this.applyPatch(patch);
-          appliedFiles.push(patch.path);
-          console.log(`[MissionExecutor] ✓ Successfully applied: ${patch.path}`);
-        } catch (error) {
-          console.error(`[MissionExecutor] ✗ Failed to apply: ${patch.path}`, error);
-          failedFiles.push({
-            file: patch.path,
-            error: error instanceof Error ? error.message : String(error),
-          });
+      // 8a) Build FilePatch[] from llmOutput.touched_files (full content strategy)
+      const filePatches: FilePatch[] = llmOutput.touched_files.map(tf => ({
+        path: tf.path,
+        action: tf.action,
+        newContent: tf.new_content,
+        baseSha: tf.base_sha,
+      }));
+
+      // 8b) Create checkpoint BEFORE any file writes
+      const checkpointId = createCheckpointId(this.taskId, step.step_id);
+      console.log(`[MissionExecutor] Creating checkpoint: ${checkpointId}`);
+      
+      const checkpointResult = await this.workspaceCheckpointMgr.createCheckpoint(filePatches);
+
+      // Emit checkpoint_created
+      await this.emitEvent({
+        event_id: randomUUID(),
+        task_id: this.taskId,
+        timestamp: new Date().toISOString(),
+        type: 'checkpoint_created',
+        mode: this.mode,
+        stage: 'edit',
+        payload: {
+          checkpoint_id: checkpointResult.checkpointId,
+          diff_id: diffId,
+          files: checkpointResult.files.map(f => f.path),
+        },
+        evidence_ids: [],
+        parent_event_id: null,
+      });
+
+      // 8c) Staleness check - validate base_sha for each file
+      const expectedShas = buildBaseShaMap(contextResult.file_context);
+      let stalenessDetected = false;
+      let staleFile = '';
+
+      for (const file of checkpointResult.files) {
+        if (file.existedBefore) {
+          const expected = expectedShas.get(file.path);
+          if (expected && file.beforeSha !== expected) {
+            stalenessDetected = true;
+            staleFile = file.path;
+            console.error(`[MissionExecutor] Staleness detected: ${file.path} (expected ${expected}, got ${file.beforeSha})`);
+            break;
+          }
         }
       }
 
-      console.log('[MissionExecutor] Patch application complete');
-      console.log('[MissionExecutor] Applied files:', appliedFiles);
-      console.log('[MissionExecutor] Failed files:', failedFiles);
+      if (stalenessDetected) {
+        // Rollback not needed - no files written yet
+        await this.emitEvent({
+          event_id: randomUUID(),
+          task_id: this.taskId,
+          timestamp: new Date().toISOString(),
+          type: 'failure_detected',
+          mode: this.mode,
+          stage: 'edit',
+          payload: {
+            reason: 'stale_context',
+            details: {
+              file: staleFile,
+              message: `File ${staleFile} changed since diff was proposed`,
+            },
+            checkpoint_id: checkpointResult.checkpointId,
+          },
+          evidence_ids: [],
+          parent_event_id: null,
+        });
 
-      // 8. Emit diff_applied
+        await this.emitEvent({
+          event_id: randomUUID(),
+          task_id: this.taskId,
+          timestamp: new Date().toISOString(),
+          type: 'execution_paused',
+          mode: this.mode,
+          stage: 'edit',
+          payload: {
+            reason: 'needs_user_decision',
+            step_id: step.step_id,
+            error_type: 'stale_context',
+          },
+          evidence_ids: [],
+          parent_event_id: null,
+        });
+
+        return {
+          success: false,
+          stage: 'edit',
+          shouldPause: true,
+          pauseReason: 'stale_context',
+          error: `File ${staleFile} changed since diff was proposed`,
+        };
+      }
+
+      // 8d) Apply patches atomically
+      console.log('[MissionExecutor] Applying file patches...');
+      try {
+        await this.workspaceWriter.applyPatches(filePatches);
+      } catch (applyError) {
+        // Apply failed - rollback
+        console.error('[MissionExecutor] Apply failed, rolling back...', applyError);
+        
+        try {
+          await this.workspaceCheckpointMgr.rollback(checkpointResult.checkpointId);
+          console.log('[MissionExecutor] Rollback successful');
+        } catch (rollbackError) {
+          console.error('[MissionExecutor] Rollback failed!', rollbackError);
+        }
+
+        await this.emitEvent({
+          event_id: randomUUID(),
+          task_id: this.taskId,
+          timestamp: new Date().toISOString(),
+          type: 'failure_detected',
+          mode: this.mode,
+          stage: 'edit',
+          payload: {
+            reason: 'apply_failed',
+            details: {
+              message: applyError instanceof Error ? applyError.message : String(applyError),
+            },
+            checkpoint_id: checkpointResult.checkpointId,
+            rollback: 'attempted',
+          },
+          evidence_ids: [],
+          parent_event_id: null,
+        });
+
+        await this.emitEvent({
+          event_id: randomUUID(),
+          task_id: this.taskId,
+          timestamp: new Date().toISOString(),
+          type: 'execution_paused',
+          mode: this.mode,
+          stage: 'edit',
+          payload: {
+            reason: 'needs_user_decision',
+            step_id: step.step_id,
+            error_type: 'apply_failed',
+          },
+          evidence_ids: [],
+          parent_event_id: null,
+        });
+
+        return {
+          success: false,
+          stage: 'edit',
+          shouldPause: true,
+          pauseReason: 'apply_failed',
+          error: applyError instanceof Error ? applyError.message : String(applyError),
+        };
+      }
+
+      // 8e) Open first changed file beside
+      if (filePatches.length > 0) {
+        try {
+          await this.workspaceWriter.openFilesBeside([filePatches[0].path]);
+        } catch (openError) {
+          // Non-fatal - just log
+          console.warn('[MissionExecutor] Could not open file:', openError);
+        }
+      }
+
+      // 8f) Emit diff_applied (diff already marked as applied above)
       await this.emitEvent({
         event_id: randomUUID(),
         task_id: this.taskId,
@@ -602,52 +1009,52 @@ export class MissionExecutor {
         stage: 'edit',
         payload: {
           diff_id: diffId,
-          step_id: step.id,
-          files_changed: filesChanged,
-          applied_files: appliedFiles,
-          failed_files: failedFiles,
-          success: failedFiles.length === 0,
+          checkpoint_id: checkpointResult.checkpointId,
+          files_changed: filePatches.map(fp => ({
+            path: fp.path,
+            action: fp.action,
+            additions: parsedDiff.files.find(f => f.newPath === fp.path || f.oldPath === fp.path)?.additions || 0,
+            deletions: parsedDiff.files.find(f => f.newPath === fp.path || f.oldPath === fp.path)?.deletions || 0,
+          })),
+          summary: `Applied changes to ${filePatches.length} file(s)`,
         },
         evidence_ids: [],
         parent_event_id: null,
       });
 
-      if (failedFiles.length > 0) {
-        console.error('[MissionExecutor] Edit step failed: some files could not be applied');
-        return {
-          success: false,
-          stage: 'edit',
-          error: `Failed to apply ${failedFiles.length} file(s)`,
-        };
-      }
+      console.log(`[MissionExecutor] ✓ Edit step completed successfully: ${filePatches.length} file(s) modified`);
 
-      console.log('[MissionExecutor] ✓ Edit step completed successfully');
       return {
         success: true,
         stage: 'edit',
       };
-    } catch (error) {
-      console.error('[MissionExecutor] Edit step failed:', error);
-      
-      await this.emitEvent({
-        event_id: randomUUID(),
-        task_id: this.taskId,
-        timestamp: new Date().toISOString(),
-        type: 'failure_detected',
-        mode: this.mode,
-        stage: 'edit',
-        payload: {
-          kind: 'edit_step_failed',
-          error: error instanceof Error ? error.message : String(error),
-        },
-        evidence_ids: [],
-        parent_event_id: null,
-      });
 
+    } catch (error) {
+      // CRITICAL: Remove diff from applied set on error to allow retry
+      if (diffId) {
+        this.appliedDiffIds.delete(diffId);
+        console.log(`[MissionExecutor] Removed diff ${diffId} from applied set due to error`);
+      }
+      // PHASE 3: Preserve error details for debugging
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      const stackPreview = error instanceof Error && error.stack 
+        ? error.stack.substring(0, 500) 
+        : undefined;
+      
+      console.error('[MissionExecutor] Edit step failed with unexpected error:', errorMessage);
+      if (stackPreview) {
+        console.error('[MissionExecutor] Stack preview:', stackPreview);
+      }
+      
+      // DO NOT emit failure_detected here - let executeStep handle it
+      // This ensures only ONE failure_detected event per failure
+      
       return {
         success: false,
         stage: 'edit',
-        error: error instanceof Error ? error.message : String(error),
+        shouldPause: true,
+        pauseReason: 'edit_step_error',
+        error: errorMessage,
       };
     }
   }
@@ -879,11 +1286,11 @@ export class MissionExecutor {
         this.taskId,
         this.mode,
         'edit',
-        `Before executing step: ${step.description} (step_id: ${step.id})`,
+        `Before executing step: ${step.description} (step_id: ${step.step_id})`,
         [] // V1: Empty scope - will be populated with actual files in future versions
       );
 
-      console.log(`[MissionExecutor] Checkpoint created before step: ${step.id}`);
+      console.log(`[MissionExecutor] Checkpoint created before step: ${step.step_id}`);
     } catch (error) {
       console.error('[MissionExecutor] Failed to create checkpoint:', error);
       // Don't fail execution if checkpoint fails, but log warning
@@ -978,6 +1385,7 @@ export class MissionExecutor {
       mode: this.mode,
       stage: 'none',
       payload: {
+        success: true, // Add success flag for UI display
         status: 'complete',
         completed_steps: this.executionState?.completedSteps.length || 0,
         total_steps: this.executionState?.plan.steps.length || 0,

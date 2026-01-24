@@ -106,6 +106,17 @@ export const EVENT_CARD_MAP: Record<EventType, EventCardConfig> = {
       return `Step ${stepIndex + 1} ${success ? 'completed successfully' : 'failed'}`;
     }
   },
+  step_failed: {
+    icon: '❌',
+    title: 'Step Failed',
+    color: 'var(--vscode-charts-red)',
+    getSummary: (e) => {
+      const stepIndex = e.payload.step_index as number;
+      const reason = e.payload.reason as string || 'unknown';
+      const error = e.payload.error as string || '';
+      return `Step ${stepIndex + 1} failed: ${reason}${error ? ' - ' + error.substring(0, 50) : ''}`;
+    }
+  },
   stage_changed: {
     icon: '🔄',
     title: 'Stage Changed',
@@ -480,6 +491,41 @@ export function renderEventCard(event: Event, taskId?: string): string {
           <span class="event-timestamp">${formatTimestamp(event.timestamp)}</span>
         </div>
         <div class="event-summary">${escapeHtml(title)}</div>
+      </div>
+    `;
+  }
+  
+  // MODE CONFIRMATION: Check if mode_set requires confirmation
+  if (event.type === 'mode_set' && event.payload.requiresConfirmation && taskId) {
+    const userMode = event.payload.mode as string;
+    const suggestedMode = event.payload.suggestedMode as string;
+    const reason = event.payload.suggestionReason as string;
+    
+    return `
+      <div class="event-card mode-confirmation-card" style="border: 2px solid var(--vscode-charts-yellow); background: var(--vscode-editor-background);">
+        <div class="event-card-header">
+          <span class="event-icon" style="color: var(--vscode-charts-yellow)">⚠️</span>
+          <span class="event-type">Mode Confirmation Needed</span>
+        </div>
+        <div class="event-summary" style="margin: 12px 0;">
+          <strong>You selected:</strong> ${escapeHtml(userMode)} mode<br/>
+          <strong>System suggests:</strong> ${escapeHtml(suggestedMode)} mode<br/>
+          <strong>Reason:</strong> ${escapeHtml(reason)}
+        </div>
+        <div style="display: flex; gap: 8px; margin-top: 12px;">
+          <button 
+            onclick="handleConfirmMode('${taskId}', '${userMode}')" 
+            class="approval-btn approve"
+            style="flex: 1; padding: 8px 16px; background: var(--vscode-button-background); color: var(--vscode-button-foreground); border: none; cursor: pointer; border-radius: 3px;">
+            ✓ Keep ${escapeHtml(userMode)}
+          </button>
+          <button 
+            onclick="handleConfirmMode('${taskId}', '${suggestedMode}')" 
+            class="approval-btn"
+            style="flex: 1; padding: 8px 16px; background: var(--vscode-button-secondaryBackground); color: var(--vscode-button-secondaryForeground); border: none; cursor: pointer; border-radius: 3px;">
+            → Switch to ${escapeHtml(suggestedMode)}
+          </button>
+        </div>
       </div>
     `;
   }

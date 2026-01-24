@@ -10,7 +10,27 @@ import { Event } from '../types';
  */
 export function renderDiffAppliedCard(event: Event): string {
   const diffId = event.payload.diff_id as string || '';
-  const filesChanged = (event.payload.files_changed as string[]) || [];
+  
+  // FIX: files_changed can be either string[] or object[]
+  const rawFilesChanged = event.payload.files_changed;
+  let filesChanged: Array<{path: string; additions?: number; deletions?: number}> = [];
+  
+  // Handle both formats
+  if (Array.isArray(rawFilesChanged)) {
+    filesChanged = rawFilesChanged.map(file => {
+      if (typeof file === 'string') {
+        return { path: file };
+      } else if (file && typeof file === 'object') {
+        return {
+          path: file.path || String(file),
+          additions: file.additions,
+          deletions: file.deletions
+        };
+      }
+      return { path: String(file) };
+    });
+  }
+  
   const appliedAt = event.payload.applied_at as string || event.timestamp;
   const checkpointId = event.payload.checkpoint_id as string || '';
   const success = event.payload.success !== false;
@@ -87,7 +107,12 @@ export function renderDiffAppliedCard(event: Event): string {
             font-size: 11px;
             color: var(--vscode-foreground);
           ">
-            ${filesChanged.map(file => `<li><code>${escapeHtml(file)}</code></li>`).join('')}
+            ${filesChanged.map(file => {
+              const stats = (file.additions !== undefined && file.deletions !== undefined) 
+                ? ` <span class="file-stats"><span class="stat-add">+${file.additions}</span><span class="stat-remove">-${file.deletions}</span></span>`
+                : '';
+              return `<li><code>${escapeHtml(file.path)}</code>${stats}</li>`;
+            }).join('')}
           </ul>
         </div>
       ` : ''}

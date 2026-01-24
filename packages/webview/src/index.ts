@@ -1166,6 +1166,141 @@ export function getWebviewContent(): string {
         flex-direction: column;
       }
     }
+
+    /* ===== MISSION CONTROL BAR (Bottom Sticky) ===== */
+    .mission-control-bar {
+      display: none;
+      align-items: center;
+      gap: 10px;
+      padding: 6px 12px;
+      background: var(--vscode-sideBar-background);
+      border-top: 1px solid var(--vscode-panel-border);
+      border-bottom: 1px solid var(--vscode-panel-border);
+      height: 32px;
+      flex-shrink: 0;
+    }
+
+    .mission-control-bar.visible {
+      display: flex;
+    }
+
+    .mission-control-bar.running {
+      border-top-color: var(--vscode-charts-blue);
+      animation: missionBarPulse 2s ease-in-out infinite;
+    }
+
+    .mission-control-bar.complete {
+      border-top-color: var(--vscode-charts-green);
+      background: var(--vscode-inputValidation-infoBackground);
+    }
+
+    .mission-control-bar.all-done {
+      border-top-color: var(--vscode-charts-green);
+      background: linear-gradient(90deg, var(--vscode-inputValidation-infoBackground) 0%, var(--vscode-sideBar-background) 100%);
+    }
+
+    @keyframes missionBarPulse {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.85; }
+    }
+
+    .mcb-status {
+      display: flex;
+      align-items: center;
+      gap: 4px;
+      font-size: 11px;
+      font-weight: 600;
+      flex-shrink: 0;
+    }
+
+    .mcb-status-icon {
+      font-size: 14px;
+    }
+
+    .mcb-status-icon.spinning {
+      animation: spin 1s linear infinite;
+    }
+
+    .mcb-count {
+      color: var(--vscode-foreground);
+      font-weight: 700;
+    }
+
+    .mcb-divider {
+      width: 1px;
+      height: 16px;
+      background: var(--vscode-panel-border);
+      flex-shrink: 0;
+    }
+
+    .mcb-mission-name {
+      font-size: 11px;
+      color: var(--vscode-foreground);
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      flex: 1;
+      min-width: 60px;
+    }
+
+    .mcb-progress {
+      display: flex;
+      align-items: center;
+      gap: 4px;
+      flex-shrink: 0;
+    }
+
+    .mcb-progress-bar {
+      width: 50px;
+      height: 4px;
+      background: var(--vscode-panel-border);
+      border-radius: 2px;
+      overflow: hidden;
+    }
+
+    .mcb-progress-fill {
+      height: 100%;
+      background: var(--vscode-charts-blue);
+      border-radius: 2px;
+      transition: width 0.3s ease;
+    }
+
+    .mcb-progress-fill.complete {
+      background: var(--vscode-charts-green);
+    }
+
+    .mcb-cta {
+      padding: 3px 10px;
+      font-size: 10px;
+      font-weight: 700;
+      border-radius: 3px;
+      cursor: pointer;
+      border: none;
+      white-space: nowrap;
+      flex-shrink: 0;
+      transition: all 0.15s ease;
+    }
+
+    .mcb-cta.start {
+      background: var(--vscode-charts-green);
+      color: #fff;
+    }
+
+    .mcb-cta.start:hover {
+      background: #28a745;
+    }
+
+    .mcb-cta.running {
+      background: var(--vscode-button-secondaryBackground);
+      color: var(--vscode-button-secondaryForeground);
+      cursor: default;
+    }
+
+    .mcb-cta.done {
+      background: transparent;
+      color: var(--vscode-charts-green);
+      border: 1px solid var(--vscode-charts-green);
+    }
   </style>
 </head>
 <body>
@@ -1279,6 +1414,22 @@ export function getWebviewContent(): string {
         </div>
       </div>
     </div>
+  </div>
+
+  <!-- Mission Control Bar (Compact Bottom Sticky) -->
+  <div class="mission-control-bar" id="missionControlBar">
+    <div class="mcb-status">
+      <span class="mcb-status-icon" id="mcbStatusIcon">🚀</span>
+      <span class="mcb-count" id="mcbCount">1/4</span>
+    </div>
+    <div class="mcb-divider"></div>
+    <div class="mcb-mission-name" id="mcbMissionName">Auth & Security</div>
+    <div class="mcb-progress">
+      <div class="mcb-progress-bar">
+        <div class="mcb-progress-fill" id="mcbProgressFill" style="width: 25%;"></div>
+      </div>
+    </div>
+    <button class="mcb-cta start" id="mcbCta" onclick="handleMcbCtaClick()">▶ Start</button>
   </div>
 
   <!-- Composer Bar -->
@@ -1554,7 +1705,13 @@ export function getWebviewContent(): string {
           } else if (approvalType === 'apply_diff') {
             detailsHtml = '<div class="approval-details">';
             if (details.files_changed && details.files_changed.length > 0) {
-              detailsHtml += \`<div class="detail-row"><span class="detail-label">Files:</span><span class="detail-value">\${details.files_changed.join(', ')}</span></div>\`;
+              // FIX: files_changed is an array of objects {path: string}, not strings
+              const fileList = details.files_changed.map(f => {
+                if (typeof f === 'string') return f;
+                if (f && typeof f === 'object' && f.path) return f.path;
+                return '[unknown]';
+              }).join(', ');
+              detailsHtml += \`<div class="detail-row"><span class="detail-label">Files:</span><span class="detail-value">\${fileList}</span></div>\`;
             }
             if (details.additions !== undefined || details.deletions !== undefined) {
               const changes = [];
@@ -1614,6 +1771,7 @@ export function getWebviewContent(): string {
         missionTab.innerHTML = renderMissionTimeline(state.events);
         updateUIGating(); // Update UI gating whenever mission is rendered
         updateExportButtonVisibility(); // Update export button visibility
+        updateMissionControlBar(); // Update compact bottom bar for mission progress
       }
 
       // Render Streaming Answer Card
@@ -1730,6 +1888,10 @@ export function getWebviewContent(): string {
           if (event.type === 'tool_start' && event.payload.tool === 'llm_answer' && state.streamingAnswer && state.streamingAnswer.text) {
             items.push(renderStreamingAnswerCard());
           }
+          
+          // MISSION BREAKDOWN: After mission_selected - DO NOT render inline button
+          // The compact bottom Mission Control Bar handles the "Start" action now
+          // This prevents UX confusion with duplicate CTAs
         }
 
         return items.join('');
@@ -1835,10 +1997,51 @@ export function getWebviewContent(): string {
                 ✓ Approve Plan → Start Mission
               </button>
               <button 
-                onclick="handleCancelPlan('\${event.task_id}')"
+                onclick="toggleRefinePlanInput('\${event.task_id}', '\${event.event_id}', 1)"
                 style="padding: 8px 16px; background: var(--vscode-button-secondaryBackground); color: var(--vscode-button-secondaryForeground); border: none; border-radius: 4px; font-size: 12px; font-weight: 600; cursor: pointer;">
+                ✏️ Refine Plan
+              </button>
+              <button 
+                onclick="handleCancelPlan('\${event.task_id}')"
+                style="padding: 8px 16px; background: transparent; color: var(--vscode-descriptionForeground); border: none; font-size: 12px; cursor: pointer; text-decoration: underline;">
                 ✕ Cancel
               </button>
+            </div>
+
+            <!-- Refine Plan Input (hidden by default) -->
+            <div id="refine-plan-input-\${event.event_id}" style="display: none; margin-top: 16px; padding: 16px; background: var(--vscode-input-background); border: 1px solid var(--vscode-panel-border); border-radius: 6px;">
+              <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
+                <h4 style="margin: 0; color: var(--vscode-charts-purple);">Refine This Plan</h4>
+                <button onclick="toggleRefinePlanInput('\${event.task_id}', '\${event.event_id}', 1)" style="background: none; border: none; color: var(--vscode-descriptionForeground); cursor: pointer; font-size: 16px;">✕</button>
+              </div>
+              <div style="margin-bottom: 12px;">
+                <label for="refinement-instruction-\${event.event_id}" style="font-weight: 500; color: var(--vscode-foreground); display: block; margin-bottom: 6px;">What changes would you like?</label>
+                <textarea 
+                  id="refinement-instruction-\${event.event_id}"
+                  placeholder="Examples:
+• Add error handling to each step
+• Break step 3 into smaller sub-steps
+• Add a testing phase before deployment
+• Focus more on security considerations"
+                  rows="4"
+                  style="width: 100%; padding: 8px 12px; background: var(--vscode-editor-background); border: 1px solid var(--vscode-panel-border); border-radius: 4px; color: var(--vscode-foreground); font-family: inherit; font-size: 12px; resize: vertical;"
+                ></textarea>
+              </div>
+              <div style="display: flex; gap: 8px;">
+                <button 
+                  onclick="submitPlanRefinement('\${event.task_id}', '\${event.event_id}', 1)"
+                  style="flex: 1; padding: 8px 16px; background: var(--vscode-charts-purple); color: #fff; border: none; border-radius: 4px; font-size: 12px; font-weight: 700; cursor: pointer;">
+                  🔄 Generate Refined Plan
+                </button>
+                <button 
+                  onclick="toggleRefinePlanInput('\${event.task_id}', '\${event.event_id}', 1)"
+                  style="padding: 8px 16px; background: var(--vscode-button-secondaryBackground); color: var(--vscode-button-secondaryForeground); border: none; border-radius: 4px; font-size: 12px; cursor: pointer;">
+                  Cancel
+                </button>
+              </div>
+              <p style="margin-top: 10px; font-size: 11px; color: var(--vscode-descriptionForeground); font-style: italic;">
+                ℹ️ Refining will generate a new plan version and require re-approval.
+              </p>
             </div>
 
             <div style="margin-top: 10px; padding: 8px; background: var(--vscode-inputValidation-infoBackground); border-radius: 4px; font-size: 11px; color: var(--vscode-descriptionForeground); font-style: italic;">
@@ -1914,6 +2117,231 @@ export function getWebviewContent(): string {
         \`;
       }
 
+      // ===== MISSION BREAKDOWN CARD RENDERERS =====
+      // Render Large Plan Detected explanation card
+      function renderLargePlanDetectedCard(event) {
+        const taskId = event.task_id;
+        const reasons = event.payload.reasons || [];
+        const metrics = event.payload.metrics || {};
+        const stepCount = metrics.stepCount || 0;
+        const riskFlags = metrics.riskFlags || [];
+        const domains = metrics.domains || [];
+
+        // Build reasons list
+        const reasonsHtml = reasons.map(r => \`<li>\${escapeHtml(r)}</li>\`).join('');
+
+        return \`
+          <div class="event-card" style="border-left-color: var(--vscode-charts-orange); padding: 16px; background: var(--vscode-inputValidation-warningBackground);">
+            <div class="event-card-header" style="margin-bottom: 12px;">
+              <span class="event-icon" style="color: var(--vscode-charts-orange); font-size: 20px;">⚠️</span>
+              <span class="event-type" style="font-size: 14px; font-weight: 700;">Large Plan Detected</span>
+              <span class="event-timestamp">\${formatTimestamp(event.timestamp)}</span>
+            </div>
+            
+            <div style="background: var(--vscode-editor-background); padding: 12px; border-radius: 6px; margin-bottom: 12px; border-left: 3px solid var(--vscode-charts-orange);">
+              \${reasons.length > 0 ? \`
+                <ul style="margin: 0; padding-left: 20px; font-size: 12px; line-height: 1.6;">
+                  \${reasonsHtml}
+                </ul>
+              \` : '<p style="margin: 0; font-size: 12px;">Plan complexity exceeds safe execution threshold.</p>'}
+            </div>
+
+            <div style="background: var(--vscode-editor-inactiveSelectionBackground); padding: 14px; border-radius: 6px; margin-bottom: 8px;">
+              <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 10px;">
+                <span style="font-size: 16px;">💡</span>
+                <span style="font-size: 12px; font-weight: 700; color: var(--vscode-charts-orange);">Why Mission Breakdown?</span>
+              </div>
+              <div style="font-size: 12px; line-height: 1.6; color: var(--vscode-descriptionForeground);">
+                <p style="margin: 0 0 8px 0;">
+                  Your plan has <strong>\${stepCount} steps</strong>\${domains.length > 0 ? ' spanning <strong>' + domains.join(', ') + '</strong>' : ''}. 
+                  Executing all at once increases the risk of failures that are hard to debug.
+                </p>
+                <p style="margin: 0 0 8px 0;">
+                  We'll group your steps into focused missions that can be executed and verified one at a time:
+                </p>
+                <ul style="margin: 0; padding-left: 20px;">
+                  <li>✓ Each mission is small enough to review carefully</li>
+                  <li>✓ You can verify each works before moving on</li>
+                  <li>✓ If something fails, you know exactly which mission caused it</li>
+                </ul>
+                <p style="margin: 10px 0 0 0; font-style: italic;">
+                  Your original steps are preserved – just organized into safer execution chunks.
+                </p>
+              </div>
+            </div>
+
+            <div style="text-align: center; padding: 8px; font-size: 11px; color: var(--vscode-descriptionForeground);">
+              ⏳ Generating mission breakdown...
+            </div>
+          </div>
+        \`;
+      }
+
+      // Render Mission Breakdown interactive selection card
+      function renderMissionBreakdownCard(event, events) {
+        const taskId = event.task_id;
+        const missions = event.payload.missions || [];
+        const planStepCount = event.payload.plan_step_count || 0;
+        
+        // Check if a mission has already been selected
+        const selectedMissionEvent = events.find(e => e.type === 'mission_selected');
+        const selectedMissionId = selectedMissionEvent?.payload?.mission_id;
+
+        // Determine first mission (recommended) - usually lowest dependency count
+        const recommendedMissionId = missions.length > 0 ? missions[0].missionId : null;
+
+        // Build missions HTML
+        const missionsHtml = missions.map((mission, idx) => {
+          const isRecommended = mission.missionId === recommendedMissionId && idx === 0;
+          const isSelected = mission.missionId === selectedMissionId;
+          
+          // Size badge color
+          const sizeColors = { S: 'var(--vscode-charts-green)', M: 'var(--vscode-charts-yellow)', L: 'var(--vscode-charts-orange)' };
+          const sizeColor = sizeColors[mission.estimate?.size] || 'var(--vscode-descriptionForeground)';
+          
+          // Risk badge color
+          const riskColors = { low: 'var(--vscode-charts-green)', med: 'var(--vscode-charts-yellow)', high: 'var(--vscode-charts-red)' };
+          const riskColor = riskColors[mission.risk?.level] || 'var(--vscode-descriptionForeground)';
+
+          // Included steps summary
+          const stepsText = (mission.includedSteps || []).map(s => s.title || s.stepId || 'Step').slice(0, 3).join(', ');
+          const stepsOverflow = (mission.includedSteps || []).length > 3 ? \` (+\${mission.includedSteps.length - 3} more)\` : '';
+
+          return \`
+            <div style="
+              background: \${isSelected ? 'var(--vscode-list-activeSelectionBackground)' : 'var(--vscode-editor-background)'};
+              border: 2px solid \${isSelected ? 'var(--vscode-charts-green)' : 'var(--vscode-panel-border)'};
+              border-radius: 8px;
+              padding: 12px;
+              margin-bottom: 10px;
+              \${isSelected ? 'box-shadow: 0 0 8px rgba(40, 167, 69, 0.3);' : ''}
+            ">
+              <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px;">
+                <div style="display: flex; align-items: center; gap: 8px;">
+                  <span style="font-size: 16px;">\${idx === 0 ? '🔐' : idx === 1 ? '💪' : idx === 2 ? '📊' : '🎯'}</span>
+                  <span style="font-size: 13px; font-weight: 700; color: var(--vscode-foreground);">\${escapeHtml(mission.title || 'Mission ' + (idx + 1))}</span>
+                </div>
+                <div style="display: flex; gap: 6px;">
+                  <span style="padding: 2px 8px; border-radius: 10px; font-size: 9px; font-weight: 700; background: \${sizeColor}; color: #fff;">\${mission.estimate?.size || 'M'}</span>
+                  <span style="padding: 2px 8px; border-radius: 10px; font-size: 9px; font-weight: 700; background: \${riskColor}; color: #fff;">\${(mission.risk?.level || 'med').toUpperCase()}</span>
+                </div>
+              </div>
+              
+              <div style="font-size: 11px; color: var(--vscode-descriptionForeground); margin-bottom: 8px; line-height: 1.4;">
+                \${escapeHtml(mission.intent || '')}
+              </div>
+
+              <div style="font-size: 10px; color: var(--vscode-descriptionForeground); margin-bottom: 10px;">
+                <strong>Includes:</strong> \${escapeHtml(stepsText)}\${stepsOverflow}
+              </div>
+
+              \${isSelected ? \`
+                <div style="display: flex; align-items: center; gap: 8px; padding: 8px; background: var(--vscode-inputValidation-infoBackground); border-radius: 4px;">
+                  <span style="color: var(--vscode-charts-green);">✅</span>
+                  <span style="font-size: 11px; font-weight: 600; color: var(--vscode-charts-green);">Selected</span>
+                </div>
+              \` : \`
+                <button 
+                  onclick="handleSelectMission('\${taskId}', '\${mission.missionId}')"
+                  style="
+                    width: 100%;
+                    padding: 8px 16px;
+                    background: var(--vscode-button-background);
+                    color: var(--vscode-button-foreground);
+                    border: none;
+                    border-radius: 4px;
+                    font-size: 11px;
+                    font-weight: 600;
+                    cursor: pointer;
+                    transition: all 0.15s ease;
+                  "
+                  onmouseover="this.style.background = 'var(--vscode-button-hoverBackground)'"
+                  onmouseout="this.style.background = 'var(--vscode-button-background)'"
+                >
+                  🚀 Select This Mission
+                </button>
+              \`}
+
+              \${isRecommended && !isSelected ? \`
+                <div style="margin-top: 8px; font-size: 10px; color: var(--vscode-charts-green); font-style: italic;">
+                  ⭐ Recommended: Foundation for other missions
+                </div>
+              \` : ''}
+            </div>
+          \`;
+        }).join('');
+
+        return \`
+          <div class="event-card" style="border-left-color: var(--vscode-charts-purple); padding: 16px;">
+            <div class="event-card-header" style="margin-bottom: 12px;">
+              <span class="event-icon" style="color: var(--vscode-charts-purple); font-size: 20px;">🎯</span>
+              <span class="event-type" style="font-size: 14px; font-weight: 700;">Mission Breakdown</span>
+              <span class="event-timestamp">\${formatTimestamp(event.timestamp)}</span>
+            </div>
+            
+            <div style="background: var(--vscode-editor-inactiveSelectionBackground); padding: 12px; border-radius: 6px; margin-bottom: 14px;">
+              <p style="margin: 0; font-size: 12px; color: var(--vscode-foreground);">
+                Your \${planStepCount} steps have been organized into <strong>\${missions.length} focused missions</strong>.
+                \${selectedMissionId ? '' : 'Select <strong>ONE mission</strong> to execute:'}
+              </p>
+            </div>
+
+            <div style="max-height: 400px; overflow-y: auto; padding-right: 8px;">
+              \${missionsHtml}
+            </div>
+
+            \${!selectedMissionId ? \`
+              <div style="margin-top: 12px; padding: 10px; background: var(--vscode-inputValidation-infoBackground); border-radius: 4px; font-size: 11px; color: var(--vscode-descriptionForeground);">
+                📝 After completing a mission, come back to select the next one.
+              </div>
+            \` : ''}
+          </div>
+        \`;
+      }
+
+      // Render Start Mission button after selection
+      function renderStartMissionButton(selectedMissionEvent, breakdownEvent, taskId) {
+        if (!selectedMissionEvent || !breakdownEvent) return '';
+
+        const selectedMissionId = selectedMissionEvent.payload.mission_id;
+        const missions = breakdownEvent.payload.missions || [];
+        const selectedMission = missions.find(m => m.missionId === selectedMissionId);
+
+        if (!selectedMission) return '';
+
+        return \`
+          <div style="margin: 16px 0; padding: 16px; background: var(--vscode-editor-inactiveSelectionBackground); border: 2px solid var(--vscode-charts-green); border-radius: 6px; animation: fadeIn 0.3s ease-in;">
+            <div style="display: flex; align-items: center; gap: 10px; margin-bottom: 12px;">
+              <span style="font-size: 18px;">✅</span>
+              <span style="font-size: 13px; font-weight: 700; color: var(--vscode-charts-green);">Mission Selected: \${escapeHtml(selectedMission.title)}</span>
+            </div>
+            <button 
+              onclick="handleStartMission('\${taskId}', '\${selectedMissionId}')" 
+              style="
+                width: 100%; 
+                padding: 12px 20px; 
+                font-size: 14px; 
+                font-weight: 700; 
+                background: var(--vscode-charts-green); 
+                color: #fff; 
+                border: none; 
+                border-radius: 6px; 
+                cursor: pointer; 
+                transition: all 0.2s ease; 
+                box-shadow: 0 2px 8px rgba(40, 167, 69, 0.3);
+              " 
+              onmouseover="this.style.transform = 'translateY(-2px)'; this.style.boxShadow = '0 4px 12px rgba(40, 167, 69, 0.5)';" 
+              onmouseout="this.style.transform = 'translateY(0)'; this.style.boxShadow = '0 2px 8px rgba(40, 167, 69, 0.3)';"
+            >
+              🚀 Start Mission: \${escapeHtml(selectedMission.title)}
+            </button>
+            <div style="text-align: center; margin-top: 8px; font-size: 11px; color: var(--vscode-descriptionForeground); font-style: italic;">
+              This will execute \${(selectedMission.includedSteps || []).length} step(s). Other missions remain queued.
+            </div>
+          </div>
+        \`;
+      }
+
       // Render Event Card
       function renderEventCard(event) {
         // Special handling for clarification_presented - render interactive card
@@ -1936,8 +2364,18 @@ export function getWebviewContent(): string {
           \`;
         }
 
-        // Special handling for plan_created - render detailed PlanCard
-        if (event.type === 'plan_created') {
+        // Special handling for plan_large_detected - render explanation card
+        if (event.type === 'plan_large_detected') {
+          return renderLargePlanDetectedCard(event);
+        }
+
+        // Special handling for mission_breakdown_created - render interactive selection card
+        if (event.type === 'mission_breakdown_created') {
+          return renderMissionBreakdownCard(event, state.events);
+        }
+
+        // Special handling for plan_created and plan_revised - render detailed PlanCard
+        if (event.type === 'plan_created' || event.type === 'plan_revised') {
           console.log('🔍 [PLAN DEBUG] plan_created event detected!');
           console.log('🔍 [PLAN DEBUG] event.payload:', JSON.stringify(event.payload, null, 2));
           const plan = event.payload;
@@ -2156,6 +2594,16 @@ export function getWebviewContent(): string {
               return \`ID: \${id.substring(0, 8)}\`;
             }
           },
+          diff_applied: {
+            icon: '✅',
+            title: 'Diff Applied',
+            color: 'var(--vscode-charts-green)',
+            getSummary: (e) => {
+              const files = e.payload.files_changed || [];
+              const success = e.payload.success !== false;
+              return \`\${success ? '✓' : '✗'} \${files.length} file(s) modified\`;
+            }
+          },
           failure_detected: {
             icon: '❌',
             title: 'Failure Detected',
@@ -2250,6 +2698,44 @@ export function getWebviewContent(): string {
             title: 'Focus Selected',
             color: 'var(--vscode-charts-green)',
             getSummary: (e) => e.payload.title || 'Selection made'
+          },
+          plan_revised: {
+            icon: '🔄',
+            title: 'Plan Revised',
+            color: 'var(--vscode-charts-purple)',
+            getSummary: (e) => {
+              const version = e.payload.plan_version || 2;
+              const steps = e.payload.steps || [];
+              return \`v\${version} • \${steps.length} steps\`;
+            }
+          },
+          plan_large_detected: {
+            icon: '⚠️',
+            title: 'Large Plan Detected',
+            color: 'var(--vscode-charts-orange)',
+            getSummary: (e) => {
+              const score = e.payload.score || 0;
+              const reasons = e.payload.reasons || [];
+              return \`Score: \${score}/100 • \${reasons.length > 0 ? reasons[0] : 'Requires mission breakdown'}\`;
+            }
+          },
+          mission_breakdown_created: {
+            icon: '🎯',
+            title: 'Mission Breakdown Created',
+            color: 'var(--vscode-charts-purple)',
+            getSummary: (e) => {
+              const missions = e.payload.missions || [];
+              return \`\${missions.length} missions generated\`;
+            }
+          },
+          mission_selected: {
+            icon: '✅',
+            title: 'Mission Selected',
+            color: 'var(--vscode-charts-green)',
+            getSummary: (e) => {
+              const missionId = e.payload.mission_id || 'unknown';
+              return \`Mission: \${missionId.substring(0, 8)}...\`;
+            }
           }
         };
         return eventCardMap[type];
@@ -2989,6 +3475,280 @@ export function getWebviewContent(): string {
           state.streamingAnswer = null;
           updateStatus('ready');
           updateStage('none');
+          renderMission();
+          renderLogs();
+        }
+      };
+
+      // ===== PLAN REFINEMENT HANDLERS (Step 25) =====
+      window.toggleRefinePlanInput = function(taskId, planId, planVersion) {
+        console.log('Toggle Refine Plan input', { taskId, planId, planVersion });
+        
+        const container = document.getElementById('refine-plan-input-' + planId);
+        if (!container) {
+          console.error('Refine plan container not found:', planId);
+          return;
+        }
+        
+        // Toggle visibility
+        if (container.style.display === 'none') {
+          container.style.display = 'block';
+          // Focus on textarea
+          const textarea = document.getElementById('refinement-instruction-' + planId);
+          if (textarea) {
+            textarea.focus();
+          }
+        } else {
+          container.style.display = 'none';
+        }
+      };
+
+      window.submitPlanRefinement = function(taskId, planId, planVersion) {
+        console.log('Submit Plan Refinement', { taskId, planId, planVersion });
+        
+        // Get refinement instruction text
+        const textarea = document.getElementById('refinement-instruction-' + planId);
+        if (!textarea) {
+          console.error('Refinement textarea not found:', planId);
+          return;
+        }
+        
+        const refinementText = textarea.value.trim();
+        if (!refinementText) {
+          alert('Please enter a refinement instruction describing what changes you want to the plan.');
+          return;
+        }
+        
+        // Disable the button to prevent double-submit
+        const submitBtn = event.target;
+        if (submitBtn) {
+          submitBtn.disabled = true;
+          submitBtn.textContent = '⏳ Refining...';
+        }
+        
+        // Send to extension backend
+        if (typeof vscode !== 'undefined') {
+          vscode.postMessage({
+            type: 'ordinex:refinePlan',
+            task_id: taskId,
+            plan_id: planId,
+            refinement_text: refinementText
+          });
+        } else {
+          // Demo mode
+          console.log('Demo mode: would refine plan with:', refinementText);
+          alert('Plan refinement requires VS Code extension backend');
+          
+          // Re-enable button
+          if (submitBtn) {
+            submitBtn.disabled = false;
+            submitBtn.textContent = '🔄 Generate Refined Plan';
+          }
+        }
+      };
+
+      // ===== MISSION CONTROL BAR STATE LOGIC (Compact Bottom Bar) =====
+      // Compute mission progress from events
+      function getMissionProgress(events) {
+        // Find breakdown event
+        const breakdownEvent = events.find(e => e.type === 'mission_breakdown_created');
+        if (!breakdownEvent) {
+          return null; // No missions, bar hidden
+        }
+
+        const missions = breakdownEvent.payload.missions || [];
+        const totalMissions = missions.length;
+        if (totalMissions === 0) return null;
+
+        // Find selected mission
+        const selectedEvent = events.find(e => e.type === 'mission_selected');
+        const selectedMissionId = selectedEvent?.payload?.mission_id;
+        const selectedMission = missions.find(m => m.missionId === selectedMissionId);
+
+        // Count completed missions (those with mission_completed event)
+        const completedMissionIds = new Set();
+        events.forEach(e => {
+          if (e.type === 'mission_completed') {
+            completedMissionIds.add(e.payload.mission_id);
+          }
+        });
+        const completedCount = completedMissionIds.size;
+
+        // Check if current mission is running
+        const missionStartedEvent = events.find(e => 
+          e.type === 'mission_started' && 
+          e.payload.mission_id === selectedMissionId
+        );
+        const isRunning = missionStartedEvent && !completedMissionIds.has(selectedMissionId);
+
+        // Determine current mission index (1-based)
+        const currentMissionIndex = selectedMission 
+          ? missions.findIndex(m => m.missionId === selectedMissionId) + 1
+          : completedCount + 1;
+
+        return {
+          total: totalMissions,
+          current: Math.min(currentMissionIndex, totalMissions),
+          completed: completedCount,
+          selectedMission: selectedMission,
+          isRunning: isRunning,
+          allDone: completedCount >= totalMissions,
+          taskId: events[0]?.task_id || 'unknown'
+        };
+      }
+
+      // Update Mission Control Bar UI
+      function updateMissionControlBar() {
+        const bar = document.getElementById('missionControlBar');
+        const statusIcon = document.getElementById('mcbStatusIcon');
+        const count = document.getElementById('mcbCount');
+        const missionName = document.getElementById('mcbMissionName');
+        const progressFill = document.getElementById('mcbProgressFill');
+        const cta = document.getElementById('mcbCta');
+
+        const progress = getMissionProgress(state.events);
+
+        if (!progress) {
+          // Hide bar if no mission breakdown
+          bar.classList.remove('visible', 'running', 'complete', 'all-done');
+          return;
+        }
+
+        // Show bar
+        bar.classList.add('visible');
+
+        // Update count display (e.g., "2/4")
+        count.textContent = progress.current + '/' + progress.total;
+
+        // Update progress bar fill (percentage)
+        const pct = Math.round((progress.completed / progress.total) * 100);
+        progressFill.style.width = pct + '%';
+
+        // Determine state and update accordingly
+        if (progress.allDone) {
+          // All missions complete
+          bar.classList.remove('running', 'complete');
+          bar.classList.add('all-done');
+          statusIcon.textContent = '🎉';
+          statusIcon.classList.remove('spinning');
+          missionName.textContent = 'All Complete!';
+          progressFill.classList.add('complete');
+          cta.textContent = '✓ Done';
+          cta.className = 'mcb-cta done';
+          cta.disabled = true;
+        } else if (progress.isRunning) {
+          // Currently running a mission
+          bar.classList.remove('complete', 'all-done');
+          bar.classList.add('running');
+          statusIcon.textContent = '🔄';
+          statusIcon.classList.add('spinning');
+          missionName.textContent = progress.selectedMission?.title || 'Running...';
+          progressFill.classList.remove('complete');
+          cta.textContent = '⏳ Running...';
+          cta.className = 'mcb-cta running';
+          cta.disabled = true;
+        } else if (progress.selectedMission) {
+          // Mission selected, ready to start
+          bar.classList.remove('running', 'all-done');
+          bar.classList.add('complete'); // "ready" state
+          statusIcon.textContent = '🚀';
+          statusIcon.classList.remove('spinning');
+          missionName.textContent = progress.selectedMission.title;
+          progressFill.classList.remove('complete');
+          cta.textContent = '▶ Start';
+          cta.className = 'mcb-cta start';
+          cta.disabled = false;
+          cta.setAttribute('data-task-id', progress.taskId);
+          cta.setAttribute('data-mission-id', progress.selectedMission.missionId);
+        } else {
+          // No mission selected yet
+          bar.classList.remove('running', 'complete', 'all-done');
+          statusIcon.textContent = '🎯';
+          statusIcon.classList.remove('spinning');
+          missionName.textContent = 'Select a mission...';
+          progressFill.classList.remove('complete');
+          cta.textContent = '↑ Select';
+          cta.className = 'mcb-cta secondary';
+          cta.disabled = true;
+        }
+      }
+
+      // Handle Mission Control Bar CTA click
+      window.handleMcbCtaClick = function() {
+        const cta = document.getElementById('mcbCta');
+        const taskId = cta.getAttribute('data-task-id');
+        const missionId = cta.getAttribute('data-mission-id');
+        
+        if (taskId && missionId && !cta.disabled) {
+          handleStartMission(taskId, missionId);
+        }
+      };
+
+      // ===== MISSION SELECTION HANDLERS (Step 26) =====
+      window.handleSelectMission = function(taskId, missionId) {
+        console.log('Select Mission clicked', { taskId, missionId });
+        
+        // Send message to extension
+        if (typeof vscode !== 'undefined') {
+          vscode.postMessage({
+            type: 'ordinex:selectMission',
+            task_id: taskId,
+            mission_id: missionId
+          });
+        } else {
+          // Demo mode: simulate selection
+          console.log('Demo mode: simulating mission selection');
+          const event = {
+            event_id: generateId(),
+            task_id: taskId,
+            timestamp: new Date().toISOString(),
+            type: 'mission_selected',
+            mode: state.currentMode,
+            stage: state.currentStage,
+            payload: {
+              mission_id: missionId,
+              selected_at: new Date().toISOString()
+            },
+            evidence_ids: [],
+            parent_event_id: null
+          };
+          state.events.push(event);
+          renderMission();
+          renderLogs();
+        }
+      };
+
+      window.handleStartMission = function(taskId, missionId) {
+        console.log('Start Mission clicked', { taskId, missionId });
+        
+        // Send message to extension
+        if (typeof vscode !== 'undefined') {
+          vscode.postMessage({
+            type: 'ordinex:startMission',
+            task_id: taskId,
+            mission_id: missionId
+          });
+        } else {
+          // Demo mode: simulate mission start
+          console.log('Demo mode: simulating mission start');
+          updateStatus('running');
+          
+          const event = {
+            event_id: generateId(),
+            task_id: taskId,
+            timestamp: new Date().toISOString(),
+            type: 'mission_started',
+            mode: 'MISSION',
+            stage: 'retrieve',
+            payload: {
+              mission_id: missionId,
+              steps_count: 2,
+              goal: 'Execute selected mission'
+            },
+            evidence_ids: [],
+            parent_event_id: null
+          };
+          state.events.push(event);
           renderMission();
           renderLogs();
         }

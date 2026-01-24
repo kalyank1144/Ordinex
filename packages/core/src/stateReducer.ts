@@ -12,6 +12,7 @@
 
 import { Event, TaskState, Mode, Stage, TaskStatus } from './types';
 import { ScopeManager, DEFAULT_SCOPE_CONTRACT } from './scopeManager';
+import { derivePlanState, CurrentPlanState } from './planVersionManager';
 
 /**
  * Initial task state
@@ -122,11 +123,18 @@ export class StateReducer {
         break;
 
       case 'plan_created':
-        // In PLAN mode, plan creation completes the task
-        // User must then explicitly switch to MISSION mode to execute
+      case 'plan_revised':
+        // Plan created or refined - paused awaiting approval
+        // User must approve the plan before executing
         if (newState.mode === 'PLAN') {
           newState.status = 'paused';  // Paused, waiting for approval to switch to MISSION
         }
+        // Plan version info is tracked via derivePlanState()
+        break;
+
+      case 'plan_large_detected':
+        // Large plan detected - paused, waiting for breakdown/selection
+        newState.status = 'paused';
         break;
 
       case 'mission_breakdown_created':

@@ -9,7 +9,26 @@ import { Event } from '../types';
  * Render a diff proposed card with actions
  */
 export function renderDiffProposedCard(event: Event, taskId: string): string {
-  const filesChanged = (event.payload.files_changed as string[]) || [];
+  // FIX: files_changed can be either string[] or object[]
+  const rawFilesChanged = event.payload.files_changed;
+  let filesChanged: Array<{path: string; additions?: number; deletions?: number}> = [];
+  
+  // Handle both formats
+  if (Array.isArray(rawFilesChanged)) {
+    filesChanged = rawFilesChanged.map(file => {
+      if (typeof file === 'string') {
+        return { path: file };
+      } else if (file && typeof file === 'object') {
+        return {
+          path: file.path || String(file),
+          additions: file.additions,
+          deletions: file.deletions
+        };
+      }
+      return { path: String(file) };
+    });
+  }
+  
   const summary = event.payload.summary as string || 'Diff proposed';
   const changeIntent = event.payload.change_intent as string || '';
   const riskLevel = event.payload.risk_level as string || 'medium';
@@ -38,7 +57,12 @@ export function renderDiffProposedCard(event: Event, taskId: string): string {
       <div class="diff-files">
         <strong>Files Changed (${filesChanged.length}):</strong>
         <ul class="diff-file-list">
-          ${filesChanged.map(file => `<li><code>${escapeHtml(file)}</code></li>`).join('')}
+          ${filesChanged.map(file => {
+            const stats = (file.additions !== undefined && file.deletions !== undefined) 
+              ? ` <span class="file-stats"><span class="stat-add">+${file.additions}</span><span class="stat-remove">-${file.deletions}</span></span>`
+              : '';
+            return `<li><code>${escapeHtml(file.path)}</code>${stats}</li>`;
+          }).join('')}
         </ul>
       </div>
       

@@ -68,6 +68,7 @@ export type EventType =
   | 'mission_started'
   | 'step_started'
   | 'step_completed'
+  | 'step_failed'
   | 'stage_changed'
   | 'final'
   // Retrieval

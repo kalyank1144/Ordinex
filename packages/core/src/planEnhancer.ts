@@ -679,14 +679,39 @@ export function shouldShowClarification(
   assessment: PromptAssessment,
   prompt: string
 ): boolean {
-  const { clarity } = assessment;
+  const { clarity, clarity_score } = assessment;
+  const promptLower = prompt.toLowerCase();
 
-  // Always show for low clarity
-  if (clarity === 'low') {
-    return true;
+  // High clarity: skip clarification
+  if (clarity === 'high') {
+    return false;
   }
 
-  // For medium clarity, check specificity
+  // Check for action verb + specific target patterns (skip clarification)
+  const actionVerbs = ['create', 'add', 'build', 'implement', 'make', 'write', 'develop', 'fix', 'refactor'];
+  const hasActionVerb = actionVerbs.some(v => promptLower.includes(v));
+  
+  // Specific target patterns - component/feature names, technology mentions
+  const specificTargets = [
+    'component', 'page', 'feature', 'button', 'form', 'modal', 'dialog', 'table', 'list',
+    'header', 'footer', 'sidebar', 'navbar', 'menu', 'card', 'chart', 'dashboard',
+    'authentication', 'login', 'signup', 'register', 'profile', 'settings', 'search',
+    'api', 'hook', 'context', 'provider', 'store', 'reducer', 'action', 'selector',
+    'todo', 'task', 'item', 'user', 'product', 'order', 'cart', 'checkout'
+  ];
+  const hasSpecificTarget = specificTargets.some(t => promptLower.includes(t));
+  
+  // Framework/technology mentions suggest specificity
+  const techMentions = ['react', 'vue', 'angular', 'next', 'node', 'express', 'typescript'];
+  const hasTechMention = techMentions.some(t => promptLower.includes(t));
+
+  // Skip clarification if: action verb + (specific target OR tech mention)
+  if (hasActionVerb && (hasSpecificTarget || hasTechMention)) {
+    console.log(`[Ordinex:PlanEnhancement] Skipping clarification: action verb + specific target detected`);
+    return false;
+  }
+
+  // For medium clarity (40-69), also check other specificity signals
   if (clarity === 'medium') {
     const hasExplicitScope = /only|just|specifically|focus|limit to/i.test(prompt);
     const hasFileComponentMention = /\.(ts|tsx|js|jsx|py|go|java)|[A-Z][a-z]+[A-Z][a-zA-Z]*\.tsx?/i.test(prompt);
@@ -696,11 +721,17 @@ export function shouldShowClarification(
       return false;
     }
     
+    // If clarity score is 50+, still skip for prompts with decent specificity
+    if (clarity_score >= 50 && (hasActionVerb || hasSpecificTarget)) {
+      console.log(`[Ordinex:PlanEnhancement] Skipping clarification: score ${clarity_score} with action/target`);
+      return false;
+    }
+    
     return true;
   }
 
-  // High clarity: skip clarification
-  return false;
+  // Always show for low clarity
+  return true;
 }
 
 // ============================================================================

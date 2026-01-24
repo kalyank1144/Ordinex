@@ -2,11 +2,15 @@ import * as vscode from 'vscode';
 import * as path from 'path';
 import * as fs from 'fs';
 import { getWebviewContent } from 'webview';
+import { VSCodeWorkspaceWriter } from './vscodeWorkspaceWriter';
+import { VSCodeCheckpointManager } from './vscodeCheckpointManager';
 import { 
   EventStore, 
   Event, 
   Mode, 
   classifyPrompt, 
+  classifyPromptV2,
+  modeConfirmationPolicy,
   shouldRequireConfirmation, 
   generateTemplatePlan,
   generateLLMPlan,
@@ -48,7 +52,12 @@ import {
   isClarificationPending,
   getPendingClarificationOptions,
   LightContextBundle,
-  ClarificationOption
+  ClarificationOption,
+  // Step 26: Mission Breakdown imports
+  detectLargePlan,
+  buildPlanTextForAnalysis,
+  generateMissionBreakdown,
+  PlanStepForAnalysis
 } from 'core';
 
 class MissionControlViewProvider implements vscode.WebviewViewProvider {
@@ -59,6 +68,7 @@ class MissionControlViewProvider implements vscode.WebviewViewProvider {
   private currentStage: 'plan' | 'retrieve' | 'edit' | 'test' | 'repair' | 'none' = 'none';
   private repairOrchestrator: RepairOrchestrator | null = null;
   private isProcessing: boolean = false; // Prevent double submissions
+  private activeApprovalManager: ApprovalManager | null = null; // Store active approval manager
 
   constructor(
     private readonly _extensionUri: vscode.Uri,
@@ -152,6 +162,15 @@ class MissionControlViewProvider implements vscode.WebviewViewProvider {
 
       case 'ordinex:skipClarification':
         await this.handleSkipClarification(message, webview);
+        break;
+
+      // Step 26: Mission Breakdown handlers
+      case 'ordinex:selectMission':
+        await this.handleSelectMission(message, webview);
+        break;
+
+      case 'ordinex:startSelectedMission':
+        await this.handleStartSelectedMission(message, webview);
         break;
 
       default:
@@ -428,6 +447,9 @@ class MissionControlViewProvider implements vscode.WebviewViewProvider {
       const checkpointManager = new CheckpointManager(eventBus, checkpointDir);
       const approvalManager = new ApprovalManager(eventBus);
 
+      // CRITICAL: Store approval manager so handleResolveApproval can use it
+      this.activeApprovalManager = approvalManager;
+
       // Subscribe to events from MissionExecutor
       eventBus.subscribe(async (event) => {
         // Events are already persisted by MissionExecutor's eventBus
@@ -442,6 +464,10 @@ class MissionControlViewProvider implements vscode.WebviewViewProvider {
         maxTokens: 4096
       };
 
+      // PHASE 6: Create workspace adapters for real file operations
+      const workspaceWriter = new VSCodeWorkspaceWriter(workspaceRoot);
+      const workspaceCheckpointMgr = new VSCodeCheckpointManager(workspaceRoot);
+
       // Create MissionExecutor with new required dependencies
       const missionExecutor = new MissionExecutor(
         taskId,
@@ -450,6 +476,8 @@ class MissionControlViewProvider implements vscode.WebviewViewProvider {
         approvalManager,
         workspaceRoot,
         llmConfig,
+        workspaceWriter,           // NEW: Real file writer
+        workspaceCheckpointMgr,    // NEW: Real checkpoint manager
         null,  // retriever - TODO: wire up later
         null,  // diffManager - TODO: wire up later
         null,  // testRunner - TODO: wire up later
@@ -1244,7 +1272,38 @@ This demonstrates the diff proposal pipeline without requiring LLM integration.
 
       // HIGH CLARITY: Skip clarification, go directly to LLM plan
       console.log(`${LOG_PREFIX} ✓ High clarity - skipping clarification, generating plan directly`);
-      await this.generateAndEmitPlan(userPrompt, taskId, modelId, webview, lightContext, null);
+      try {
+        await this.generateAndEmitPlan(userPrompt, taskId, modelId, webview, lightContext, null);
+      } catch (planError) {
+        console.error(`${LOG_PREFIX} Plan generation failed:`, planError);
+        
+        // Emit failure_detected so user sees what went wrong
+        await this.emitEvent({
+          event_id: this.generateId(),
+          task_id: taskId,
+          timestamp: new Date().toISOString(),
+          type: 'failure_detected',
+          mode: this.currentMode,
+          stage: this.currentStage,
+          payload: {
+            error: planError instanceof Error ? planError.message : 'Plan generation failed',
+            suggestion: 'Check API key is set (Cmd+Shift+P → "Ordinex: Set API Key") or try a more exploratory prompt',
+          },
+          evidence_ids: [],
+          parent_event_id: null,
+        });
+        
+        await this.sendEventsToWebview(webview, taskId);
+        
+        vscode.window.showErrorMessage(
+          `Plan generation failed: ${planError instanceof Error ? planError.message : 'Unknown error'}. Check if API key is configured.`,
+          'Set API Key'
+        ).then(action => {
+          if (action === 'Set API Key') {
+            vscode.commands.executeCommand('ordinex.setApiKey');
+          }
+        });
+      }
 
     } catch (error) {
       console.error(`${LOG_PREFIX} Error in PLAN mode:`, error);
@@ -1706,21 +1765,129 @@ This demonstrates the diff proposal pipeline without requiring LLM integration.
 
         this.currentMode = 'MISSION';
 
-        // Emit execution_paused with specific reason (ready for Execute Plan)
-        await this.emitEvent({
-          event_id: this.generateId(),
-          task_id: task_id,
-          timestamp: new Date().toISOString(),
-          type: 'execution_paused',
-          mode: 'MISSION',
-          stage: this.currentStage,
-          payload: {
-            reason: 'awaiting_execute_plan',
-            description: 'Plan approved - ready to execute'
-          },
-          evidence_ids: [],
-          parent_event_id: null,
-        });
+        // STEP 26: Check if plan is too large and needs breakdown
+        const planEvents = events.filter((e: Event) => 
+          e.type === 'plan_created' || e.type === 'plan_revised'
+        );
+        const planEvent = planEvents[planEvents.length - 1];
+        
+        if (planEvent) {
+          const plan = planEvent.payload as any;
+          const planId = planEvent.event_id;
+          const planVersion = (plan.plan_version as number) || 1;
+          
+          // Convert plan steps to format needed for analysis
+          const stepsForAnalysis: PlanStepForAnalysis[] = (plan.steps || []).map((step: any, index: number) => ({
+            step_id: step.id || step.step_id || `step_${index + 1}`,
+            description: step.description || '',
+            expected_evidence: step.expected_evidence || []
+          }));
+
+          // Build plan text for analysis
+          const planText = buildPlanTextForAnalysis(plan.goal || '', stepsForAnalysis);
+
+          // Detect if plan is large
+          const detection = detectLargePlan(stepsForAnalysis, planText, {});
+          
+          console.log('[handleResolvePlanApproval] Large plan detection:', {
+            largePlan: detection.largePlan,
+            score: detection.score,
+            reasons: detection.reasons
+          });
+
+          if (detection.largePlan) {
+            // Emit plan_large_detected event
+            await this.emitEvent({
+              event_id: this.generateId(),
+              task_id: task_id,
+              timestamp: new Date().toISOString(),
+              type: 'plan_large_detected',
+              mode: 'MISSION',
+              stage: this.currentStage,
+              payload: {
+                plan_id: planId,
+                plan_version: planVersion,
+                large_plan: true,
+                score: detection.score,
+                reasons: detection.reasons,
+                metrics: detection.metrics
+              },
+              evidence_ids: [],
+              parent_event_id: planId,
+            });
+
+            // Generate mission breakdown
+            const breakdown = generateMissionBreakdown(planId, planVersion, plan.goal || '', stepsForAnalysis, detection);
+            
+            console.log('[handleResolvePlanApproval] Generated breakdown with', breakdown.missions.length, 'missions');
+
+            // Emit mission_breakdown_created event
+            await this.emitEvent({
+              event_id: this.generateId(),
+              task_id: task_id,
+              timestamp: new Date().toISOString(),
+              type: 'mission_breakdown_created',
+              mode: 'MISSION',
+              stage: this.currentStage,
+              payload: {
+                plan_id: planId,
+                plan_version: planVersion,
+                breakdown_id: breakdown.breakdownId,
+                missions: breakdown.missions
+              },
+              evidence_ids: [],
+              parent_event_id: planId,
+            });
+
+            // Emit execution_paused awaiting mission selection (NOT execute_plan)
+            await this.emitEvent({
+              event_id: this.generateId(),
+              task_id: task_id,
+              timestamp: new Date().toISOString(),
+              type: 'execution_paused',
+              mode: 'MISSION',
+              stage: this.currentStage,
+              payload: {
+                reason: 'awaiting_mission_selection',
+                description: 'Plan is too large - select ONE mission to execute'
+              },
+              evidence_ids: [],
+              parent_event_id: null,
+            });
+          } else {
+            // Plan is NOT large - proceed directly to Execute Plan
+            await this.emitEvent({
+              event_id: this.generateId(),
+              task_id: task_id,
+              timestamp: new Date().toISOString(),
+              type: 'execution_paused',
+              mode: 'MISSION',
+              stage: this.currentStage,
+              payload: {
+                reason: 'awaiting_execute_plan',
+                description: 'Plan approved - ready to execute'
+              },
+              evidence_ids: [],
+              parent_event_id: null,
+            });
+          }
+        } else {
+          // No plan found - fallback to awaiting_execute_plan
+          await this.emitEvent({
+            event_id: this.generateId(),
+            task_id: task_id,
+            timestamp: new Date().toISOString(),
+            type: 'execution_paused',
+            mode: 'MISSION',
+            stage: this.currentStage,
+            payload: {
+              reason: 'awaiting_execute_plan',
+              description: 'Plan approved - ready to execute'
+            },
+            evidence_ids: [],
+            parent_event_id: null,
+          });
+        }
       } else {
         // Plan rejected - remain in PLAN mode
         await this.emitEvent({
@@ -1759,6 +1926,13 @@ This demonstrates the diff proposal pipeline without requiring LLM integration.
     }
 
     try {
+      // CRITICAL FIX: Call the active approval manager to resolve the Promise
+      if (!this.activeApprovalManager) {
+        console.error('[handleResolveApproval] No active approval manager found!');
+        vscode.window.showErrorMessage('No active approval manager. Please try again.');
+        return;
+      }
+
       // Get events to find the approval request
       const events = this.eventStore?.getEventsByTaskId(task_id) || [];
       const approvalRequest = events.find(
@@ -1772,28 +1946,22 @@ This demonstrates the diff proposal pipeline without requiring LLM integration.
 
       const approved = decision === 'approved';
 
-      // Emit approval_resolved event
-      await this.emitEvent({
-        event_id: this.generateId(),
-        task_id: task_id,
-        timestamp: new Date().toISOString(),
-        type: 'approval_resolved',
-        mode: this.currentMode,
-        stage: this.currentStage,
-        payload: {
-          approval_id: approval_id,
-          decision: decision,
-          approved: approved,
-          decided_at: new Date().toISOString()
-        },
-        evidence_ids: [],
-        parent_event_id: approvalRequest.event_id,
-      });
+      console.log(`[handleResolveApproval] Resolving approval: ${approval_id}, decision: ${decision}`);
+
+      // Resolve via approval manager (this resolves the Promise and unblocks execution!)
+      await this.activeApprovalManager.resolveApproval(
+        task_id,
+        this.currentMode,
+        this.currentStage,
+        approval_id,
+        approved ? 'approved' : 'denied',
+        'once'
+      );
 
       // Send updated events to webview
       await this.sendEventsToWebview(webview, task_id);
 
-      console.log('Approval resolved:', { approval_id, approved, decision });
+      console.log('[handleResolveApproval] Approval resolved successfully:', { approval_id, approved, decision });
 
     } catch (error) {
       console.error('Error handling resolveApproval:', error);
@@ -2074,6 +2242,171 @@ This demonstrates the diff proposal pipeline without requiring LLM integration.
     } catch (error) {
       console.error('Error handling skipClarification:', error);
       vscode.window.showErrorMessage('Plan generation failed. Please try again.');
+    }
+  }
+
+  /**
+   * Step 26: Handle mission selection from breakdown
+   */
+  private async handleSelectMission(message: any, webview: vscode.Webview) {
+    const { task_id, mission_id, breakdown_id } = message;
+    const LOG_PREFIX = '[Ordinex:MissionBreakdown]';
+
+    if (!task_id || !mission_id) {
+      console.error('Missing required fields in selectMission');
+      return;
+    }
+
+    console.log(`${LOG_PREFIX} Mission selected: ${mission_id}`);
+
+    try {
+      // Get events to find the breakdown
+      const events = this.eventStore?.getEventsByTaskId(task_id) || [];
+      const breakdownEvent = events.find((e: Event) => e.type === 'mission_breakdown_created');
+
+      if (!breakdownEvent) {
+        console.error('No breakdown found');
+        vscode.window.showErrorMessage('Mission breakdown not found. Please try again.');
+        return;
+      }
+
+      // Emit mission_selected event
+      await this.emitEvent({
+        event_id: this.generateId(),
+        task_id: task_id,
+        timestamp: new Date().toISOString(),
+        type: 'mission_selected',
+        mode: this.currentMode,
+        stage: this.currentStage,
+        payload: {
+          mission_id: mission_id,
+          breakdown_id: breakdown_id || breakdownEvent.payload.breakdown_id
+        },
+        evidence_ids: [],
+        parent_event_id: null,
+      });
+
+      // Emit execution_paused ready to start mission
+      await this.emitEvent({
+        event_id: this.generateId(),
+        task_id: task_id,
+        timestamp: new Date().toISOString(),
+        type: 'execution_paused',
+        mode: 'MISSION',
+        stage: this.currentStage,
+        payload: {
+          reason: 'awaiting_mission_start',
+          description: 'Mission selected - ready to start execution'
+        },
+        evidence_ids: [],
+        parent_event_id: null,
+      });
+
+      await this.sendEventsToWebview(webview, task_id);
+
+      console.log(`${LOG_PREFIX} Mission selection recorded: ${mission_id}`);
+
+    } catch (error) {
+      console.error('Error handling selectMission:', error);
+      vscode.window.showErrorMessage(`Failed to select mission: ${error}`);
+    }
+  }
+
+  /**
+   * Step 26: Start execution of the selected mission
+   */
+  private async handleStartSelectedMission(message: any, webview: vscode.Webview) {
+    const { task_id } = message;
+    const LOG_PREFIX = '[Ordinex:MissionBreakdown]';
+
+    if (!task_id) {
+      console.error('Missing task_id in startSelectedMission');
+      return;
+    }
+
+    console.log(`${LOG_PREFIX} Starting selected mission...`);
+
+    try {
+      // Get events to find the selected mission
+      const events = this.eventStore?.getEventsByTaskId(task_id) || [];
+      const selectionEvent = events.find((e: Event) => e.type === 'mission_selected');
+      const breakdownEvent = events.find((e: Event) => e.type === 'mission_breakdown_created');
+
+      if (!selectionEvent || !breakdownEvent) {
+        console.error('No mission selected or breakdown found');
+        vscode.window.showErrorMessage('Please select a mission first.');
+        return;
+      }
+
+      const selectedMissionId = selectionEvent.payload.mission_id as string;
+      const missions = breakdownEvent.payload.missions as any[];
+      const selectedMission = missions.find(m => m.missionId === selectedMissionId);
+
+      if (!selectedMission) {
+        console.error('Selected mission not found in breakdown');
+        vscode.window.showErrorMessage('Selected mission not found. Please select again.');
+        return;
+      }
+
+      console.log(`${LOG_PREFIX} Starting mission: ${selectedMission.title}`);
+
+      // Create a filtered plan with only the selected mission's steps
+      const planEvents = events.filter((e: Event) => 
+        e.type === 'plan_created' || e.type === 'plan_revised'
+      );
+      const planEvent = planEvents[planEvents.length - 1];
+
+      if (!planEvent) {
+        throw new Error('No plan found');
+      }
+
+      const fullPlan = planEvent.payload as any;
+      const missionStepIds = selectedMission.includedSteps.map((s: any) => s.stepId);
+      
+      // Filter steps to only include mission steps
+      const missionSteps = fullPlan.steps.filter((step: any, index: number) => {
+        const stepId = step.id || step.step_id || `step_${index + 1}`;
+        return missionStepIds.includes(stepId);
+      });
+
+      // Create mission-scoped plan
+      const missionPlan: StructuredPlan = {
+        goal: selectedMission.title,
+        assumptions: fullPlan.assumptions || [],
+        success_criteria: selectedMission.acceptance || [],
+        scope_contract: fullPlan.scope_contract || {
+          max_files: 10,
+          max_lines: 1000,
+          allowed_tools: ['read', 'write', 'lint', 'test']
+        },
+        steps: missionSteps.length > 0 ? missionSteps : fullPlan.steps.slice(0, 3),
+        risks: selectedMission.risk?.notes || []
+      };
+
+      // Trigger handleExecutePlan with the mission plan
+      // We'll emit the mission_started event and then call executePlan logic
+      await this.emitEvent({
+        event_id: this.generateId(),
+        task_id: task_id,
+        timestamp: new Date().toISOString(),
+        type: 'mission_started',
+        mode: 'MISSION',
+        stage: this.currentStage,
+        payload: {
+          mission_id: selectedMissionId,
+          mission_title: selectedMission.title,
+          steps_count: missionPlan.steps.length
+        },
+        evidence_ids: [],
+        parent_event_id: null,
+      });
+
+      // Now call the existing execute plan logic
+      await this.handleExecutePlan({ taskId: task_id }, webview);
+
+    } catch (error) {
+      console.error('Error handling startSelectedMission:', error);
+      vscode.window.showErrorMessage(`Failed to start mission: ${error}`);
     }
   }
 

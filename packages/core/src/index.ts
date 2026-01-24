@@ -94,9 +94,16 @@ export {
 // Export mode classifier and plan generator
 export {
   classifyPrompt,
+  classifyPromptV2,
   shouldRequireConfirmation,
   ClassificationResult
 } from './modeClassifier';
+export {
+  ModeConfirmationPolicy,
+  modeConfirmationPolicy,
+  ConfirmationDecision,
+  UserOverride
+} from './modeConfirmationPolicy';
 export {
   generateTemplatePlan,
   generateLLMPlan,
@@ -105,6 +112,51 @@ export {
   PlanPayload,
   StructuredPlan
 } from './planGenerator';
+
+// Export Plan Version Manager (Step 25)
+export {
+  PlanVersionManager,
+  derivePlanState,
+  deriveLargePlanState,
+  deriveBreakdownState,
+  deriveMissionSelectionState,
+  hasBreakdownForLatestPlan,
+  isMissionSelectedForLatestPlan,
+  CurrentPlanState,
+  LargePlanState,
+  BreakdownState,
+  MissionSelectionState,
+  VersionedPlanPayload
+} from './planVersionManager';
+
+// Export Large Plan Detector (Step 26)
+export {
+  detectLargePlan,
+  buildPlanTextForAnalysis,
+  LARGE_PLAN_CONFIG,
+  LargePlanDetectionResult,
+  PlanStepForAnalysis,
+  RepoSignals
+} from './largePlanDetector';
+
+// Export Mission Breakdown Generator (Step 26)
+export {
+  generateMissionBreakdown,
+  MissionV1,
+  MissionBreakdown,
+  MissionDomain,
+  RiskLevel,
+  MissionSize
+} from './missionBreakdownGenerator';
+
+// Export Decision Store (Step 25)
+export {
+  DecisionStore,
+  generateChangesSummary,
+  DecisionRecord,
+  PlanRefinementDecision,
+  PlanApprovalDecision
+} from './decisionStore';
 
 // Export run exporter
 export {
@@ -169,3 +221,73 @@ export {
   CONTEXT_TIMEOUT_MS,
   TODO_SCAN_TIMEOUT_MS
 } from './planEnhancer';
+
+// Export MISSION EDIT utilities (spec-compliant unified diff flow)
+export {
+  parseUnifiedDiff,
+  validateDiff,
+  applyDiffToContent,
+  generateUnifiedDiff,
+  DiffHunk,
+  DiffLine,
+  ParsedFileDiff,
+  ParsedDiff,
+  DiffValidationResult,
+  DiffValidationError
+} from './unifiedDiffParser';
+
+export {
+  computeBaseSha,
+  computeFullSha,
+  shaEquals,
+  isFileStale,
+  computeFileShaInfo,
+  computeBatchShaInfo,
+  checkBatchStaleness,
+  FileShaInfo
+} from './shaUtils';
+
+export {
+  selectEditContext,
+  buildBaseShaMap,
+  FileContextEntry,
+  FileSelectionEvidence,
+  EditContextSelectionResult,
+  FileSelectionSource,
+  ExcerptSelectionConfig
+} from './excerptSelector';
+
+export {
+  AtomicDiffApplier,
+  createDiffId,
+  createCheckpointId,
+  AtomicApplyResult,
+  CheckpointInfo
+} from './atomicDiffApply';
+
+export {
+  LLMEditTool,
+  DEFAULT_EDIT_CONSTRAINTS,
+  DEFAULT_PRECONDITIONS,
+  LLMEditStepInput,
+  LLMEditStepOutput,
+  LLMEditStepResult
+} from './llmEditTool';
+
+export {
+  EditEvidenceManager,
+  buildDiffProposedPayload,
+  buildDiffAppliedPayload,
+  DiffManifest,
+  ApplyEvidence
+} from './editEvidenceManager';
+
+// Export workspace adapter interfaces (NO vscode imports - implemented in extension)
+export type {
+  FilePatch,
+  WorkspaceWriter,
+  CheckpointFile,
+  CheckpointResult,
+  RollbackResult,
+  CheckpointManager as WorkspaceCheckpointManager
+} from './workspaceAdapter';

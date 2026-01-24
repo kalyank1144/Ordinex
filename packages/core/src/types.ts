@@ -10,11 +10,13 @@ export type EventType =
   | 'mode_set'
   | 'plan_created'
   | 'plan_revised'
+  | 'plan_large_detected'
   | 'mission_breakdown_created'
   | 'mission_selected'
   | 'mission_started'
   | 'step_started'
   | 'step_completed'
+  | 'step_failed'
   | 'stage_changed'
   | 'final'
   // Retrieval
@@ -70,11 +72,13 @@ export const CANONICAL_EVENT_TYPES: readonly EventType[] = [
   'mode_set',
   'plan_created',
   'plan_revised',
+  'plan_large_detected',
   'mission_breakdown_created',
   'mission_selected',
   'mission_started',
   'step_started',
   'step_completed',
+  'step_failed',
   'stage_changed',
   'final',
   'retrieval_started',
@@ -118,6 +122,28 @@ export const CANONICAL_EVENT_TYPES: readonly EventType[] = [
 export type Mode = 'ANSWER' | 'PLAN' | 'MISSION';
 
 export type Stage = 'plan' | 'retrieve' | 'edit' | 'test' | 'repair' | 'none';
+
+/**
+ * Mode Classification V2 - Reason tags for transparency
+ */
+export type ReasonTag = 
+  | 'question_form'
+  | 'action_verbs'
+  | 'planning_terms'
+  | 'file_reference'
+  | 'error_reference'
+  | 'conversational_action';
+
+/**
+ * Mode Classification V2 - Rich classification result
+ */
+export interface ClassificationResultV2 {
+  suggestedMode: Mode;
+  confidence: 'high' | 'medium' | 'low';
+  reasonTags: ReasonTag[];
+  scores: { answer: number; plan: number; mission: number };
+  reasonSignature: string; // Stable signature for caching: "tag1,tag2→MODE"
+}
 
 export type TaskStatus = 'idle' | 'running' | 'paused' | 'error' | 'complete';
 
@@ -234,4 +260,29 @@ export interface Evidence {
 export interface ValidationResult {
   valid: boolean;
   error?: string;
+}
+
+/**
+ * Plan Metadata - Advisory info from LLM during PLAN generation
+ * This enables Step 26 to detect "sneaky" complex plans that appear small
+ * but have high file touch, risk, or low confidence.
+ * 
+ * Key principle: PLAN = intelligence (LLM), Step 26 = validation (deterministic)
+ * planMeta is OPTIONAL for backward compatibility.
+ */
+export interface PlanMeta {
+  /** Estimated number of files this plan will touch */
+  estimatedFileTouch: number | 'unknown';
+  
+  /** Estimated development hours for a senior developer */
+  estimatedDevHours: number | 'unknown';
+  
+  /** High-risk areas detected in this plan */
+  riskAreas: string[];  // e.g., ["auth", "migration", "payments"]
+  
+  /** Domains/surfaces this plan spans */
+  domains: string[];    // e.g., ["web", "mobile", "backend", "database"]
+  
+  /** LLM's confidence in plan scope accuracy */
+  confidence: 'low' | 'medium' | 'high';
 }
