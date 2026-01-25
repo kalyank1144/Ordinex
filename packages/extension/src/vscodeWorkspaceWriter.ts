@@ -26,69 +26,114 @@ export class VSCodeWorkspaceWriter implements WorkspaceWriter {
 
   /**
    * Apply file patches to workspace using VS Code APIs
-   * This method is ATOMIC: either all succeed or all fail
+   * Handles create, update, and delete operations
+   * 
+   * FIXED: Properly handles file creation by creating file with content in one step
    */
   async applyPatches(patches: FilePatch[]): Promise<void> {
     if (patches.length === 0) {
       return;
     }
 
-    // Build WorkspaceEdit
-    const edit = new vscode.WorkspaceEdit();
-
+    // Process patches sequentially to ensure proper handling
     for (const patch of patches) {
       const uri = vscode.Uri.file(path.join(this.workspaceRoot, patch.path));
 
       switch (patch.action) {
         case 'create':
+          await this.createFile(uri, patch.newContent || '');
+          break;
+
         case 'update':
-          if (!patch.newContent) {
-            throw new Error(`newContent required for ${patch.action} on ${patch.path}`);
-          }
-          
-          // For create: create file if doesn't exist, then replace content
-          // For update: just replace content
-          edit.createFile(uri, { 
-            overwrite: patch.action === 'update',
-            ignoreIfExists: patch.action === 'update'
-          });
-          
-          // Replace entire file content
-          const fullRange = new vscode.Range(
-            new vscode.Position(0, 0),
-            new vscode.Position(Number.MAX_SAFE_INTEGER, 0)
-          );
-          edit.replace(uri, fullRange, patch.newContent);
+          await this.updateFile(uri, patch.newContent || '');
           break;
 
         case 'delete':
-          edit.deleteFile(uri, { 
-            ignoreIfNotExists: true,
-            recursive: false
-          });
+          await this.deleteFile(uri);
           break;
 
         default:
           throw new Error(`Unknown action: ${(patch as any).action}`);
       }
     }
+  }
 
-    // Apply edit atomically
-    const success = await vscode.workspace.applyEdit(edit);
-    
-    if (!success) {
-      throw new Error('Failed to apply workspace edit');
+  /**
+   * Create a new file with content
+   * Uses fs.writeFile for reliable file creation
+   */
+  private async createFile(uri: vscode.Uri, content: string): Promise<void> {
+    // Ensure parent directory exists
+    const dirPath = path.dirname(uri.fsPath);
+    await vscode.workspace.fs.createDirectory(vscode.Uri.file(dirPath));
+
+    // Write file content using VS Code's fs API
+    const encoder = new TextEncoder();
+    await vscode.workspace.fs.writeFile(uri, encoder.encode(content));
+
+    // Open the file in editor
+    try {
+      const doc = await vscode.workspace.openTextDocument(uri);
+      await vscode.window.showTextDocument(doc, {
+        viewColumn: vscode.ViewColumn.Active,
+        preserveFocus: true,
+        preview: false,
+      });
+    } catch (openError) {
+      console.warn(`[VSCodeWorkspaceWriter] Could not open newly created file: ${uri.fsPath}`, openError);
     }
+  }
 
-    // Save all affected documents
-    for (const patch of patches) {
-      if (patch.action !== 'delete') {
-        const uri = vscode.Uri.file(path.join(this.workspaceRoot, patch.path));
-        const doc = vscode.workspace.textDocuments.find(d => d.uri.toString() === uri.toString());
-        if (doc && doc.isDirty) {
-          await doc.save();
-        }
+  /**
+   * Update an existing file with new content
+   * Opens the file, replaces all content, and saves
+   */
+  private async updateFile(uri: vscode.Uri, content: string): Promise<void> {
+    try {
+      // Try to open existing document
+      const doc = await vscode.workspace.openTextDocument(uri);
+      
+      // Create edit to replace entire content
+      const edit = new vscode.WorkspaceEdit();
+      const fullRange = new vscode.Range(
+        new vscode.Position(0, 0),
+        doc.lineAt(doc.lineCount - 1).range.end
+      );
+      edit.replace(uri, fullRange, content);
+      
+      // Apply the edit
+      const success = await vscode.workspace.applyEdit(edit);
+      if (!success) {
+        throw new Error(`Failed to apply edit to ${uri.fsPath}`);
       }
+      
+      // Save the document
+      if (doc.isDirty) {
+        await doc.save();
+      }
+      
+      // Show the document
+      await vscode.window.showTextDocument(doc, {
+        viewColumn: vscode.ViewColumn.Active,
+        preserveFocus: true,
+        preview: false,
+      });
+    } catch (error) {
+      // File might not exist - fall back to create
+      console.warn(`[VSCodeWorkspaceWriter] File doesn't exist, creating: ${uri.fsPath}`);
+      await this.createFile(uri, content);
+    }
+  }
+
+  /**
+   * Delete a file
+   */
+  private async deleteFile(uri: vscode.Uri): Promise<void> {
+    try {
+      await vscode.workspace.fs.delete(uri, { recursive: false, useTrash: true });
+    } catch (error) {
+      // File might not exist - that's OK
+      console.warn(`[VSCodeWorkspaceWriter] Could not delete file (may not exist): ${uri.fsPath}`, error);
     }
   }
 

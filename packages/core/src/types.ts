@@ -65,7 +65,24 @@ export type EventType =
   | 'prompt_rewritten'
   | 'clarification_requested'
   | 'clarification_presented'
-  | 'clarification_received';
+  | 'clarification_received'
+  // Step 27: Mission Execution Harness
+  | 'stale_context_detected'
+  | 'stage_timeout'
+  | 'repair_attempt_started'
+  | 'repair_attempt_completed'
+  | 'repeated_failure_detected'
+  | 'test_started'
+  | 'test_completed'
+  | 'test_failed'
+  | 'mission_completed'
+  | 'mission_paused'
+  | 'mission_cancelled'
+  | 'patch_plan_proposed'
+  | 'context_snapshot_created'
+  // Step 28: Self-Correction Loop
+  | 'failure_classified'
+  | 'decision_point_needed';
 
 export const CANONICAL_EVENT_TYPES: readonly EventType[] = [
   'intent_received',
@@ -117,6 +134,23 @@ export const CANONICAL_EVENT_TYPES: readonly EventType[] = [
   'clarification_requested',
   'clarification_presented',
   'clarification_received',
+  // Step 27: Mission Execution Harness
+  'stale_context_detected',
+  'stage_timeout',
+  'repair_attempt_started',
+  'repair_attempt_completed',
+  'repeated_failure_detected',
+  'test_started',
+  'test_completed',
+  'test_failed',
+  'mission_completed',
+  'mission_paused',
+  'mission_cancelled',
+  'patch_plan_proposed',
+  'context_snapshot_created',
+  // Step 28: Self-Correction Loop
+  'failure_classified',
+  'decision_point_needed',
 ] as const;
 
 export type Mode = 'ANSWER' | 'PLAN' | 'MISSION';

@@ -392,6 +392,7 @@ export class LLMEditTool {
 
   /**
    * Build system prompt (V1 FULL CONTENT STRATEGY)
+   * Updated to better support file creation
    */
   private buildSystemPrompt(): string {
     return `You are editing code for a specific task step. You will receive file excerpts with their base_sha hashes.
@@ -402,10 +403,10 @@ Output ONLY valid JSON with these exact fields: unified_diff, touched_files, con
 
 touched_files array structure (CRITICAL):
 Each entry MUST have:
-- path: string (file path)
+- path: string (file path - relative to project root, e.g., "src/components/Auth.tsx")
 - action: "create" | "update" | "delete" (operation type)
 - new_content: string (REQUIRED for create/update actions - THE COMPLETE NEW FILE CONTENT)
-- base_sha: string | null (the base_sha from input, or null for newly created files)
+- base_sha: string | null (the base_sha from input for updates, or null for newly created files)
 
 unified_diff is for DISPLAY/REVIEW ONLY. The actual file changes will use touched_files[].new_content.
 For create/update actions, new_content MUST contain the ENTIRE new file content, not just the changes.
@@ -415,17 +416,38 @@ validation_status field MUST be EXACTLY one of:
 - "stale_context" - file content seems outdated/incomplete
 - "cannot_edit" - cannot make the requested change
 
+FILE CREATION GUIDELINES (when file creation is allowed):
+- You CAN create new files under src/, components/, lib/, utils/, hooks/, contexts/, services/, types/, pages/, app/ directories
+- For React/TypeScript: include proper imports, type definitions, and exports
+- Use consistent naming conventions with the existing codebase
+- Include necessary boilerplate (imports, types, default exports)
+- Create files with proper file extensions (.ts, .tsx, .js, .jsx, .css, etc.)
+
 CRITICAL RULES:
 
 1. For update actions: new_content must contain the FULL file with all changes applied
-2. For create actions: new_content must contain the COMPLETE new file
+2. For create actions: new_content must contain the COMPLETE new file with all necessary code
 3. For delete actions: new_content must be omitted/undefined
-4. Do NOT create files (action: "create") unless explicitly requested
-5. Do NOT delete files (action: "delete") unless explicitly requested
-6. ONLY modify files provided in file_context
+4. Check the CONSTRAINTS section - if file creation is "allowed", you CAN create new files
+5. Do NOT delete files unless explicitly allowed
+6. For updates, ONLY modify files provided in file_context
 7. If uncertain, set validation_status to "cannot_edit" with explanation in notes
 8. Use LF line endings only (no CRLF)
-9. Do NOT add explanations outside the JSON structure`;
+9. Do NOT add explanations outside the JSON structure
+
+EXAMPLE for creating a new file:
+{
+  "unified_diff": "--- /dev/null\\n+++ src/components/NewComponent.tsx\\n@@ -0,0 +1,15 @@\\n+import React from 'react';...",
+  "touched_files": [{
+    "path": "src/components/NewComponent.tsx",
+    "action": "create",
+    "new_content": "import React from 'react';\\n\\ninterface NewComponentProps {\\n  title: string;\\n}\\n\\nexport const NewComponent: React.FC<NewComponentProps> = ({ title }) => {\\n  return <div>{title}</div>;\\n};\\n\\nexport default NewComponent;",
+    "base_sha": null
+  }],
+  "confidence": "high",
+  "notes": "Created new React component",
+  "validation_status": "ok"
+}`;
   }
 
   /**
@@ -488,6 +510,10 @@ Generate the unified diff to implement this step. Output ONLY valid JSON.`;
       if (jsonMatch) {
         jsonStr = jsonMatch[0];
       }
+
+      // FIX: Sanitize control characters in JSON string values
+      // LLMs sometimes return JSON with literal newlines/tabs inside string values
+      jsonStr = this.sanitizeJsonString(jsonStr);
 
       const parsed = JSON.parse(jsonStr);
 
@@ -579,15 +605,39 @@ Generate the unified diff to implement this step. Output ONLY valid JSON.`;
         };
       }
 
-      for (const file of parsed.touched_files) {
-        if (!file.path || !file.base_sha) {
+      // Validate touched_files entries (with lenient handling for LLM quirks)
+      for (let i = 0; i < parsed.touched_files.length; i++) {
+        const file = parsed.touched_files[i];
+        
+        // path is ALWAYS required
+        if (!file.path) {
           return {
             success: false,
             error: {
               type: 'schema_error',
-              message: 'Each touched_file must have path and base_sha',
+              message: `touched_files[${i}] must have path`,
+              details: { touched_file: file },
             },
           };
+        }
+        
+        // Normalize action - default to 'update' if missing
+        if (!file.action) {
+          console.warn(`[llmEditTool] touched_files[${i}] missing action, defaulting to 'update'`);
+          file.action = 'update';
+        }
+        
+        // base_sha handling:
+        // - For 'create': can be null/undefined (will be set to null)
+        // - For 'update'/'delete': should have base_sha but we'll be lenient
+        if (file.action === 'create') {
+          // Create actions: base_sha should be null
+          file.base_sha = null;
+        } else if (!file.base_sha) {
+          // Update/delete: base_sha missing - generate placeholder
+          // This is NOT ideal but allows execution to continue
+          console.warn(`[llmEditTool] touched_files[${i}] (${file.path}) missing base_sha for ${file.action} action`);
+          file.base_sha = 'llm_missing_' + Date.now().toString(36).slice(-6);
         }
       }
 
@@ -663,17 +713,96 @@ Generate the unified diff to implement this step. Output ONLY valid JSON.`;
   private generateId(): string {
     return Date.now().toString(36) + Math.random().toString(36).substring(2);
   }
+
+  /**
+   * Sanitize JSON string by escaping control characters in string values
+   * LLMs sometimes return JSON with literal newlines/tabs/etc inside string values
+   * which causes JSON.parse to fail with "Bad control character" error
+   */
+  private sanitizeJsonString(jsonStr: string): string {
+    // State machine to track if we're inside a string
+    let result = '';
+    let inString = false;
+    let escapeNext = false;
+
+    for (let i = 0; i < jsonStr.length; i++) {
+      const char = jsonStr[i];
+      const charCode = char.charCodeAt(0);
+
+      if (escapeNext) {
+        // Previous char was backslash, keep this char as-is
+        result += char;
+        escapeNext = false;
+        continue;
+      }
+
+      if (char === '\\') {
+        // Backslash - next char might be escaped
+        result += char;
+        escapeNext = true;
+        continue;
+      }
+
+      if (char === '"') {
+        // Toggle string state
+        inString = !inString;
+        result += char;
+        continue;
+      }
+
+      if (inString) {
+        // Inside a string - escape control characters
+        if (charCode < 32) {
+          // Control character - escape it
+          switch (charCode) {
+            case 9:  // Tab
+              result += '\\t';
+              break;
+            case 10: // Newline (LF)
+              result += '\\n';
+              break;
+            case 13: // Carriage return (CR)
+              result += '\\r';
+              break;
+            case 8:  // Backspace
+              result += '\\b';
+              break;
+            case 12: // Form feed
+              result += '\\f';
+              break;
+            default:
+              // Other control chars - use unicode escape
+              result += '\\u' + charCode.toString(16).padStart(4, '0');
+          }
+        } else {
+          result += char;
+        }
+      } else {
+        // Outside string - keep as-is
+        result += char;
+      }
+    }
+
+    return result;
+  }
 }
 
 /**
  * Default constraints for llm_edit_step
+ * 
+ * V1 UPDATE: File creation is now ALLOWED within safe roots
+ * - forbid_create: false (was true)
+ * - max_files increased to 5 for typical component creation
+ * - max_changed_lines increased to 300 for new files
+ * 
+ * Path validation is done by createPathFence.ts after LLM returns
  */
 export const DEFAULT_EDIT_CONSTRAINTS = {
-  max_files: 3,
-  max_changed_lines: 100,
-  forbid_create: true,
-  forbid_delete: true,
-  forbid_rename: true,
+  max_files: 5,
+  max_changed_lines: 300,
+  forbid_create: false,  // Changed from true - file creation now allowed
+  forbid_delete: true,   // Still forbidden - safety
+  forbid_rename: true,   // Still forbidden - safety
 };
 
 /**

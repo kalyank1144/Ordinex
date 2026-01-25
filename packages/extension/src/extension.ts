@@ -57,7 +57,19 @@ import {
   detectLargePlan,
   buildPlanTextForAnalysis,
   generateMissionBreakdown,
-  PlanStepForAnalysis
+  PlanStepForAnalysis,
+  // Step 27: Mission Runner (Production Harness)
+  MissionRunner,
+  convertPlanToMission,
+  Mission,
+  // Step 28: Self-Correction Loop
+  SelfCorrectionRunner,
+  DEFAULT_SELF_CORRECTION_POLICY,
+  classifyFailure as classifyTestFailure,
+  FailureClassification,
+  SelfCorrectionPolicy,
+  DecisionPoint,
+  StopReason
 } from 'core';
 
 class MissionControlViewProvider implements vscode.WebviewViewProvider {
@@ -69,6 +81,7 @@ class MissionControlViewProvider implements vscode.WebviewViewProvider {
   private repairOrchestrator: RepairOrchestrator | null = null;
   private isProcessing: boolean = false; // Prevent double submissions
   private activeApprovalManager: ApprovalManager | null = null; // Store active approval manager
+  private activeMissionRunner: MissionRunner | null = null; // Step 27: Store active mission runner for cancellation
 
   constructor(
     private readonly _extensionUri: vscode.Uri,
@@ -171,6 +184,11 @@ class MissionControlViewProvider implements vscode.WebviewViewProvider {
 
       case 'ordinex:startSelectedMission':
         await this.handleStartSelectedMission(message, webview);
+        break;
+
+      // Step 27: Mission Runner cancellation
+      case 'ordinex:cancelMission':
+        await this.handleCancelMission(message, webview);
         break;
 
       default:
@@ -2407,6 +2425,54 @@ This demonstrates the diff proposal pipeline without requiring LLM integration.
     } catch (error) {
       console.error('Error handling startSelectedMission:', error);
       vscode.window.showErrorMessage(`Failed to start mission: ${error}`);
+    }
+  }
+
+  /**
+   * Step 27: Cancel an active mission
+   */
+  private async handleCancelMission(message: any, webview: vscode.Webview) {
+    const { task_id, reason } = message;
+    const LOG_PREFIX = '[Ordinex:MissionRunner]';
+
+    if (!task_id) {
+      console.error('Missing task_id in cancelMission');
+      return;
+    }
+
+    console.log(`${LOG_PREFIX} Cancelling mission...`);
+
+    try {
+      // Check if we have an active mission runner
+      if (this.activeMissionRunner) {
+        await this.activeMissionRunner.cancelMission(reason || 'user_requested');
+        this.activeMissionRunner = null;
+        console.log(`${LOG_PREFIX} Mission cancelled via MissionRunner`);
+      } else {
+        // Fallback: emit cancellation event directly
+        await this.emitEvent({
+          event_id: this.generateId(),
+          task_id: task_id,
+          timestamp: new Date().toISOString(),
+          type: 'mission_cancelled',
+          mode: 'MISSION',
+          stage: this.currentStage,
+          payload: {
+            reason: reason || 'user_requested',
+            cancelled_by: 'user',
+          },
+          evidence_ids: [],
+          parent_event_id: null,
+        });
+        console.log(`${LOG_PREFIX} Mission cancelled via direct event`);
+      }
+
+      // Send updated events to webview
+      await this.sendEventsToWebview(webview, task_id);
+
+    } catch (error) {
+      console.error('Error handling cancelMission:', error);
+      vscode.window.showErrorMessage(`Failed to cancel mission: ${error}`);
     }
   }
 

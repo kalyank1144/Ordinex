@@ -1,6 +1,7 @@
 /**
  * StateReducer: Pure function from event stream to task state
  * Based on 05_TECHNICAL_IMPLEMENTATION_SPEC.md
+ * Updated for Step 27 - Mission Execution Harness
  * 
  * Requirements:
  * - Derive current task state from events
@@ -8,11 +9,13 @@
  * - Support resume/replay
  * - No side effects
  * - Pure function over event stream
+ * - Support crash recovery (resume in paused state)
  */
 
 import { Event, TaskState, Mode, Stage, TaskStatus } from './types';
 import { ScopeManager, DEFAULT_SCOPE_CONTRACT } from './scopeManager';
 import { derivePlanState, CurrentPlanState } from './planVersionManager';
+import { MissionRunStage } from './missionRunner';
 
 /**
  * Initial task state
@@ -232,6 +235,64 @@ export class StateReducer {
 
       case 'final':
         newState.status = 'complete';
+        break;
+
+      // Step 27: Mission Execution Harness events
+      case 'mission_completed':
+        newState.status = 'complete';
+        break;
+
+      case 'mission_paused':
+        newState.status = 'paused';
+        break;
+
+      case 'mission_cancelled':
+        newState.status = 'idle';
+        break;
+
+      case 'stale_context_detected':
+        // Stale context - will trigger re-retrieval
+        // Status doesn't change, just logged
+        break;
+
+      case 'stage_timeout':
+        // Stage timed out - typically transitions to paused
+        newState.status = 'paused';
+        break;
+
+      case 'repair_attempt_started':
+        newState.stage = 'repair';
+        newState.iteration.current += 1;
+        break;
+
+      case 'repair_attempt_completed':
+        // Repair attempt finished (success or failure)
+        // Status determined by follow-up events
+        break;
+
+      case 'repeated_failure_detected':
+        // Loop detected - pause execution
+        newState.status = 'paused';
+        break;
+
+      case 'test_started':
+        newState.stage = 'test';
+        break;
+
+      case 'test_completed':
+        // Tests passed
+        break;
+
+      case 'test_failed':
+        // Tests failed - repair loop will handle
+        break;
+
+      case 'patch_plan_proposed':
+        // Informational - no state change
+        break;
+
+      case 'context_snapshot_created':
+        // Snapshot created for staleness detection - no state change
         break;
 
       // Tool, retrieval, diff events don't directly change task state

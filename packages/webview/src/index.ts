@@ -678,11 +678,11 @@ export function getWebviewContent(): string {
     .composer {
       border-top: 1px solid var(--vscode-panel-border);
       background: var(--vscode-sideBar-background);
-      padding: 10px 12px;
+      padding: 8px 12px;
       flex-shrink: 0;
       display: flex;
       flex-direction: column;
-      gap: 8px;
+      gap: 6px;
     }
 
     .composer-controls {
@@ -713,39 +713,110 @@ export function getWebviewContent(): string {
       outline: 1px solid var(--vscode-focusBorder);
     }
 
-    .composer-input-row {
-      display: flex;
-      gap: 6px;
-      align-items: flex-end;
+    .composer-controls-spacer {
+      flex: 1;
     }
 
-    .composer-input-row textarea {
-      flex: 1;
+    .attach-btn {
+      background: transparent;
+      border: none;
+      color: var(--vscode-descriptionForeground);
+      font-size: 16px;
+      padding: 4px 6px;
+      cursor: pointer;
+      border-radius: 4px;
+      transition: all 0.15s ease;
+    }
+
+    .attach-btn:hover {
+      background: var(--vscode-toolbar-hoverBackground);
+      color: var(--vscode-foreground);
+    }
+
+    .composer-input-wrapper {
+      position: relative;
+      display: flex;
+      align-items: flex-end;
       background: var(--vscode-input-background);
-      color: var(--vscode-input-foreground);
       border: 1px solid var(--vscode-input-border);
+      border-radius: 12px;
       padding: 6px 8px;
-      border-radius: 3px;
+      transition: border-color 0.15s ease;
+    }
+
+    .composer-input-wrapper:focus-within {
+      border-color: var(--vscode-focusBorder);
+    }
+
+    .composer-input-wrapper textarea {
+      flex: 1;
+      background: transparent;
+      color: var(--vscode-input-foreground);
+      border: none;
+      padding: 4px 8px;
       font-size: 12px;
       font-family: inherit;
       resize: none;
-      min-height: 40px;
-      max-height: 120px;
+      min-height: 32px;
+      max-height: 100px;
       line-height: 1.4;
+      outline: none;
     }
 
-    .composer-input-row textarea:focus {
-      outline: 1px solid var(--vscode-focusBorder);
-    }
-
-    .composer-input-row textarea::placeholder {
+    .composer-input-wrapper textarea::placeholder {
       color: var(--vscode-input-placeholderForeground);
     }
 
-    .composer-buttons {
+    /* Send/Stop Toggle Button - Inside Input */
+    .send-stop-btn {
+      width: 32px;
+      height: 32px;
+      border-radius: 50%;
+      border: none;
+      cursor: pointer;
       display: flex;
-      flex-direction: column;
-      gap: 4px;
+      align-items: center;
+      justify-content: center;
+      font-size: 14px;
+      transition: all 0.2s ease;
+      flex-shrink: 0;
+      margin-left: 4px;
+    }
+
+    .send-stop-btn.send {
+      background: var(--vscode-button-background);
+      color: var(--vscode-button-foreground);
+    }
+
+    .send-stop-btn.send:hover:not(:disabled) {
+      background: var(--vscode-button-hoverBackground);
+      transform: scale(1.05);
+    }
+
+    .send-stop-btn.stop {
+      background: var(--vscode-charts-red);
+      color: #fff;
+      animation: stopPulse 1.5s ease-in-out infinite;
+    }
+
+    .send-stop-btn.stop:hover:not(:disabled) {
+      background: #dc3545;
+    }
+
+    .send-stop-btn:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+      transform: none;
+    }
+
+    @keyframes stopPulse {
+      0%, 100% { box-shadow: 0 0 0 0 rgba(220, 53, 69, 0.4); }
+      50% { box-shadow: 0 0 0 6px rgba(220, 53, 69, 0); }
+    }
+
+    /* Hide old button container */
+    .composer-buttons {
+      display: none;
     }
 
     button {
@@ -1447,14 +1518,18 @@ export function getWebviewContent(): string {
         <option value="claude-3-sonnet">Claude 3 Sonnet</option>
         <option value="claude-3-opus">Claude 3 Opus</option>
       </select>
+      <div class="composer-controls-spacer"></div>
+      <button class="attach-btn" id="attachBtn" title="Attach file (coming soon)">📎</button>
     </div>
-    <div class="composer-input-row">
+    <div class="composer-input-wrapper">
       <textarea id="promptInput" placeholder="Enter your prompt..." rows="2"></textarea>
-      <div class="composer-buttons">
-        <button id="sendBtn">Send</button>
-        <button id="stopBtn" class="secondary" disabled>Stop</button>
-        <button id="clearBtn" class="danger">Clear</button>
-      </div>
+      <button class="send-stop-btn send" id="sendStopBtn" title="Send">▶</button>
+    </div>
+    <!-- Hidden buttons for backward compatibility -->
+    <div class="composer-buttons" style="display: none;">
+      <button id="sendBtn">Send</button>
+      <button id="stopBtn" class="secondary" disabled>Stop</button>
+      <button id="clearBtn" class="danger">Clear</button>
     </div>
   </div>
 
@@ -1517,6 +1592,8 @@ export function getWebviewContent(): string {
       const modeSelect = document.getElementById('modeSelect');
       const modelSelect = document.getElementById('modelSelect');
       const exportRunBtn = document.getElementById('exportRunBtn');
+      const sendStopBtn = document.getElementById('sendStopBtn');
+      const attachBtn = document.getElementById('attachBtn');
 
       // Utility Functions
       function generateId() {
@@ -3827,12 +3904,79 @@ export function getWebviewContent(): string {
         renderMission();
       };
 
+      // ===== SEND/STOP TOGGLE BUTTON =====
+      // Update the combined send/stop button state
+      function updateSendStopButton() {
+        if (!sendStopBtn) return;
+        
+        const isRunning = state.taskStatus === 'running';
+        const hasText = promptInput.value.trim().length > 0;
+        
+        if (isRunning) {
+          // Show stop button
+          sendStopBtn.className = 'send-stop-btn stop';
+          sendStopBtn.innerHTML = '■';
+          sendStopBtn.title = 'Stop';
+          sendStopBtn.disabled = false;
+        } else {
+          // Show send button
+          sendStopBtn.className = 'send-stop-btn send';
+          sendStopBtn.innerHTML = '▶';
+          sendStopBtn.title = 'Send';
+          sendStopBtn.disabled = !hasText;
+        }
+      }
+
+      // Handle send/stop button click
+      if (sendStopBtn) {
+        sendStopBtn.addEventListener('click', () => {
+          const isRunning = state.taskStatus === 'running';
+          
+          if (isRunning) {
+            // Stop action
+            console.log('Stop clicked');
+            if (typeof vscode !== 'undefined') {
+              vscode.postMessage({
+                type: 'ordinex:stopExecution'
+              });
+            }
+            updateStatus('ready');
+            updateSendStopButton();
+          } else {
+            // Send action - delegate to existing sendBtn click handler
+            sendBtn.click();
+          }
+        });
+      }
+
+      // Handle attach button click (placeholder)
+      if (attachBtn) {
+        attachBtn.addEventListener('click', () => {
+          console.log('Attach clicked (coming soon)');
+          // TODO: Implement file attachment in future version
+        });
+      }
+
+      // Update send/stop button when textarea changes
+      promptInput.addEventListener('input', () => {
+        autoResizeTextarea();
+        updateSendStopButton();
+      });
+
+      // Update send/stop button when status changes
+      const originalUpdateStatus = updateStatus;
+      updateStatus = function(status) {
+        originalUpdateStatus(status);
+        updateSendStopButton();
+      };
+
       // Initialize
       updateStatus('ready');
       updateStage('none');
       renderMission();
       renderSystemsCounters();
       renderLogs();
+      updateSendStopButton();
       promptInput.focus();
 
       // Add test buttons to composer for demo purposes

@@ -196,6 +196,61 @@ export {
   MissionExecutor
 } from './missionExecutor';
 
+// Export Mission Runner (Step 27 - Mission Execution Harness)
+export {
+  MissionRunner,
+  MissionRunStage,
+  TransitionEvent,
+  MissionRunState,
+  Mission,
+  PatchPlan,
+  convertPlanToMission,
+  MissionBreakdownItem
+} from './missionRunner';
+
+// Export Context Snapshot Manager (Step 27 - Stale Context Detection)
+export {
+  ContextSnapshotManager,
+  ContextSnapshot,
+  StalenessResult
+} from './contextSnapshotManager';
+
+// Export Self-Correction Loop (Step 28)
+export {
+  classifyFailure,
+  normalizeOutput,
+  FailureType,
+  FailureClassification,
+  ConsecutiveFailureTracker,
+} from './failureClassifier';
+
+export {
+  SelfCorrectionPolicy,
+  DEFAULT_SELF_CORRECTION_POLICY,
+  RepairLoopState,
+  createRepairLoopState,
+  checkStopConditions,
+  generateDecisionOptions,
+  StopReason,
+  DecisionOption,
+  RepairAttemptResult,
+  RepairAttemptRecord,
+  StopConditionResult,
+  updateStateAfterFailure,
+  updateStateAfterDiffApplied,
+  updateStateAfterDiagnosisTimeout,
+  updateStateAfterDiffGenTimeout,
+} from './selfCorrectionPolicy';
+
+export {
+  SelfCorrectionRunner,
+  TestFailureInput,
+  RepairContext,
+  RepairDiffProposal,
+  RepairIterationOutcome,
+  DecisionPoint,
+} from './selfCorrectionRunner';
+
 // Export Prompt Quality Judge
 export {
   PromptQualityJudge,
@@ -281,6 +336,20 @@ export {
   DiffManifest,
   ApplyEvidence
 } from './editEvidenceManager';
+
+// Export Create Path Fence (SAFE file creation validation)
+export {
+  validateCreatesInDiff,
+  validateCreatePath,
+  isPathInAllowedRoots,
+  isPathInDeniedPaths,
+  getBlockedPathsSummary,
+  extendAllowedPaths,
+  createCustomFenceConfig,
+  DEFAULT_CREATE_PATH_FENCE,
+  CreatePathFenceConfig,
+  CreateValidationResult
+} from './createPathFence';
 
 // Export workspace adapter interfaces (NO vscode imports - implemented in extension)
 export type {

@@ -395,7 +395,10 @@ export class AtomicDiffApplier {
  */
 export function createDiffId(taskId: string, stepId: string): string {
   const timestamp = Date.now();
-  return `diff_${taskId.slice(0, 8)}_${stepId.slice(0, 8)}_${timestamp}`;
+  // Defensive: handle undefined/null values
+  const safeTaskId = (taskId || 'unknown').slice(0, 8);
+  const safeStepId = (stepId || 'step').slice(0, 8);
+  return `diff_${safeTaskId}_${safeStepId}_${timestamp}`;
 }
 
 /**
@@ -403,5 +406,8 @@ export function createDiffId(taskId: string, stepId: string): string {
  */
 export function createCheckpointId(taskId: string, stepId: string): string {
   const timestamp = Date.now();
-  return `checkpoint_${taskId.slice(0, 8)}_${stepId.slice(0, 8)}_${timestamp}`;
+  // Defensive: handle undefined/null values
+  const safeTaskId = (taskId || 'unknown').slice(0, 8);
+  const safeStepId = (stepId || 'step').slice(0, 8);
+  return `checkpoint_${safeTaskId}_${safeStepId}_${timestamp}`;
 }

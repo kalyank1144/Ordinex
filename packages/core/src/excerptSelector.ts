@@ -164,6 +164,12 @@ export async function selectEditContext(
         const contentWithLineNumbers = addLineNumbers(lines, 1);
         const linesToAdd = Math.min(fileLineCount, cfg.maxTotalLines - totalLines);
         
+        // Defensive check: ensure contentWithLineNumbers is valid array
+        if (!contentWithLineNumbers || !Array.isArray(contentWithLineNumbers) || linesToAdd <= 0) {
+          console.warn(`[ExcerptSelector] Skipping ${path}: invalid content or no lines to add`);
+          continue;
+        }
+        
         fileContext.push({
           path,
           content: contentWithLineNumbers.slice(0, linesToAdd).join('\n'),
