@@ -241,7 +241,41 @@ export const EVENT_CARD_MAP: Record<EventType, EventCardConfig> = {
     icon: '❌',
     title: 'Failure Detected',
     color: 'var(--vscode-charts-red)',
-    getSummary: (e) => (e.payload.error as string) || 'Error occurred'
+    getSummary: (e) => {
+      // Extract error message from various possible payload locations
+      const error = e.payload.error as string | undefined;
+      const reason = e.payload.reason as string | undefined;
+      const details = e.payload.details as Record<string, unknown> | undefined;
+      const detailsMessage = details?.message as string | undefined;
+      const kind = e.payload.kind as string | undefined;
+      
+      // Build a meaningful error message
+      const parts: string[] = [];
+      
+      // Add reason as prefix if different from error
+      if (reason && reason !== 'step_execution_exception' && reason !== 'step_execution_failed') {
+        parts.push(reason.replace(/_/g, ' '));
+      }
+      
+      // Add the actual error message
+      if (error) {
+        // Truncate long error messages
+        const truncatedError = error.length > 100 ? error.substring(0, 100) + '...' : error;
+        parts.push(truncatedError);
+      } else if (detailsMessage) {
+        const truncatedDetails = detailsMessage.length > 100 ? detailsMessage.substring(0, 100) + '...' : detailsMessage;
+        parts.push(truncatedDetails);
+      } else if (kind) {
+        parts.push(kind.replace(/_/g, ' '));
+      }
+      
+      // Fallback
+      if (parts.length === 0) {
+        return 'Error occurred';
+      }
+      
+      return parts.join(': ');
+    }
   },
   execution_paused: {
     icon: '⏸️',
@@ -431,6 +465,261 @@ export const EVENT_CARD_MAP: Record<EventType, EventCardConfig> = {
       const title = e.payload.title as string || 'Selection made';
       return title;
     }
+  },
+
+  // ========== Step 27: Mission Execution Harness ==========
+  stale_context_detected: {
+    icon: '⚠️',
+    title: 'Stale Context',
+    color: 'var(--vscode-charts-orange)',
+    getSummary: (e) => {
+      const files = (e.payload.stale_files as string[]) || [];
+      return files.length > 0 ? `${files.length} file(s) changed` : 'Context may be outdated';
+    }
+  },
+  stage_timeout: {
+    icon: '⏱️',
+    title: 'Stage Timeout',
+    color: 'var(--vscode-charts-red)',
+    getSummary: (e) => {
+      const stage = e.payload.stage as string || 'unknown';
+      const duration = e.payload.duration_ms as number;
+      return `${stage}${duration ? ' (' + Math.round(duration/1000) + 's)' : ''}`;
+    }
+  },
+  repair_attempt_started: {
+    icon: '🔧',
+    title: 'Repair Started',
+    color: 'var(--vscode-charts-orange)',
+    getSummary: (e) => {
+      const attempt = e.payload.attempt as number || 1;
+      return `Attempt #${attempt}`;
+    }
+  },
+  repair_attempt_completed: {
+    icon: '✓',
+    title: 'Repair Completed',
+    color: 'var(--vscode-charts-green)',
+    getSummary: (e) => {
+      const success = e.payload.success as boolean;
+      return success ? 'Repair successful' : 'Repair failed';
+    }
+  },
+  repeated_failure_detected: {
+    icon: '🔴',
+    title: 'Repeated Failure',
+    color: 'var(--vscode-charts-red)',
+    getSummary: (e) => {
+      const count = e.payload.failure_count as number || 0;
+      return `${count} consecutive failures`;
+    }
+  },
+  test_started: {
+    icon: '🧪',
+    title: 'Test Started',
+    color: 'var(--vscode-charts-blue)',
+    getSummary: (e) => {
+      const command = e.payload.command as string || '';
+      return command.length > 40 ? command.substring(0, 40) + '...' : command || 'Running tests';
+    }
+  },
+  test_completed: {
+    icon: '✅',
+    title: 'Test Completed',
+    color: 'var(--vscode-charts-green)',
+    getSummary: (e) => {
+      const passed = e.payload.passed as number || 0;
+      const failed = e.payload.failed as number || 0;
+      return `${passed} passed, ${failed} failed`;
+    }
+  },
+  test_failed: {
+    icon: '❌',
+    title: 'Test Failed',
+    color: 'var(--vscode-charts-red)',
+    getSummary: (e) => {
+      const error = e.payload.error as string || '';
+      return error.length > 50 ? error.substring(0, 50) + '...' : error || 'Tests failed';
+    }
+  },
+  mission_completed: {
+    icon: '🎉',
+    title: 'Mission Completed',
+    color: 'var(--vscode-charts-green)',
+    getSummary: (e) => {
+      const success = e.payload.success as boolean;
+      return success ? '✓ Mission successful' : '✗ Mission failed';
+    }
+  },
+  mission_paused: {
+    icon: '⏸️',
+    title: 'Mission Paused',
+    color: 'var(--vscode-charts-yellow)',
+    getSummary: (e) => (e.payload.reason as string) || 'Mission paused'
+  },
+  mission_cancelled: {
+    icon: '⛔',
+    title: 'Mission Cancelled',
+    color: 'var(--vscode-charts-red)',
+    getSummary: (e) => (e.payload.reason as string) || 'Mission cancelled'
+  },
+  patch_plan_proposed: {
+    icon: '📋',
+    title: 'Patch Plan',
+    color: 'var(--vscode-charts-purple)',
+    getSummary: (e) => {
+      const steps = (e.payload.steps as any[]) || [];
+      return `${steps.length} repair step(s)`;
+    }
+  },
+  context_snapshot_created: {
+    icon: '📸',
+    title: 'Context Snapshot',
+    color: 'var(--vscode-charts-blue)',
+    getSummary: (e) => {
+      const files = (e.payload.files as string[]) || [];
+      return `${files.length} file(s) captured`;
+    }
+  },
+
+  // ========== Step 28: Self-Correction Loop ==========
+  failure_classified: {
+    icon: '🔍',
+    title: 'Failure Classified',
+    color: 'var(--vscode-charts-orange)',
+    getSummary: (e) => {
+      const classification = e.payload.classification as string || 'unknown';
+      return `Type: ${classification}`;
+    }
+  },
+  decision_point_needed: {
+    icon: '🤔',
+    title: 'Decision Needed',
+    color: 'var(--vscode-charts-yellow)',
+    getSummary: (e) => {
+      const options = (e.payload.options as any[]) || [];
+      return `${options.length} option(s) available`;
+    }
+  },
+
+  // ========== Step 29: Systems Tab ==========
+  run_scope_initialized: {
+    icon: '📋',
+    title: 'Scope Initialized',
+    color: 'var(--vscode-charts-blue)',
+    getSummary: (e) => {
+      const maxFiles = e.payload.max_files as number || 0;
+      return `Max ${maxFiles} files`;
+    }
+  },
+  repair_policy_snapshot: {
+    icon: '⚙️',
+    title: 'Repair Policy',
+    color: 'var(--vscode-charts-purple)',
+    getSummary: (e) => {
+      const maxAttempts = e.payload.max_repair_attempts as number || 0;
+      return `Max ${maxAttempts} attempts`;
+    }
+  },
+
+  // ========== Step 30: Truncation-Safe Edit Execution ==========
+  preflight_complete: {
+    icon: '✈️',
+    title: 'Preflight Complete',
+    color: 'var(--vscode-charts-blue)',
+    getSummary: (e) => {
+      // Support both field names: shouldSplit (from TruncationSafeExecutor) and split_needed
+      const splitNeeded = (e.payload.shouldSplit ?? e.payload.split_needed) as boolean;
+      const targetCount = e.payload.targetFileCount as number || 0;
+      const complexity = e.payload.estimatedComplexity as string || '';
+      return splitNeeded 
+        ? `Split mode: ${targetCount} file(s)${complexity ? `, ${complexity} complexity` : ''}`
+        : 'Single-call mode';
+    }
+  },
+  truncation_detected: {
+    icon: '⚠️',
+    title: 'Truncation Detected',
+    color: 'var(--vscode-charts-orange)',
+    getSummary: (e) => {
+      const reason = e.payload.reason as string || '';
+      const stopReason = e.payload.stopReason as string || '';
+      const partialLen = e.payload.partialLength as number;
+      // Build a useful summary
+      if (stopReason) {
+        return `Output truncated (${stopReason})${partialLen ? ` at ${partialLen} chars` : ''}`;
+      }
+      return reason ? `Truncated: ${reason}` : 'Output truncated (will retry with split)';
+    }
+  },
+  edit_split_triggered: {
+    icon: '✂️',
+    title: 'Split Mode',
+    color: 'var(--vscode-charts-purple)',
+    getSummary: (e) => {
+      // Support both field names: file_count (from TruncationSafeExecutor) and files array
+      const fileCount = e.payload.file_count as number;
+      const files = (e.payload.files as string[]) || [];
+      const count = fileCount ?? files.length;
+      const reason = e.payload.reason as string || '';
+      return `Processing ${count} file(s) separately${reason ? ` (${reason})` : ''}`;
+    }
+  },
+  edit_chunk_started: {
+    icon: '📝',
+    title: 'Editing File',
+    color: 'var(--vscode-charts-blue)',
+    getSummary: (e) => {
+      const file = e.payload.file as string || 'unknown';
+      const index = e.payload.chunk_index as number;
+      const total = e.payload.total_chunks as number;
+      // Handle both 0-indexed and 1-indexed
+      const displayIndex = index !== undefined ? index + 1 : 1;
+      const displayTotal = total || '?';
+      return `${file} (${displayIndex}/${displayTotal})`;
+    }
+  },
+  edit_chunk_completed: {
+    icon: '✅',
+    title: 'File Edited',
+    color: 'var(--vscode-charts-green)',
+    getSummary: (e) => {
+      const file = e.payload.file as string || 'unknown';
+      return `✓ ${file}`;
+    }
+  },
+  edit_chunk_failed: {
+    icon: '❌',
+    title: 'File Edit Failed',
+    color: 'var(--vscode-charts-red)',
+    getSummary: (e) => {
+      const file = e.payload.file as string || 'unknown';
+      const reason = e.payload.reason as string || '';
+      const error = e.payload.error as string || reason || 'unknown error';
+      // Truncate long error messages
+      const truncatedError = error.length > 50 ? error.substring(0, 50) + '...' : error;
+      return `${file}: ${truncatedError}`;
+    }
+  },
+  edit_step_paused: {
+    icon: '⏸️',
+    title: 'Edit Paused',
+    color: 'var(--vscode-charts-yellow)',
+    getSummary: (e) => {
+      const reason = e.payload.reason as string || 'awaiting decision';
+      return reason;
+    }
+  },
+
+  // ========== Large Plan Detection ==========
+  plan_large_detected: {
+    icon: '📊',
+    title: 'Large Plan Detected',
+    color: 'var(--vscode-charts-orange)',
+    getSummary: (e) => {
+      const reasons = (e.payload.reasons as string[]) || [];
+      return reasons.length > 0 ? reasons[0] : 'Plan exceeds thresholds';
+    }
   }
 };
 
@@ -588,15 +877,18 @@ export function renderEventCard(event: Event, taskId?: string): string {
   // Standard card rendering for other events
   const config = EVENT_CARD_MAP[event.type];
   if (!config) {
-    // Fallback for unmapped events
+    // Professional fallback for unmapped events - extract summary from common payload fields
+    const fallbackSummary = extractFallbackSummary(event);
+    const humanizedType = humanizeEventType(event.type);
+    
     return `
-      <div class="event-card">
+      <div class="event-card" style="opacity: 0.8;">
         <div class="event-card-header">
-          <span class="event-icon">❓</span>
-          <span class="event-type">${event.type}</span>
+          <span class="event-icon" style="color: var(--vscode-descriptionForeground)">📌</span>
+          <span class="event-type">${escapeHtml(humanizedType)}</span>
           <span class="event-timestamp">${formatTimestamp(event.timestamp)}</span>
         </div>
-        <div class="event-summary">Unknown event type</div>
+        <div class="event-summary" style="color: var(--vscode-descriptionForeground);">${escapeHtml(fallbackSummary)}</div>
       </div>
     `;
   }
@@ -767,4 +1059,62 @@ function escapeHtml(text: string): string {
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;')
     .replace(/'/g, '&#039;');
+}
+
+/**
+ * Humanize an event type string for display
+ * e.g., "preflight_complete" -> "Preflight Complete"
+ */
+function humanizeEventType(eventType: string): string {
+  return eventType
+    .replace(/_/g, ' ')
+    .replace(/\b\w/g, (char) => char.toUpperCase());
+}
+
+/**
+ * Extract a fallback summary from common payload fields
+ * Used for unmapped event types to show something meaningful
+ */
+function extractFallbackSummary(event: Event): string {
+  const payload = event.payload || {};
+  
+  // Try common field names in order of preference
+  const candidates = [
+    payload.summary,
+    payload.message,
+    payload.description,
+    payload.reason,
+    payload.error,
+    payload.status,
+    payload.result,
+    payload.file,
+    payload.path,
+  ];
+  
+  for (const candidate of candidates) {
+    if (typeof candidate === 'string' && candidate.trim()) {
+      const trimmed = candidate.trim();
+      return trimmed.length > 80 ? trimmed.substring(0, 80) + '...' : trimmed;
+    }
+  }
+  
+  // Check for arrays that might have useful info
+  if (Array.isArray(payload.files) && payload.files.length > 0) {
+    return `${payload.files.length} file(s)`;
+  }
+  
+  // Check for numeric fields
+  if (typeof payload.count === 'number') {
+    return `Count: ${payload.count}`;
+  }
+  if (typeof payload.duration_ms === 'number') {
+    return `Duration: ${Math.round(payload.duration_ms)}ms`;
+  }
+  
+  // Final fallback - show stage if available
+  if (event.stage && event.stage !== 'none') {
+    return `Stage: ${event.stage}`;
+  }
+  
+  return 'Event processed';
 }

@@ -28,11 +28,13 @@ import * as path from 'path';
 // New imports for spec-compliant EDIT flow
 import { selectEditContext, buildBaseShaMap, FileContextEntry } from './excerptSelector';
 import { LLMEditTool, DEFAULT_EDIT_CONSTRAINTS, DEFAULT_PRECONDITIONS, LLMEditStepInput } from './llmEditTool';
+import { TruncationSafeExecutor, createTruncationSafeExecutor, TruncationSafeConfig } from './truncationSafeExecutor';
 import { createDiffId, createCheckpointId } from './atomicDiffApply';
 import { EditEvidenceManager, buildDiffProposedPayload, buildDiffAppliedPayload } from './editEvidenceManager';
 import { ParsedDiff } from './unifiedDiffParser';
 import { WorkspaceWriter, CheckpointManager as WorkspaceCheckpointManager, FilePatch } from './workspaceAdapter';
 import { computeFullSha } from './shaUtils';
+import { validateFileOperations, classifyFileOperations } from './fileOperationClassifier';
 
 /**
  * Execution state for MISSION mode
@@ -40,6 +42,7 @@ import { computeFullSha } from './shaUtils';
 interface MissionExecutionState {
   taskId: string;
   plan: StructuredPlan;
+  missionId?: string;
   currentStepIndex: number;
   isPaused: boolean;
   isStopped: boolean;
@@ -112,7 +115,10 @@ export class MissionExecutor {
    * Start MISSION execution from an approved plan
    * CRITICAL: Plan must be approved before calling this
    */
-  async executePlan(plan: StructuredPlan): Promise<void> {
+  async executePlan(
+    plan: StructuredPlan,
+    options?: { missionId?: string; emitMissionStarted?: boolean }
+  ): Promise<void> {
     // Verify plan is provided
     if (!plan || !plan.steps || plan.steps.length === 0) {
       throw new Error('Invalid plan: no steps to execute');
@@ -122,28 +128,33 @@ export class MissionExecutor {
     this.executionState = {
       taskId: this.taskId,
       plan,
+      missionId: options?.missionId,
       currentStepIndex: 0,
       isPaused: false,
       isStopped: false,
       completedSteps: [],
     };
 
-    // Emit mission_started
-    await this.emitEvent({
-      event_id: randomUUID(),
-      task_id: this.taskId,
-      timestamp: new Date().toISOString(),
-      type: 'mission_started',
-      mode: this.mode,
-      stage: 'none',
-      payload: {
-        goal: plan.goal,
-        steps_count: plan.steps.length,
-        scope_contract: plan.scope_contract,
-      },
-      evidence_ids: [],
-      parent_event_id: null,
-    });
+    const shouldEmitMissionStarted = options?.emitMissionStarted !== false;
+    if (shouldEmitMissionStarted) {
+      // Emit mission_started
+      await this.emitEvent({
+        event_id: randomUUID(),
+        task_id: this.taskId,
+        timestamp: new Date().toISOString(),
+        type: 'mission_started',
+        mode: this.mode,
+        stage: 'none',
+        payload: {
+          mission_id: options?.missionId,
+          goal: plan.goal,
+          steps_count: plan.steps.length,
+          scope_contract: plan.scope_contract,
+        },
+        evidence_ids: [],
+        parent_event_id: null,
+      });
+    }
 
     // Execute steps sequentially
     try {
@@ -212,27 +223,18 @@ export class MissionExecutor {
       const result = await this.executeStep(step, this.executionState.currentStepIndex);
 
       if (!result.success) {
-        // Step failed - pause execution
-        await this.pauseOnFailure(result.error || 'Step execution failed');
+        // Step failed - executeStep() already emitted failure_detected and step_failed
+        // Just stop execution here, don't emit duplicate failure events
+        console.log('[MissionExecutor] Step failed, stopping execution:', result.error);
+        this.executionState.isPaused = true;
         return;
       }
 
       if (result.shouldPause) {
         // Step requested pause (e.g., waiting for approval)
-        await this.emitEvent({
-          event_id: randomUUID(),
-          task_id: this.taskId,
-          timestamp: new Date().toISOString(),
-          type: 'execution_paused',
-          mode: this.mode,
-          stage: result.stage,
-          payload: {
-            reason: result.pauseReason || 'approval_required',
-            current_step: this.executionState.currentStepIndex,
-          },
-          evidence_ids: [],
-          parent_event_id: null,
-        });
+        // executeStep() already emitted execution_paused in this case
+        console.log('[MissionExecutor] Step requested pause:', result.pauseReason);
+        this.executionState.isPaused = true;
         return;
       }
 
@@ -346,7 +348,15 @@ export class MissionExecutor {
         ].includes(stageResult.pauseReason);
 
         if (!alreadyEmittedFailure) {
-          // Generic failure - emit failure_detected here
+          // Generic failure - emit failure_detected here with detailed error
+          console.error('[MissionExecutor] Step failed:', {
+            stepId,
+            stage,
+            error: stageResult.error,
+            pauseReason: stageResult.pauseReason,
+            shouldPause: stageResult.shouldPause
+          });
+
           await this.emitEvent({
             event_id: randomUUID(),
             task_id: this.taskId,
@@ -358,6 +368,8 @@ export class MissionExecutor {
               reason: 'step_execution_failed',
               step_id: stepId,
               error: stageResult.error || 'Step execution failed',
+              error_details: stageResult.pauseReason || stageResult.error,
+              error_type: stageResult.pauseReason,
               stage,
             },
             evidence_ids: [],
@@ -446,28 +458,48 @@ export class MissionExecutor {
 
   /**
    * Map plan step to execution stage based on description
+   * 
+   * CRITICAL: Check EDIT patterns FIRST to avoid misclassification!
+   * Words like "verification" can appear in edit steps (e.g., "create email verification")
+   * but should not cause them to be classified as 'test'.
    */
   private mapStepToStage(step: StructuredPlan['steps'][0]): Stage {
     const description = step.description.toLowerCase();
 
-    // Check for stage indicators in description
-    if (/analyz|gather|research|review|read|examin/.test(description)) {
-      return 'retrieve';
-    }
-    if (/implement|creat|writ|modif|edit|chang|add|delet/.test(description)) {
+    // PRIORITY 1: EDIT - Check first with strong action verbs
+    // Match: implement, create, write, update, modify, edit, change, add, delete, complete, enhance, connect, build
+    if (/\b(implement|creat|writ|updat|modif|edit|chang|add|delet|complet|enhanc|connect|build)\b/.test(description)) {
       return 'edit';
     }
-    if (/test|verif|validat|check/.test(description)) {
+
+    // PRIORITY 2: RETRIEVE - Only pure research/analysis (no action verbs)
+    if (/\b(analyz|gather|research|review|read|examin|explor|investigat)\b/.test(description)) {
+      return 'retrieve';
+    }
+
+    // PRIORITY 3: TEST - Only if explicitly about running tests
+    // Be more strict: require "run test" or "test suite" or similar
+    if (/\b(run.{0,10}test|test.{0,10}suite|execute.{0,10}test)\b/.test(description)) {
       return 'test';
     }
-    if (/fix|repair|debug|resolv/.test(description)) {
+
+    // PRIORITY 4: REPAIR - Fix/debug/resolve
+    if (/\b(fix|repair|debug|resolv)\b/.test(description)) {
       return 'repair';
     }
-    if (/design|plan|clarif/.test(description)) {
+
+    // PRIORITY 5: PLAN - Design/planning only
+    if (/\b(design|plan|clarif)\b/.test(description)) {
       return 'plan';
     }
 
-    // Default to retrieve for analysis/research
+    // DEFAULT: If contains any file paths or code references, assume edit
+    // Otherwise default to retrieve
+    if (/\.(ts|js|tsx|jsx|css|html|json|md|py|java|go|rs)/.test(description) || 
+        /src\/|packages\/|components\/|services\//.test(description)) {
+      return 'edit';
+    }
+
     return 'retrieve';
   }
 
@@ -551,12 +583,17 @@ export class MissionExecutor {
       };
 
       // Build fallback files list
+      const hintedFiles = extractFileHints(step.description);
       const fallbackFiles = [
+        ...hintedFiles,
         'package.json',
         'src/index.ts', 'src/index.js',
         'src/main.ts', 'src/main.js',
         'src/App.ts', 'src/App.tsx', 'src/App.jsx',
       ];
+      if (hintedFiles.length > 0) {
+        console.log('[MissionExecutor] File hints from step:', hintedFiles);
+      }
 
       const contextResult = await selectEditContext(
         {
@@ -619,9 +656,22 @@ export class MissionExecutor {
       });
 
       // ====================================================================
-      // STEP 4: CALL llm_edit_step FROM EDIT STAGE
+      // STEP 4: CALL TRUNCATION-SAFE EXECUTOR (auto-splits on truncation)
       // ====================================================================
-      console.log('[MissionExecutor] Calling llm_edit_step...');
+      console.log('[MissionExecutor] Using TruncationSafeExecutor for edit step...');
+
+      // Create truncation-safe executor with bounded budget config
+      const truncationSafeExecutor = createTruncationSafeExecutor(
+        this.taskId,
+        this.eventBus,
+        this.mode,
+        {
+          maxFilesBeforeSplit: 2,  // Split if > 2 files
+          maxAttemptsPerFile: 2,    // Max retries per file
+          maxTotalChunks: 10,       // Max total API calls
+          requireCompleteSentinel: true,  // Require complete:true in output
+        }
+      );
 
       const llmInput: LLMEditStepInput = {
         task_id: this.taskId,
@@ -636,18 +686,78 @@ export class MissionExecutor {
         preconditions: DEFAULT_PRECONDITIONS,
       };
 
-      const llmResult = await llmEditTool.execute(llmInput, this.llmConfig);
+      // Execute with automatic truncation detection and split-by-file recovery
+      const truncationResult = await truncationSafeExecutor.execute(
+        llmInput,
+        this.llmConfig,
+        contextResult.file_context
+      );
+
+      console.log(`[MissionExecutor] TruncationSafeExecutor result: success=${truncationResult.success}, wasSplit=${truncationResult.wasSplit}, truncationDetected=${truncationResult.truncationDetected}`);
 
       // ====================================================================
-      // STEP 5: VALIDATE TOOL OUTPUT STRICTLY
+      // STEP 5: HANDLE TRUNCATION-SAFE RESULT
       // ====================================================================
-      if (!llmResult.success || !llmResult.output || !llmResult.parsed_diff) {
-        const errorType = llmResult.error?.type || 'unknown';
-        const errorMessage = llmResult.error?.message || 'LLM edit tool failed';
+      if (!truncationResult.success || !truncationResult.output) {
+        const errorType = truncationResult.error?.type || 'unknown';
+        // IMPORTANT: Use pauseReason which now contains the full error message
+        const errorMessage = truncationResult.pauseReason || truncationResult.error?.message || 'Truncation-safe execution failed';
 
-        console.error(`[MissionExecutor] LLM edit tool failed: ${errorMessage}`);
+        console.error(`[MissionExecutor] Truncation-safe execution failed: ${errorMessage}`);
+        console.error(`[MissionExecutor] Error type: ${errorType}, pausedForDecision: ${truncationResult.pausedForDecision}`);
 
-        // Emit failure_detected
+        // Check if paused for decision point (graceful degradation)
+        if (truncationResult.pausedForDecision) {
+          await this.emitEvent({
+            event_id: randomUUID(),
+            task_id: this.taskId,
+            timestamp: new Date().toISOString(),
+            type: 'failure_detected',
+            mode: this.mode,
+            stage: 'edit',
+            payload: {
+              reason: truncationResult.truncationDetected ? 'output_truncated' : 'split_failed',
+              details: {
+                message: truncationResult.pauseReason || errorMessage,
+                wasSplit: truncationResult.wasSplit,
+                truncationDetected: truncationResult.truncationDetected,
+              },
+            },
+            evidence_ids: [],
+            parent_event_id: null,
+          });
+
+          await this.emitEvent({
+            event_id: randomUUID(),
+            task_id: this.taskId,
+            timestamp: new Date().toISOString(),
+            type: 'execution_paused',
+            mode: this.mode,
+            stage: 'edit',
+            payload: {
+              reason: 'needs_user_decision',
+              step_id: step.step_id,
+              error_type: errorType,
+              truncation_info: {
+                detected: truncationResult.truncationDetected,
+                split_attempted: truncationResult.wasSplit,
+                pause_reason: truncationResult.pauseReason,
+              },
+            },
+            evidence_ids: [],
+            parent_event_id: null,
+          });
+
+          return {
+            success: false,
+            stage: 'edit',
+            shouldPause: true,
+            pauseReason: truncationResult.truncationDetected ? 'output_truncated' : 'split_failed',
+            error: errorMessage,
+          };
+        }
+
+        // Standard failure
         await this.emitEvent({
           event_id: randomUUID(),
           task_id: this.taskId,
@@ -657,9 +767,9 @@ export class MissionExecutor {
           stage: 'edit',
           payload: {
             reason: errorType === 'validation_error' ? 'llm_cannot_edit' : 
-                    errorType === 'parse_error' ? 'invalid_diff_format' :
-                    errorType === 'schema_error' ? 'invalid_diff_format' : 'llm_error',
-            details: llmResult.error?.details || { message: errorMessage },
+                    errorType === 'truncation' ? 'output_truncated' :
+                    errorType === 'split_failed' ? 'split_recovery_failed' : 'llm_error',
+            details: truncationResult.error?.details || { message: errorMessage },
           },
           evidence_ids: [],
           parent_event_id: null,
@@ -690,7 +800,30 @@ export class MissionExecutor {
         };
       }
 
-      const { output: llmOutput, parsed_diff: parsedDiff } = llmResult;
+      const llmOutput = truncationResult.output;
+      
+      // Build ParsedDiff from the output (for compatibility with rest of flow)
+      const totalAdditions = llmOutput.touched_files.reduce((sum, tf) => 
+        sum + (tf.new_content ? tf.new_content.split('\n').length : 0), 0);
+      const totalDeletions = llmOutput.touched_files.reduce((sum, tf) => 
+        sum + (tf.action === 'delete' ? 100 : 0), 0);
+      
+      const parsedDiff: ParsedDiff = {
+        files: llmOutput.touched_files.map(tf => ({
+          oldPath: tf.action === 'create' ? '/dev/null' : tf.path,
+          newPath: tf.action === 'delete' ? '/dev/null' : tf.path,
+          additions: tf.new_content ? tf.new_content.split('\n').length : 0,
+          deletions: tf.action === 'delete' ? 100 : 0,
+          hunks: [],
+          isCreate: tf.action === 'create',
+          isDelete: tf.action === 'delete',
+          isRename: false,
+          hasModeChange: false,
+        })),
+        totalAdditions,
+        totalDeletions,
+        totalChangedLines: totalAdditions + totalDeletions,
+      };
 
       // Check for empty diff
       if (parsedDiff.files.length === 0) {
@@ -930,7 +1063,89 @@ export class MissionExecutor {
         };
       }
 
-      // 8d) Apply patches atomically
+      // 8d) VALIDATE AND CLASSIFY file operations before applying
+      console.log('[MissionExecutor] Validating file operations...');
+      const relativePaths = filePatches.map(fp => fp.path);
+      
+      // Validate paths (security, existence, permissions)
+      const validationIssues = validateFileOperations(this.workspaceRoot, relativePaths);
+      const errors = validationIssues.filter(issue => issue.severity === 'error');
+      
+      if (errors.length > 0) {
+        // Path validation failed - emit failure and pause
+        console.error('[MissionExecutor] File validation failed:', errors);
+        
+        await this.emitEvent({
+          event_id: randomUUID(),
+          task_id: this.taskId,
+          timestamp: new Date().toISOString(),
+          type: 'failure_detected',
+          mode: this.mode,
+          stage: 'edit',
+          payload: {
+            reason: 'invalid_file_paths',
+            details: {
+              errors: errors.map(e => ({
+                path: e.path,
+                code: e.code,
+                message: e.message,
+                suggestion: e.suggestion
+              }))
+            },
+            checkpoint_id: checkpointResult.checkpointId,
+          },
+          evidence_ids: [],
+          parent_event_id: null,
+        });
+
+        await this.emitEvent({
+          event_id: randomUUID(),
+          task_id: this.taskId,
+          timestamp: new Date().toISOString(),
+          type: 'execution_paused',
+          mode: this.mode,
+          stage: 'edit',
+          payload: {
+            reason: 'needs_user_decision',
+            step_id: step.step_id,
+            error_type: 'invalid_file_paths',
+          },
+          evidence_ids: [],
+          parent_event_id: null,
+        });
+
+        return {
+          success: false,
+          stage: 'edit',
+          shouldPause: true,
+          pauseReason: 'invalid_file_paths',
+          error: errors.map(e => e.message).join('; '),
+        };
+      }
+      
+      // Classify operations (create vs modify based on existence)
+      const classifications = classifyFileOperations(this.workspaceRoot, relativePaths);
+      console.log('[MissionExecutor] File classifications:', classifications);
+      
+      // Update filePatches with correct operations based on actual file existence
+      for (let i = 0; i < filePatches.length; i++) {
+        const patch = filePatches[i];
+        const classification = classifications[i];
+        
+        // CRITICAL: Sync action with actual file existence
+        // Map classification.operation ('create' | 'modify' | 'delete') to FilePatch.action ('create' | 'update' | 'delete')
+        const mappedOperation: 'create' | 'update' | 'delete' = 
+          classification.operation === 'modify' ? 'update' : classification.operation;
+        
+        // If LLM said 'update' but file doesn't exist, change to 'create'
+        // If LLM said 'create' but file exists, change to 'update'
+        if (mappedOperation !== patch.action) {
+          console.log(`[MissionExecutor] Correcting operation for ${patch.path}: ${patch.action} → ${mappedOperation} (based on actual existence)`);
+          patch.action = mappedOperation;
+        }
+      }
+      
+      // 8e) Apply patches atomically
       console.log('[MissionExecutor] Applying file patches...');
       try {
         await this.workspaceWriter.applyPatches(filePatches);
@@ -1377,24 +1592,30 @@ export class MissionExecutor {
    * Complete mission after all steps
    */
   private async completeMission(): Promise<void> {
+    // Emit mission_completed to trigger sequencing to next mission
     await this.emitEvent({
       event_id: randomUUID(),
       task_id: this.taskId,
       timestamp: new Date().toISOString(),
-      type: 'final',
+      type: 'mission_completed',
       mode: this.mode,
       stage: 'none',
       payload: {
-        success: true, // Add success flag for UI display
-        status: 'complete',
+        mission_id: this.executionState?.missionId || this.executionState?.plan.goal || this.taskId,
+        success: true,
         completed_steps: this.executionState?.completedSteps.length || 0,
         total_steps: this.executionState?.plan.steps.length || 0,
+        goal: this.executionState?.plan.goal || '',
       },
       evidence_ids: [],
       parent_event_id: null,
     });
 
-    console.log('[MissionExecutor] Mission completed successfully');
+    console.log('[MissionExecutor] Mission completed successfully', {
+      mission_id: this.executionState?.missionId,
+      goal: this.executionState?.plan.goal,
+      total_steps: this.executionState?.plan.steps.length
+    });
   }
 
   /**
@@ -1495,4 +1716,34 @@ export class MissionExecutor {
   private async emitEvent(event: Event): Promise<void> {
     await this.eventBus.publish(event);
   }
+}
+
+function extractFileHints(stepText: string): string[] {
+  const matches = stepText.match(/\b[\w./-]+\.(?:ts|tsx|js|jsx|json|md)\b/g) || [];
+  const normalized = matches.map(m => m.replace(/^[('"\[]+|[)'"\\\]]+$/g, ''));
+  // De-dup while preserving order
+  const seen = new Set<string>();
+  const results: string[] = [];
+  for (const hint of normalized) {
+    if (!seen.has(hint)) {
+      seen.add(hint);
+      results.push(hint);
+    }
+    // If no path separator, try common src locations
+    if (!hint.includes('/')) {
+      const expanded = [
+        `src/${hint}`,
+        `src/services/${hint}`,
+        `src/routes/${hint}`,
+        `src/components/${hint}`
+      ];
+      for (const candidate of expanded) {
+        if (!seen.has(candidate)) {
+          seen.add(candidate);
+          results.push(candidate);
+        }
+      }
+    }
+  }
+  return results;
 }

@@ -82,11 +82,23 @@ export class Retriever {
         summary,
       };
 
-      // Emit retrieval_completed event
+      // Calculate token estimate for Systems tab
+      const totalCharacters = this.countTotalCharacters(results);
+      const tokenEstimate = this.estimateTokens(totalCharacters);
+
+      // Emit retrieval_completed event with token estimate
       await this.emitEvent('retrieval_completed', request.mode, {
         retrieval_id: retrievalId,
         result_count: results.length,
         total_lines: this.countTotalLines(results),
+        totalCharacters,
+        tokenEstimate,
+        results: results.map(r => ({
+          file: r.file,
+          startLine: r.start_line,
+          endLine: r.end_line,
+          reason: r.reason,
+        })),
         summary,
       });
 
@@ -211,6 +223,21 @@ export class Retriever {
    */
   private countTotalLines(results: RetrievalResult[]): number {
     return results.reduce((sum, r) => sum + (r.end_line - r.start_line + 1), 0);
+  }
+
+  /**
+   * Count total characters across all results (for token estimate)
+   */
+  private countTotalCharacters(results: RetrievalResult[]): number {
+    return results.reduce((sum, r) => sum + (r.excerpt?.length || 0), 0);
+  }
+
+  /**
+   * Estimate token count from characters
+   * Rough estimate: ~4 characters per token (conservative for code)
+   */
+  private estimateTokens(totalCharacters: number): number {
+    return Math.ceil(totalCharacters / 4);
   }
 
   /**

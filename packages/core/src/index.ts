@@ -12,7 +12,7 @@ export * from './types';
 
 // Export event-sourcing components
 export { EventStore } from './eventStore';
-export { EventBus, EventSubscriber } from './eventBus';
+export { EventBus, EventSubscriber, PrimitiveEventInput, createPrimitiveInput } from './eventBus';
 export { StateReducer, createStateReducer } from './stateReducer';
 export { ScopeManager, DEFAULT_SCOPE_CONTRACT } from './scopeManager';
 export type { ScopeValidationResult } from './scopeManager';
@@ -360,3 +360,94 @@ export type {
   RollbackResult,
   CheckpointManager as WorkspaceCheckpointManager
 } from './workspaceAdapter';
+
+// Export Systems View Model (Step 29 - Operational Truth from Events)
+export {
+  reduceToSystemsViewModel,
+  getTopRetrievedFiles,
+  hasMoreRetrievedFiles,
+  getAllChangedFiles,
+  getStatusSummary,
+  getWaitingSummary,
+  formatTokenEstimate,
+} from './systemsViewModel';
+
+export type {
+  SystemsViewModel,
+  RetrievedFile,
+  PendingApproval,
+  PendingDecisionPoint,
+  DiffInfo,
+  CheckpointInfo as SystemsCheckpointInfo,
+  TestInfo,
+  FailureInfo,
+  TimeoutInfo,
+} from './systemsViewModel';
+
+// Export JSON Repair Utility (robust LLM JSON parsing)
+export {
+  safeJsonParse,
+  parseJsonWithContext,
+} from './jsonRepair';
+
+export type {
+  JsonRepairResult,
+} from './jsonRepair';
+
+// Export Edit Attempt Ledger (Truncation-Safe Execution)
+export {
+  EditAttemptLedger,
+} from './editAttemptLedger';
+
+export type {
+  FileEditStatus,
+  FileEditAttempt,
+  EditAttemptLedgerState,
+} from './editAttemptLedger';
+
+// Export Truncation-Safe Executor (Production-Hardened Edit Execution)
+export {
+  TruncationSafeExecutor,
+  createTruncationSafeExecutor,
+} from './truncationSafeExecutor';
+
+export type {
+  TruncationDetectionResult,
+  SingleFileEditOutput,
+  PreflightResult,
+  TruncationSafeResult,
+  TruncationSafeConfig,
+} from './truncationSafeExecutor';
+
+// Export Event Normalizer (Enterprise-Grade Event Contract Stabilization)
+export {
+  normalizeEvent,
+  normalizeEvents,
+  hasNormalizationMapping,
+  getPrimitiveType,
+} from './eventNormalizer';
+
+// Export Workspace Resolver (Safe Multi-Root Workspace Targeting)
+export {
+  resolveTargetWorkspace,
+  scoreWorkspaceCandidate,
+  getWorkspaceCandidateInfo,
+} from './workspaceResolver';
+
+export type {
+  WorkspaceCandidate,
+  WorkspaceSelection,
+} from './workspaceResolver';
+
+// Export File Operation Classifier (File Existence Safety)
+export {
+  classifyFileOperation,
+  classifyFileOperations,
+  validateFileOperations,
+  generateSafePatches,
+} from './fileOperationClassifier';
+
+export type {
+  FileOperationClass,
+  FileOperationIssue,
+} from './fileOperationClassifier';

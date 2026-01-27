@@ -117,7 +117,37 @@ export type EventType =
   | 'prompt_rewritten'
   | 'clarification_requested'
   | 'clarification_presented'
-  | 'clarification_received';
+  | 'clarification_received'
+  // Step 27: Mission Execution Harness
+  | 'stale_context_detected'
+  | 'stage_timeout'
+  | 'repair_attempt_started'
+  | 'repair_attempt_completed'
+  | 'repeated_failure_detected'
+  | 'test_started'
+  | 'test_completed'
+  | 'test_failed'
+  | 'mission_completed'
+  | 'mission_paused'
+  | 'mission_cancelled'
+  | 'patch_plan_proposed'
+  | 'context_snapshot_created'
+  // Step 28: Self-Correction Loop
+  | 'failure_classified'
+  | 'decision_point_needed'
+  // Step 29: Systems Tab
+  | 'run_scope_initialized'
+  | 'repair_policy_snapshot'
+  // Step 30: Truncation-Safe Edit Execution
+  | 'preflight_complete'
+  | 'truncation_detected'
+  | 'edit_split_triggered'
+  | 'edit_chunk_started'
+  | 'edit_chunk_completed'
+  | 'edit_chunk_failed'
+  | 'edit_step_paused'
+  // Large Plan Detection
+  | 'plan_large_detected';
 
 export interface Event {
   event_id: string;

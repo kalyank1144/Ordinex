@@ -528,6 +528,11 @@ export function getWebviewContent(): string {
       border: 1px solid var(--vscode-panel-border);
       border-radius: 6px;
       padding: 12px;
+      margin-bottom: 12px;
+    }
+
+    .systems-section:last-child {
+      margin-bottom: 0;
     }
 
     .systems-section-title {
@@ -537,6 +542,13 @@ export function getWebviewContent(): string {
       letter-spacing: 0.5px;
       color: var(--vscode-descriptionForeground);
       margin-bottom: 10px;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .systems-section-icon {
+      font-size: 14px;
     }
 
     .systems-row {
@@ -558,6 +570,18 @@ export function getWebviewContent(): string {
     .systems-value {
       font-weight: 600;
       color: var(--vscode-foreground);
+    }
+
+    .systems-value.success {
+      color: var(--vscode-charts-green);
+    }
+
+    .systems-value.warning {
+      color: var(--vscode-charts-yellow);
+    }
+
+    .systems-value.error {
+      color: var(--vscode-charts-red);
     }
 
     .systems-counters {
@@ -588,6 +612,158 @@ export function getWebviewContent(): string {
       color: var(--vscode-foreground);
     }
 
+    .systems-file-list {
+      max-height: 200px;
+      overflow-y: auto;
+      font-size: 11px;
+    }
+
+    .systems-file-item {
+      padding: 4px 8px;
+      background: var(--vscode-input-background);
+      border-radius: 3px;
+      margin-bottom: 4px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+
+    .systems-file-path {
+      color: var(--vscode-foreground);
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      flex: 1;
+    }
+
+    .systems-file-lines {
+      color: var(--vscode-descriptionForeground);
+      font-size: 10px;
+      margin-left: 8px;
+      flex-shrink: 0;
+    }
+
+    .systems-show-all {
+      padding: 6px 12px;
+      background: var(--vscode-button-secondaryBackground);
+      color: var(--vscode-button-secondaryForeground);
+      border: none;
+      border-radius: 4px;
+      cursor: pointer;
+      font-size: 11px;
+      margin-top: 8px;
+      width: 100%;
+    }
+
+    .systems-show-all:hover {
+      background: var(--vscode-button-secondaryHoverBackground);
+    }
+
+    .systems-badge {
+      display: inline-block;
+      padding: 2px 8px;
+      border-radius: 10px;
+      font-size: 10px;
+      font-weight: 600;
+    }
+
+    .systems-badge.running {
+      background: var(--vscode-charts-green);
+      color: #fff;
+    }
+
+    .systems-badge.paused {
+      background: var(--vscode-charts-yellow);
+      color: #000;
+    }
+
+    .systems-badge.completed {
+      background: var(--vscode-charts-blue);
+      color: #fff;
+    }
+
+    .systems-badge.cancelled {
+      background: var(--vscode-charts-red);
+      color: #fff;
+    }
+
+    .systems-badge.idle {
+      background: var(--vscode-descriptionForeground);
+      color: #fff;
+    }
+
+    .systems-pending-item {
+      background: var(--vscode-inputValidation-warningBackground);
+      border: 1px solid var(--vscode-inputValidation-warningBorder);
+      border-radius: 4px;
+      padding: 8px;
+      margin-bottom: 6px;
+      font-size: 11px;
+    }
+
+    .systems-pending-type {
+      font-weight: 600;
+      color: var(--vscode-editor-warningForeground);
+    }
+
+    .systems-pending-desc {
+      color: var(--vscode-descriptionForeground);
+      margin-top: 4px;
+    }
+
+    .systems-tool-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(100px, 1fr));
+      gap: 6px;
+    }
+
+    .systems-tool-item {
+      background: var(--vscode-input-background);
+      border-radius: 4px;
+      padding: 6px 8px;
+      text-align: center;
+    }
+
+    .systems-tool-name {
+      font-size: 10px;
+      color: var(--vscode-descriptionForeground);
+    }
+
+    .systems-tool-count {
+      font-size: 14px;
+      font-weight: 700;
+      color: var(--vscode-foreground);
+    }
+
+    .systems-expander {
+      cursor: pointer;
+      user-select: none;
+      display: flex;
+      align-items: center;
+      gap: 4px;
+      font-size: 11px;
+      color: var(--vscode-textLink-foreground);
+      margin-top: 8px;
+    }
+
+    .systems-expander:hover {
+      text-decoration: underline;
+    }
+
+    .systems-details {
+      margin-top: 8px;
+      padding: 8px;
+      background: var(--vscode-input-background);
+      border-radius: 4px;
+      font-size: 10px;
+      font-family: monospace;
+      display: none;
+    }
+
+    .systems-details.expanded {
+      display: block;
+    }
+
     .scope-expansion-request {
       background: var(--vscode-editor-warningBackground);
       border: 1px solid var(--vscode-inputValidation-warningBorder);
@@ -613,30 +789,288 @@ export function getWebviewContent(): string {
       gap: 8px;
     }
 
-    /* ===== LOGS TAB ===== */
+    /* ===== LOGS TAB (Step 30: Raw Debug Surface) ===== */
+    .logs-filter-bar {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      padding: 10px 12px;
+      background: var(--vscode-sideBar-background);
+      border-bottom: 1px solid var(--vscode-panel-border);
+      margin-bottom: 8px;
+      border-radius: 4px;
+      align-items: center;
+    }
+
+    .logs-filter-bar label {
+      font-size: 10px;
+      color: var(--vscode-descriptionForeground);
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.3px;
+    }
+
+    .logs-search-input {
+      flex: 1;
+      min-width: 150px;
+      padding: 5px 10px;
+      background: var(--vscode-input-background);
+      color: var(--vscode-input-foreground);
+      border: 1px solid var(--vscode-input-border);
+      border-radius: 4px;
+      font-size: 11px;
+      outline: none;
+    }
+
+    .logs-search-input:focus {
+      border-color: var(--vscode-focusBorder);
+    }
+
+    .logs-search-input::placeholder {
+      color: var(--vscode-input-placeholderForeground);
+    }
+
+    .logs-filter-select {
+      padding: 4px 8px;
+      background: var(--vscode-dropdown-background);
+      color: var(--vscode-dropdown-foreground);
+      border: 1px solid var(--vscode-dropdown-border);
+      border-radius: 3px;
+      font-size: 10px;
+      cursor: pointer;
+      min-width: 80px;
+    }
+
+    .logs-filter-select:focus {
+      outline: 1px solid var(--vscode-focusBorder);
+    }
+
+    .logs-stats {
+      font-size: 10px;
+      color: var(--vscode-descriptionForeground);
+      margin-left: auto;
+      padding: 4px 8px;
+      background: var(--vscode-editor-inactiveSelectionBackground);
+      border-radius: 10px;
+    }
+
     .event-log-list {
       display: flex;
       flex-direction: column;
-      gap: 6px;
+      gap: 4px;
+      max-height: calc(100vh - 300px);
+      overflow-y: auto;
     }
 
     .event-log-item {
       background: var(--vscode-input-background);
       border: 1px solid var(--vscode-input-border);
       border-radius: 4px;
-      padding: 8px 10px;
-      cursor: pointer;
-      transition: background 0.1s ease;
       font-size: 11px;
+      transition: background 0.1s ease;
     }
 
     .event-log-item:hover {
       background: var(--vscode-list-hoverBackground);
     }
 
-    .event-log-item.selected {
-      background: var(--vscode-list-activeSelectionBackground);
+    .event-log-item.expanded {
+      background: var(--vscode-editor-background);
       border-color: var(--vscode-focusBorder);
+    }
+
+    .log-row-header {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 8px 10px;
+      cursor: pointer;
+    }
+
+    .log-expand-icon {
+      font-size: 10px;
+      color: var(--vscode-descriptionForeground);
+      flex-shrink: 0;
+      width: 12px;
+      transition: transform 0.15s ease;
+    }
+
+    .event-log-item.expanded .log-expand-icon {
+      transform: rotate(90deg);
+    }
+
+    .event-log-type {
+      font-weight: 600;
+      color: var(--vscode-foreground);
+      font-family: 'SF Mono', Monaco, 'Cascadia Code', 'Roboto Mono', Consolas, monospace;
+    }
+
+    .event-log-meta {
+      display: flex;
+      gap: 6px;
+      flex: 1;
+      align-items: center;
+    }
+
+    .log-badge {
+      padding: 1px 6px;
+      border-radius: 8px;
+      font-size: 9px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.3px;
+    }
+
+    .log-badge.mode {
+      background: var(--vscode-charts-purple);
+      color: #fff;
+    }
+
+    .log-badge.stage {
+      background: var(--vscode-charts-blue);
+      color: #fff;
+    }
+
+    .log-badge.tool {
+      background: var(--vscode-charts-orange);
+      color: #fff;
+    }
+
+    .event-log-timestamp {
+      font-size: 10px;
+      color: var(--vscode-descriptionForeground);
+      font-family: monospace;
+      flex-shrink: 0;
+    }
+
+    .log-evidence-ids {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 4px;
+      padding: 4px 10px 8px 30px;
+    }
+
+    .evidence-token {
+      display: inline-flex;
+      align-items: center;
+      gap: 3px;
+      padding: 2px 6px;
+      background: var(--vscode-textLink-foreground);
+      color: #fff;
+      border-radius: 10px;
+      font-size: 9px;
+      font-family: monospace;
+      cursor: pointer;
+      transition: all 0.15s ease;
+    }
+
+    .evidence-token:hover {
+      background: var(--vscode-textLink-activeForeground);
+      transform: scale(1.05);
+    }
+
+    .evidence-token-icon {
+      font-size: 10px;
+    }
+
+    .evidence-token-copied {
+      background: var(--vscode-charts-green) !important;
+    }
+
+    .log-payload-container {
+      padding: 0 10px 10px 30px;
+      display: none;
+    }
+
+    .event-log-item.expanded .log-payload-container {
+      display: block;
+    }
+
+    .log-payload-pre {
+      margin: 0;
+      padding: 10px;
+      background: var(--vscode-editor-background);
+      border: 1px solid var(--vscode-panel-border);
+      border-radius: 4px;
+      font-family: 'SF Mono', Monaco, 'Cascadia Code', 'Roboto Mono', Consolas, monospace;
+      font-size: 10px;
+      line-height: 1.5;
+      overflow-x: auto;
+      white-space: pre;
+      color: var(--vscode-editor-foreground);
+      max-height: 400px;
+      overflow-y: auto;
+    }
+
+    .log-copy-btn {
+      margin-top: 6px;
+      padding: 4px 8px;
+      background: var(--vscode-button-secondaryBackground);
+      color: var(--vscode-button-secondaryForeground);
+      border: none;
+      border-radius: 3px;
+      font-size: 10px;
+      cursor: pointer;
+    }
+
+    .log-copy-btn:hover {
+      background: var(--vscode-button-secondaryHoverBackground);
+    }
+
+    /* Stream Delta Group Styling */
+    .stream-group {
+      background: var(--vscode-editor-inactiveSelectionBackground);
+      border-color: var(--vscode-charts-blue);
+    }
+
+    .stream-group-badge {
+      padding: 2px 8px;
+      background: var(--vscode-charts-blue);
+      color: #fff;
+      border-radius: 10px;
+      font-size: 9px;
+      font-weight: 700;
+    }
+
+    .stream-group-content {
+      padding: 10px;
+      background: var(--vscode-editor-background);
+      border: 1px solid var(--vscode-panel-border);
+      border-radius: 4px;
+      font-family: 'SF Mono', Monaco, 'Cascadia Code', 'Roboto Mono', Consolas, monospace;
+      font-size: 11px;
+      line-height: 1.5;
+      white-space: pre-wrap;
+      word-break: break-word;
+      max-height: 300px;
+      overflow-y: auto;
+    }
+
+    .stream-toggle-mode {
+      display: flex;
+      gap: 8px;
+      margin-bottom: 8px;
+    }
+
+    .stream-toggle-btn {
+      padding: 3px 8px;
+      background: var(--vscode-button-secondaryBackground);
+      color: var(--vscode-button-secondaryForeground);
+      border: none;
+      border-radius: 3px;
+      font-size: 10px;
+      cursor: pointer;
+    }
+
+    .stream-toggle-btn.active {
+      background: var(--vscode-button-background);
+      color: var(--vscode-button-foreground);
+    }
+
+    /* Virtual scroll placeholder */
+    .logs-virtual-spacer {
+      height: 0;
+      flex-shrink: 0;
     }
 
     .event-log-header {
@@ -644,16 +1078,6 @@ export function getWebviewContent(): string {
       justify-content: space-between;
       align-items: center;
       margin-bottom: 4px;
-    }
-
-    .event-log-type {
-      font-weight: 600;
-      color: var(--vscode-foreground);
-    }
-
-    .event-log-timestamp {
-      font-size: 10px;
-      color: var(--vscode-descriptionForeground);
     }
 
     .event-log-summary {
@@ -1403,82 +1827,44 @@ export function getWebviewContent(): string {
       <div class="mission-empty">No mission yet. Start a conversation to begin.</div>
     </div>
 
-    <!-- Systems Tab -->
+    <!-- Systems Tab (Dynamic 8-Section Layout from Events) -->
     <div class="tab-content" id="systemsTab">
-      <!-- Scope Contract -->
-      <div class="systems-section">
-        <div class="systems-section-title">Scope Contract</div>
-        <div class="systems-row">
-          <span class="systems-label">Max Files:</span>
-          <span class="systems-value" id="maxFiles">10</span>
-        </div>
-        <div class="systems-row">
-          <span class="systems-label">Max Lines:</span>
-          <span class="systems-value" id="maxLines">1000</span>
-        </div>
-        <div class="systems-row">
-          <span class="systems-label">Allowed Tools:</span>
-          <span class="systems-value" id="allowedTools">read, write, exec</span>
-        </div>
-        <div class="systems-row">
-          <span class="systems-label">Max Iterations:</span>
-          <span class="systems-value" id="maxIterations">10</span>
-        </div>
-        <div class="systems-row">
-          <span class="systems-label">Max Tool Calls:</span>
-          <span class="systems-value" id="maxToolCalls">100</span>
-        </div>
-      </div>
-
-      <!-- Live Counters -->
-      <div class="systems-section">
-        <div class="systems-section-title">Live Counters</div>
-        <div class="systems-counters">
-          <div class="counter-box">
-            <div class="counter-label">Files In Scope</div>
-            <div class="counter-value" id="filesInScope">0</div>
-          </div>
-          <div class="counter-box">
-            <div class="counter-label">Files Touched</div>
-            <div class="counter-value" id="filesTouched">0</div>
-          </div>
-          <div class="counter-box">
-            <div class="counter-label">Lines Included</div>
-            <div class="counter-value" id="linesIncluded">0</div>
-          </div>
-          <div class="counter-box">
-            <div class="counter-label">Tool Calls</div>
-            <div class="counter-value" id="toolCalls">0/100</div>
-          </div>
-        </div>
-      </div>
-
-      <!-- Checkpoint Status -->
-      <div class="systems-section">
-        <div class="systems-section-title">Checkpoint Status</div>
-        <div class="systems-row">
-          <span class="systems-label">Latest Checkpoint:</span>
-          <span class="systems-value" id="checkpointId">None</span>
-        </div>
-        <div class="systems-row">
-          <span class="systems-label">Event Count:</span>
-          <span class="systems-value" id="checkpointEvents">0</span>
-        </div>
-      </div>
-
-      <!-- Scope Expansion Request (hidden by default) -->
-      <div class="scope-expansion-request" id="scopeExpansionRequest" style="display: none;">
-        <div class="scope-expansion-header">⚠️ Scope Expansion Requested</div>
-        <div class="scope-expansion-reason" id="expansionReason">Reason goes here...</div>
-        <div class="scope-expansion-actions">
-          <button class="approve" onclick="handleScopeApproval(true)">Approve</button>
-          <button class="reject" onclick="handleScopeApproval(false)">Reject</button>
+      <div id="systemsContent">
+        <!-- Will be populated by renderSystemsTab() -->
+        <div style="text-align: center; color: var(--vscode-descriptionForeground); padding: 20px;">
+          Loading systems view...
         </div>
       </div>
     </div>
 
     <!-- Logs Tab -->
     <div class="tab-content" id="logsTab">
+      <!-- Filter Bar -->
+      <div class="logs-filter-bar" id="logsFilterBar">
+        <input type="text" class="logs-search-input" id="logsSearchInput" placeholder="🔍 Search events..." />
+        <label>Type:</label>
+        <select class="logs-filter-select" id="logsTypeFilter">
+          <option value="all">All Types</option>
+        </select>
+        <label>Stage:</label>
+        <select class="logs-filter-select" id="logsStageFilter">
+          <option value="all">All</option>
+          <option value="none">none</option>
+          <option value="plan">plan</option>
+          <option value="retrieve">retrieve</option>
+          <option value="edit">edit</option>
+          <option value="test">test</option>
+          <option value="repair">repair</option>
+        </select>
+        <label>Mode:</label>
+        <select class="logs-filter-select" id="logsModeFilter">
+          <option value="all">All</option>
+          <option value="ANSWER">ANSWER</option>
+          <option value="PLAN">PLAN</option>
+          <option value="MISSION">MISSION</option>
+        </select>
+        <span class="logs-stats" id="logsStats">0 events</span>
+      </div>
       <div class="event-log-list" id="eventLogList">
         <div style="text-align: center; color: var(--vscode-descriptionForeground); padding: 20px;">
           No events yet.
@@ -1513,11 +1899,11 @@ export function getWebviewContent(): string {
         <option value="MISSION">MISSION</option>
       </select>
       <label>Model:</label>
-      <select id="modelSelect">
-        <option value="claude-3-haiku">Claude 3 Haiku</option>
-        <option value="claude-3-sonnet">Claude 3 Sonnet</option>
-        <option value="claude-3-opus">Claude 3 Opus</option>
+      <select id="modelSelect" title="Select LLM model">
+        <option value="claude-3-haiku" title="Fast / lightweight">Claude 3 Haiku</option>
+        <option value="claude-sonnet-4-5" title="Best for building features / multi-file changes">Claude Sonnet 4.5</option>
       </select>
+      <span class="model-hint" id="modelHint" style="font-size: 10px; color: var(--vscode-descriptionForeground); margin-left: 4px; font-style: italic;">Fast / lightweight</span>
       <div class="composer-controls-spacer"></div>
       <button class="attach-btn" id="attachBtn" title="Attach file (coming soon)">📎</button>
     </div>
@@ -1575,7 +1961,20 @@ export function getWebviewContent(): string {
           linesIncluded: 0,
           toolCallsUsed: 0,
           toolCallsMax: 100
-        }
+        },
+        // Track optimistic mission start for immediate UI feedback
+        missionStartPending: null, // { taskId, missionId } | null
+        // Step 30: Logs tab state
+        logsFilter: {
+          search: '',
+          eventType: 'all',
+          stage: 'all',
+          mode: 'all',
+          tool: 'all'
+        },
+        expandedLogEvents: new Set(), // Track which log rows are expanded
+        expandedStreamGroups: new Set(), // Track which stream groups are expanded
+        streamGroupViewMode: {} // 'text' | 'raw' per group index
       };
 
       // DOM Elements
@@ -1625,6 +2024,8 @@ export function getWebviewContent(): string {
         const modelMap = {
           'claude-3-haiku': 'Claude 3 Haiku',
           'claude-3-haiku-20240307': 'Claude 3 Haiku',
+          'claude-sonnet-4-5': 'Claude Sonnet 4',
+          'claude-sonnet-4-20250514': 'Claude Sonnet 4',
           'claude-3-sonnet': 'Claude 3 Sonnet',
           'claude-3-sonnet-20240229': 'Claude 3 Sonnet',
           'claude-3-opus': 'Claude 3 Opus',
@@ -1896,10 +2297,30 @@ export function getWebviewContent(): string {
 
         let currentStage = 'none';
 
+        // Internal/technical events to hide from Mission timeline (still visible in Logs tab)
+        const internalEventTypes = new Set([
+          'preflight_complete',
+          'truncation_detected', 
+          'edit_split_triggered',
+          'edit_chunk_started',
+          'edit_chunk_completed',
+          'edit_chunk_failed',
+          'edit_step_paused',
+          'stale_context_detected',
+          'run_scope_initialized',
+          'repair_policy_snapshot'
+        ]);
+
         for (const event of events) {
           // Skip rendering stream_delta and stream_complete events entirely
           // These are for real-time updates only, not timeline display
           if (event.type === 'stream_delta' || event.type === 'stream_complete') {
+            continue;
+          }
+          
+          // Skip internal/technical events in Mission timeline
+          // They're still visible in Logs tab for debugging
+          if (internalEventTypes.has(event.type)) {
             continue;
           }
           
@@ -2761,6 +3182,16 @@ export function getWebviewContent(): string {
               return \`Step \${stepIndex + 1} \${success ? 'completed successfully' : 'failed'}\`;
             }
           },
+          step_failed: {
+            icon: '❌',
+            title: 'Step Failed',
+            color: 'var(--vscode-charts-red)',
+            getSummary: (e) => {
+              const stepIndex = e.payload.step_index || 0;
+              const error = e.payload.error || 'Step execution failed';
+              return \`Step \${stepIndex + 1}: \${error.substring(0, 50)}\`;
+            }
+          },
           clarification_presented: {
             icon: '🎯',
             title: 'Choose Focus Area',
@@ -2813,6 +3244,174 @@ export function getWebviewContent(): string {
               const missionId = e.payload.mission_id || 'unknown';
               return \`Mission: \${missionId.substring(0, 8)}...\`;
             }
+          },
+          // Step 30: Truncation-Safe Edit Execution Events
+          preflight_complete: {
+            icon: '✈️',
+            title: 'Preflight Complete',
+            color: 'var(--vscode-charts-blue)',
+            getSummary: (e) => {
+              const splitNeeded = e.payload.split_needed;
+              const files = (e.payload.target_files || []).length;
+              return splitNeeded ? \`Split mode: \${files} files\` : 'Single-call mode';
+            }
+          },
+          truncation_detected: {
+            icon: '⚠️',
+            title: 'Truncation Detected',
+            color: 'var(--vscode-charts-orange)',
+            getSummary: (e) => {
+              const recovered = e.payload.recovered;
+              return recovered ? 'Output truncated (will retry)' : 'Output truncated (recovery failed)';
+            }
+          },
+          edit_split_triggered: {
+            icon: '✂️',
+            title: 'Split Mode',
+            color: 'var(--vscode-charts-purple)',
+            getSummary: (e) => {
+              const files = (e.payload.files || []).length;
+              return \`Processing \${files} file(s) separately\`;
+            }
+          },
+          edit_chunk_started: {
+            icon: '📝',
+            title: 'Editing File',
+            color: 'var(--vscode-charts-blue)',
+            getSummary: (e) => {
+              const file = e.payload.file || 'unknown';
+              const index = e.payload.chunk_index;
+              const total = e.payload.total_chunks;
+              return \`\${file} (\${index + 1}/\${total})\`;
+            }
+          },
+          edit_chunk_completed: {
+            icon: '✅',
+            title: 'File Edited',
+            color: 'var(--vscode-charts-green)',
+            getSummary: (e) => e.payload.file || 'unknown'
+          },
+          edit_chunk_failed: {
+            icon: '❌',
+            title: 'Edit Failed',
+            color: 'var(--vscode-charts-red)',
+            getSummary: (e) => {
+              const file = e.payload.file || 'unknown';
+              const error = e.payload.error || '';
+              return \`\${file}: \${error.substring(0, 30)}...\`;
+            }
+          },
+          edit_step_paused: {
+            icon: '⏸️',
+            title: 'Edit Paused',
+            color: 'var(--vscode-charts-yellow)',
+            getSummary: (e) => e.payload.reason || 'awaiting decision'
+          },
+          // Step 27: Mission Execution Harness Events
+          stale_context_detected: {
+            icon: '⚠️',
+            title: 'Stale Context',
+            color: 'var(--vscode-charts-orange)',
+            getSummary: (e) => {
+              const files = (e.payload.stale_files || []).length;
+              return files > 0 ? \`\${files} file(s) changed\` : 'Context may be outdated';
+            }
+          },
+          stage_timeout: {
+            icon: '⏱️',
+            title: 'Stage Timeout',
+            color: 'var(--vscode-charts-red)',
+            getSummary: (e) => {
+              const stage = e.payload.stage || 'unknown';
+              const duration = e.payload.duration_ms;
+              return \`\${stage}\${duration ? ' (' + Math.round(duration/1000) + 's)' : ''}\`;
+            }
+          },
+          repair_attempt_started: {
+            icon: '🔧',
+            title: 'Repair Started',
+            color: 'var(--vscode-charts-orange)',
+            getSummary: (e) => \`Attempt #\${e.payload.attempt || 1}\`
+          },
+          repair_attempt_completed: {
+            icon: '✓',
+            title: 'Repair Completed',
+            color: 'var(--vscode-charts-green)',
+            getSummary: (e) => e.payload.success ? 'Repair successful' : 'Repair failed'
+          },
+          repeated_failure_detected: {
+            icon: '🔴',
+            title: 'Repeated Failure',
+            color: 'var(--vscode-charts-red)',
+            getSummary: (e) => \`\${e.payload.failure_count || 0} consecutive failures\`
+          },
+          test_started: {
+            icon: '🧪',
+            title: 'Test Started',
+            color: 'var(--vscode-charts-blue)',
+            getSummary: (e) => {
+              const command = e.payload.command || '';
+              return command.length > 40 ? command.substring(0, 40) + '...' : command || 'Running tests';
+            }
+          },
+          test_completed: {
+            icon: '✅',
+            title: 'Test Completed',
+            color: 'var(--vscode-charts-green)',
+            getSummary: (e) => \`\${e.payload.passed || 0} passed, \${e.payload.failed || 0} failed\`
+          },
+          test_failed: {
+            icon: '❌',
+            title: 'Test Failed',
+            color: 'var(--vscode-charts-red)',
+            getSummary: (e) => {
+              const error = e.payload.error || '';
+              return error.length > 50 ? error.substring(0, 50) + '...' : error || 'Tests failed';
+            }
+          },
+          mission_completed: {
+            icon: '🎉',
+            title: 'Mission Completed',
+            color: 'var(--vscode-charts-green)',
+            getSummary: (e) => e.payload.success ? '✓ Mission successful' : '✗ Mission failed'
+          },
+          mission_paused: {
+            icon: '⏸️',
+            title: 'Mission Paused',
+            color: 'var(--vscode-charts-yellow)',
+            getSummary: (e) => e.payload.reason || 'Mission paused'
+          },
+          mission_cancelled: {
+            icon: '⛔',
+            title: 'Mission Cancelled',
+            color: 'var(--vscode-charts-red)',
+            getSummary: (e) => e.payload.reason || 'Mission cancelled'
+          },
+          // Step 28: Self-Correction Loop Events
+          failure_classified: {
+            icon: '🔍',
+            title: 'Failure Classified',
+            color: 'var(--vscode-charts-orange)',
+            getSummary: (e) => \`Type: \${e.payload.classification || 'unknown'}\`
+          },
+          decision_point_needed: {
+            icon: '🤔',
+            title: 'Decision Needed',
+            color: 'var(--vscode-charts-yellow)',
+            getSummary: (e) => \`\${(e.payload.options || []).length} option(s) available\`
+          },
+          // Step 29: Systems Tab Events
+          run_scope_initialized: {
+            icon: '📋',
+            title: 'Scope Initialized',
+            color: 'var(--vscode-charts-blue)',
+            getSummary: (e) => \`Max \${e.payload.max_files || 0} files\`
+          },
+          repair_policy_snapshot: {
+            icon: '⚙️',
+            title: 'Repair Policy',
+            color: 'var(--vscode-charts-purple)',
+            getSummary: (e) => \`Max \${e.payload.max_attempts || 0} attempts\`
           }
         };
         return eventCardMap[type];
@@ -2828,105 +3427,377 @@ export function getWebviewContent(): string {
           .replace(/'/g, '&#039;');
       }
 
-      // Render Systems Tab Counters
-      function renderSystemsCounters() {
-        document.getElementById('filesInScope').textContent = state.counters.filesInScope;
-        document.getElementById('filesTouched').textContent = state.counters.filesTouched;
-        document.getElementById('linesIncluded').textContent = state.counters.linesIncluded;
-        document.getElementById('toolCalls').textContent = \`\${state.counters.toolCallsUsed}/\${state.counters.toolCallsMax}\`;
+      // ===== SYSTEMS VIEW MODEL REDUCER (Inline for webview) =====
+      function reduceToSystemsViewModel(events) {
+        const vm = {
+          status: { mission: null, stage: 'none', runStatus: 'idle', pausedReason: null, currentStep: null },
+          waitingFor: { pendingApprovals: [], pendingDecisionPoints: [] },
+          scope: { workspaceRoots: [], allowedCreateRoots: [], deniedPatterns: [], approvedExpansions: [], limits: {} },
+          contextIncluded: { retrievedFiles: [], tokenEstimate: 0, totalLines: 0, totalCharacters: 0 },
+          changes: { lastDiffProposed: null, lastDiffApplied: null, filesChangedTotal: [], checkpointsCreated: 0 },
+          testsAndRepair: { lastTestRun: null, testsPassed: 0, testsFailed: 0, repairAttempts: { used: 0, remaining: 3, max: 3 }, allowlistedCommands: [] },
+          toolActivity: { counts: {}, totalCalls: 0, lastToolCall: null },
+          timeouts: { stageTimeoutMs: 300000, lastTimeout: null, timeoutCount: 0 }
+        };
         
-        if (state.latestCheckpoint) {
-          document.getElementById('checkpointId').textContent = state.latestCheckpoint.checkpoint_id.substring(0, 8);
-          document.getElementById('checkpointEvents').textContent = state.latestCheckpoint.event_count;
+        const resolvedApprovalIds = new Set();
+        const resolvedDecisionIds = new Set();
+        
+        for (const event of events) {
+          const p = event.payload || {};
+          switch (event.type) {
+            case 'mission_started': vm.status.mission = p.goal || p.mission_id || 'active'; vm.status.runStatus = 'running'; break;
+            case 'mission_completed': vm.status.runStatus = 'completed'; break;
+            case 'mission_paused': vm.status.runStatus = 'paused'; vm.status.pausedReason = p.reason || 'paused'; break;
+            case 'mission_cancelled': vm.status.runStatus = 'cancelled'; break;
+            case 'execution_paused': vm.status.runStatus = 'paused'; vm.status.pausedReason = p.reason || 'paused'; break;
+            case 'execution_resumed': vm.status.runStatus = 'running'; vm.status.pausedReason = null; break;
+            case 'stage_changed': vm.status.stage = p.to || event.stage || 'none'; break;
+            case 'step_started': vm.status.currentStep = { index: p.step_index, description: p.description }; break;
+            case 'step_completed': vm.status.currentStep = null; break;
+            case 'run_scope_initialized': vm.scope.workspaceRoots = p.workspace_roots || []; vm.scope.limits = p.limits || {}; break;
+            case 'scope_expansion_resolved': if (p.approved) vm.scope.approvedExpansions.push(p); break;
+            case 'retrieval_completed':
+              vm.contextIncluded.retrievedFiles = (p.results || []).map(r => ({ path: r.path, lines: r.lines || r.excerpt?.split('\\n').length || 0 }));
+              vm.contextIncluded.tokenEstimate = p.tokenEstimate || 0;
+              vm.contextIncluded.totalCharacters = p.totalCharacters || 0;
+              break;
+            case 'context_collected':
+              vm.contextIncluded.totalLines = p.total_lines || 0;
+              vm.contextIncluded.retrievedFiles = (p.files_included || []).map(f => ({ path: f.path || f, lines: f.lines || 0 }));
+              break;
+            case 'approval_requested': vm.waitingFor.pendingApprovals.push({ id: p.approval_id, type: p.approval_type, description: p.description }); break;
+            case 'approval_resolved': resolvedApprovalIds.add(p.approval_id); break;
+            case 'decision_point_needed': vm.waitingFor.pendingDecisionPoints.push({ id: p.decision_id, question: p.question }); break;
+            case 'clarification_received': resolvedDecisionIds.add(p.decision_id); break;
+            case 'diff_proposed': vm.changes.lastDiffProposed = { diffId: p.diff_id, files: p.files_changed || [] }; break;
+            case 'diff_applied':
+              vm.changes.lastDiffApplied = { diffId: p.diff_id, files: p.files_changed || [] };
+              (p.files_changed || []).forEach(f => { const path = typeof f === 'string' ? f : f.path; if (path && !vm.changes.filesChangedTotal.includes(path)) vm.changes.filesChangedTotal.push(path); });
+              break;
+            case 'checkpoint_created': vm.changes.checkpointsCreated++; break;
+            case 'test_completed':
+              vm.testsAndRepair.lastTestRun = { passed: p.passed, failed: p.failed, timestamp: event.timestamp };
+              vm.testsAndRepair.testsPassed = p.passed || 0;
+              vm.testsAndRepair.testsFailed = p.failed || 0;
+              break;
+            case 'repair_attempt_started': vm.testsAndRepair.repairAttempts.used++; vm.testsAndRepair.repairAttempts.remaining = Math.max(0, vm.testsAndRepair.repairAttempts.max - vm.testsAndRepair.repairAttempts.used); break;
+            case 'repair_policy_snapshot': vm.testsAndRepair.repairAttempts.max = p.max_attempts || 3; vm.testsAndRepair.allowlistedCommands = p.allowlisted_commands || []; break;
+            case 'tool_start':
+              vm.toolActivity.totalCalls++;
+              vm.toolActivity.counts[p.tool] = (vm.toolActivity.counts[p.tool] || 0) + 1;
+              vm.toolActivity.lastToolCall = { tool: p.tool, timestamp: event.timestamp };
+              break;
+            case 'stage_timeout': vm.timeouts.lastTimeout = { stage: p.stage, at: event.timestamp }; vm.timeouts.timeoutCount++; break;
+          }
         }
-
-        // Scope expansion
-        const expansionDiv = document.getElementById('scopeExpansionRequest');
-        if (state.pendingScopeExpansion) {
-          document.getElementById('expansionReason').textContent = state.pendingScopeExpansion.reason;
-          expansionDiv.style.display = 'block';
-        } else {
-          expansionDiv.style.display = 'none';
-        }
+        // Filter resolved approvals/decisions
+        vm.waitingFor.pendingApprovals = vm.waitingFor.pendingApprovals.filter(a => !resolvedApprovalIds.has(a.id));
+        vm.waitingFor.pendingDecisionPoints = vm.waitingFor.pendingDecisionPoints.filter(d => !resolvedDecisionIds.has(d.id));
+        return vm;
       }
 
-      // Render Logs Tab
+      // Render Systems Tab with all 8 sections
+      function renderSystemsTab() {
+        const vm = reduceToSystemsViewModel(state.events);
+        const container = document.getElementById('systemsContent');
+        if (!container) return;
+        
+        // Build HTML for all 8 sections
+        let html = '';
+        
+        // 1. STATUS SECTION
+        const statusBadgeClass = vm.status.runStatus || 'idle';
+        const stageDisplay = vm.status.stage !== 'none' ? vm.status.stage : '—';
+        html += \`
+          <div class="systems-section">
+            <div class="systems-section-title"><span class="systems-section-icon">📊</span> Status</div>
+            <div class="systems-row"><span class="systems-label">Run Status</span><span class="systems-badge \${statusBadgeClass}">\${statusBadgeClass.toUpperCase()}</span></div>
+            <div class="systems-row"><span class="systems-label">Stage</span><span class="systems-value">\${stageDisplay}</span></div>
+            \${vm.status.mission ? \`<div class="systems-row"><span class="systems-label">Mission</span><span class="systems-value">\${escapeHtml(String(vm.status.mission).substring(0, 50))}</span></div>\` : ''}
+            \${vm.status.pausedReason ? \`<div class="systems-row"><span class="systems-label">Paused</span><span class="systems-value warning">\${escapeHtml(vm.status.pausedReason)}</span></div>\` : ''}
+            \${vm.status.currentStep ? \`<div class="systems-row"><span class="systems-label">Current Step</span><span class="systems-value">\${vm.status.currentStep.index + 1}: \${escapeHtml(vm.status.currentStep.description || '')}</span></div>\` : ''}
+          </div>
+        \`;
+        
+        // 2. WAITING FOR SECTION
+        const hasPending = vm.waitingFor.pendingApprovals.length > 0 || vm.waitingFor.pendingDecisionPoints.length > 0;
+        if (hasPending) {
+          html += \`<div class="systems-section" style="border-color: var(--vscode-inputValidation-warningBorder);">
+            <div class="systems-section-title" style="color: var(--vscode-charts-yellow);"><span class="systems-section-icon">⏳</span> Waiting For</div>\`;
+          vm.waitingFor.pendingApprovals.forEach(a => {
+            html += \`<div class="systems-pending-item"><div class="systems-pending-type">\${escapeHtml(a.type || 'approval')}</div><div class="systems-pending-desc">\${escapeHtml(a.description || 'Pending approval')}</div></div>\`;
+          });
+          vm.waitingFor.pendingDecisionPoints.forEach(d => {
+            html += \`<div class="systems-pending-item"><div class="systems-pending-type">Decision Needed</div><div class="systems-pending-desc">\${escapeHtml(d.question || 'Awaiting input')}</div></div>\`;
+          });
+          html += \`</div>\`;
+        }
+        
+        // 3. SCOPE SECTION
+        html += \`<div class="systems-section">
+          <div class="systems-section-title"><span class="systems-section-icon">📁</span> Scope</div>
+          <div class="systems-row"><span class="systems-label">Workspace Roots</span><span class="systems-value">\${vm.scope.workspaceRoots.length || 1}</span></div>
+          \${vm.scope.limits.max_files ? \`<div class="systems-row"><span class="systems-label">Max Files</span><span class="systems-value">\${vm.scope.limits.max_files}</span></div>\` : ''}
+          \${vm.scope.limits.max_lines ? \`<div class="systems-row"><span class="systems-label">Max Lines</span><span class="systems-value">\${vm.scope.limits.max_lines}</span></div>\` : ''}
+          \${vm.scope.approvedExpansions.length > 0 ? \`<div class="systems-row"><span class="systems-label">Approved Expansions</span><span class="systems-value success">\${vm.scope.approvedExpansions.length}</span></div>\` : ''}
+        </div>\`;
+        
+        // 4. CONTEXT INCLUDED SECTION
+        const topFiles = vm.contextIncluded.retrievedFiles.slice(0, 5);
+        const hasMoreFiles = vm.contextIncluded.retrievedFiles.length > 5;
+        const tokenDisplay = vm.contextIncluded.tokenEstimate ? \`~\${Math.round(vm.contextIncluded.tokenEstimate / 1000)}k tokens\` : '';
+        html += \`<div class="systems-section">
+          <div class="systems-section-title"><span class="systems-section-icon">📄</span> Context Included</div>
+          <div class="systems-counters">
+            <div class="counter-box"><div class="counter-label">Files</div><div class="counter-value">\${vm.contextIncluded.retrievedFiles.length}</div></div>
+            <div class="counter-box"><div class="counter-label">Lines</div><div class="counter-value">\${vm.contextIncluded.totalLines}</div></div>
+          </div>
+          \${tokenDisplay ? \`<div class="systems-row" style="margin-top: 8px;"><span class="systems-label">Token Estimate</span><span class="systems-value">\${tokenDisplay}</span></div>\` : ''}
+          \${topFiles.length > 0 ? \`<div class="systems-file-list" style="margin-top: 8px;">\${topFiles.map(f => \`<div class="systems-file-item"><span class="systems-file-path">\${escapeHtml(f.path)}</span><span class="systems-file-lines">\${f.lines} lines</span></div>\`).join('')}</div>\` : ''}
+          \${hasMoreFiles ? \`<button class="systems-show-all" onclick="alert('Full file list: ' + JSON.stringify(\${JSON.stringify(vm.contextIncluded.retrievedFiles.map(f => f.path))}))">Show all \${vm.contextIncluded.retrievedFiles.length} files</button>\` : ''}
+        </div>\`;
+        
+        // 5. CHANGES SECTION
+        html += \`<div class="systems-section">
+          <div class="systems-section-title"><span class="systems-section-icon">✏️</span> Changes</div>
+          <div class="systems-counters">
+            <div class="counter-box"><div class="counter-label">Files Changed</div><div class="counter-value">\${vm.changes.filesChangedTotal.length}</div></div>
+            <div class="counter-box"><div class="counter-label">Checkpoints</div><div class="counter-value">\${vm.changes.checkpointsCreated}</div></div>
+          </div>
+          \${vm.changes.lastDiffApplied ? \`<div class="systems-row" style="margin-top: 8px;"><span class="systems-label">Last Diff</span><span class="systems-value success">Applied (\${vm.changes.lastDiffApplied.files.length} files)</span></div>\` : ''}
+          \${vm.changes.lastDiffProposed && !vm.changes.lastDiffApplied ? \`<div class="systems-row" style="margin-top: 8px;"><span class="systems-label">Pending Diff</span><span class="systems-value warning">Proposed (\${vm.changes.lastDiffProposed.files.length} files)</span></div>\` : ''}
+        </div>\`;
+        
+        // 6. TESTS & REPAIR SECTION
+        html += \`<div class="systems-section">
+          <div class="systems-section-title"><span class="systems-section-icon">🧪</span> Tests & Repair</div>
+          <div class="systems-counters">
+            <div class="counter-box"><div class="counter-label">Tests Passed</div><div class="counter-value \${vm.testsAndRepair.testsPassed > 0 ? 'success' : ''}">\${vm.testsAndRepair.testsPassed}</div></div>
+            <div class="counter-box"><div class="counter-label">Tests Failed</div><div class="counter-value \${vm.testsAndRepair.testsFailed > 0 ? 'error' : ''}">\${vm.testsAndRepair.testsFailed}</div></div>
+          </div>
+          <div class="systems-row" style="margin-top: 8px;"><span class="systems-label">Repair Attempts</span><span class="systems-value">\${vm.testsAndRepair.repairAttempts.used} / \${vm.testsAndRepair.repairAttempts.max}</span></div>
+          \${vm.testsAndRepair.repairAttempts.remaining === 0 ? \`<div class="systems-row"><span class="systems-label">Status</span><span class="systems-value error">No repairs remaining</span></div>\` : ''}
+        </div>\`;
+        
+        // 7. TOOL ACTIVITY SECTION
+        const toolNames = Object.keys(vm.toolActivity.counts);
+        html += \`<div class="systems-section">
+          <div class="systems-section-title"><span class="systems-section-icon">🔧</span> Tool Activity</div>
+          <div class="systems-row"><span class="systems-label">Total Calls</span><span class="systems-value">\${vm.toolActivity.totalCalls}</span></div>
+          \${toolNames.length > 0 ? \`<div class="systems-tool-grid" style="margin-top: 8px;">\${toolNames.map(t => \`<div class="systems-tool-item"><div class="systems-tool-name">\${escapeHtml(t)}</div><div class="systems-tool-count">\${vm.toolActivity.counts[t]}</div></div>\`).join('')}</div>\` : ''}
+          \${vm.toolActivity.lastToolCall ? \`<div class="systems-row" style="margin-top: 8px;"><span class="systems-label">Last Tool</span><span class="systems-value">\${escapeHtml(vm.toolActivity.lastToolCall.tool)}</span></div>\` : ''}
+        </div>\`;
+        
+        // 8. TIMEOUTS SECTION
+        html += \`<div class="systems-section">
+          <div class="systems-section-title"><span class="systems-section-icon">⏱️</span> Timeouts</div>
+          <div class="systems-row"><span class="systems-label">Stage Timeout</span><span class="systems-value">\${Math.round(vm.timeouts.stageTimeoutMs / 1000)}s</span></div>
+          <div class="systems-row"><span class="systems-label">Timeout Count</span><span class="systems-value \${vm.timeouts.timeoutCount > 0 ? 'warning' : ''}">\${vm.timeouts.timeoutCount}</span></div>
+          \${vm.timeouts.lastTimeout ? \`<div class="systems-row"><span class="systems-label">Last Timeout</span><span class="systems-value warning">\${escapeHtml(vm.timeouts.lastTimeout.stage)}</span></div>\` : ''}
+        </div>\`;
+        
+        container.innerHTML = html;
+      }
+
+      // Legacy function for backward compatibility
+      function renderSystemsCounters() {
+        renderSystemsTab();
+      }
+
+      // ===== STEP 30: LOGS TAB - RAW DEBUG SURFACE =====
+      // Render Logs Tab with filters, search, expandable rows, evidence_ids
       function renderLogs() {
+        const logsStats = document.getElementById('logsStats');
+        const typeFilter = document.getElementById('logsTypeFilter');
+        
         if (state.events.length === 0) {
           eventLogList.innerHTML = '<div style="text-align: center; color: var(--vscode-descriptionForeground); padding: 20px;">No events yet.</div>';
+          if (logsStats) logsStats.textContent = '0 events';
           return;
         }
 
-        // Group consecutive stream_delta events
-        const groupedEvents = [];
-        let streamGroup = null;
-        
-        for (const event of state.events) {
-          if (event.type === 'stream_delta' || event.type === 'stream_complete') {
-            if (!streamGroup) {
-              streamGroup = { 
-                type: 'stream_group', 
-                count: 1, 
-                firstEvent: event,
-                lastEvent: event 
-              };
-            } else {
-              streamGroup.count++;
-              streamGroup.lastEvent = event;
-            }
-          } else {
-            // Push accumulated stream group if exists
-            if (streamGroup) {
-              groupedEvents.push(streamGroup);
-              streamGroup = null;
-            }
-            // Push regular event
-            groupedEvents.push(event);
-          }
-        }
-        // Don't forget last stream group
-        if (streamGroup) {
-          groupedEvents.push(streamGroup);
+        // Populate type filter dynamically from events
+        const eventTypes = [...new Set(state.events.map(e => e.type))].sort();
+        if (typeFilter && typeFilter.options.length <= 1) {
+          eventTypes.forEach(t => {
+            const opt = document.createElement('option');
+            opt.value = t;
+            opt.textContent = t;
+            typeFilter.appendChild(opt);
+          });
         }
 
-        // Render grouped events
-        eventLogList.innerHTML = groupedEvents.map((item, idx) => {
+        // Apply filters
+        let filtered = state.events.filter(e => {
+          const f = state.logsFilter;
+          if (f.eventType !== 'all' && e.type !== f.eventType) return false;
+          if (f.stage !== 'all' && e.stage !== f.stage) return false;
+          if (f.mode !== 'all' && e.mode !== f.mode) return false;
+          if (f.search) {
+            const q = f.search.toLowerCase();
+            const typeMatch = e.type.toLowerCase().includes(q);
+            const payloadMatch = JSON.stringify(e.payload).toLowerCase().includes(q);
+            if (!typeMatch && !payloadMatch) return false;
+          }
+          return true;
+        });
+
+        // Group consecutive stream_delta events (UI-only grouping)
+        const grouped = [];
+        let streamGroup = null;
+        let groupIndex = 0;
+        
+        for (const event of filtered) {
+          if (event.type === 'stream_delta' || event.type === 'stream_complete') {
+            if (!streamGroup) {
+              streamGroup = { type: 'stream_group', events: [event], groupIndex: groupIndex++ };
+            } else {
+              streamGroup.events.push(event);
+            }
+          } else {
+            if (streamGroup) { grouped.push(streamGroup); streamGroup = null; }
+            grouped.push({ ...event, groupIndex: groupIndex++ });
+          }
+        }
+        if (streamGroup) grouped.push(streamGroup);
+
+        // Update stats
+        if (logsStats) logsStats.textContent = \`\${filtered.length} of \${state.events.length} events\`;
+
+        // Render
+        eventLogList.innerHTML = grouped.map((item, idx) => {
           if (item.type === 'stream_group') {
+            const isExpanded = state.expandedStreamGroups.has(idx);
+            const accumulated = item.events.filter(e => e.type === 'stream_delta').map(e => e.payload.delta || '').join('');
             return \`
-              <div class="event-log-item collapsed-group" data-event-idx="\${idx}">
-                <div class="event-log-header">
-                  <span class="event-log-type">stream_delta × \${item.count}</span>
-                  <span class="event-log-timestamp">\${formatTimestamp(item.firstEvent.timestamp)}</span>
+              <div class="event-log-item stream-group \${isExpanded ? 'expanded' : ''}" data-group-idx="\${idx}" onclick="toggleStreamGroup(\${idx})">
+                <div class="log-row-header">
+                  <span class="log-expand-icon">\${isExpanded ? '▼' : '▶'}</span>
+                  <span class="event-log-type">stream_delta</span>
+                  <span class="stream-group-badge">×\${item.events.length}</span>
+                  <div class="event-log-meta"></div>
+                  <span class="event-log-timestamp">\${formatTime(item.events[0].timestamp)}</span>
                 </div>
-                <div class="event-log-summary" style="color: var(--vscode-descriptionForeground); font-style: italic;">
-                  Streaming chunks (collapsed for readability)
+                <div class="log-payload-container" style="display:\${isExpanded ? 'block' : 'none'};">
+                  <div class="stream-group-content">\${escapeHtml(accumulated)}</div>
+                  <button class="log-copy-btn" onclick="copyToClipboard(this, \${JSON.stringify(accumulated).replace(/"/g, '&quot;')})">📋 Copy Text</button>
                 </div>
               </div>
             \`;
           }
-          
+
           // Regular event
+          const isExpanded = state.expandedLogEvents.has(item.event_id);
+          const toolName = item.payload?.tool || item.payload?.tool_name || null;
+          const evidenceIds = item.evidence_ids || [];
+          
           return \`
-            <div class="event-log-item" data-event-idx="\${idx}">
-              <div class="event-log-header">
+            <div class="event-log-item \${isExpanded ? 'expanded' : ''}" data-event-id="\${item.event_id}" onclick="toggleLogEvent('\${item.event_id}')">
+              <div class="log-row-header">
+                <span class="log-expand-icon">\${isExpanded ? '▼' : '▶'}</span>
                 <span class="event-log-type">\${item.type}</span>
-                <span class="event-log-timestamp">\${formatTimestamp(item.timestamp)}</span>
+                <div class="event-log-meta">
+                  <span class="log-badge mode">\${item.mode}</span>
+                  <span class="log-badge stage">\${item.stage}</span>
+                  \${toolName ? \`<span class="log-badge tool">\${toolName}</span>\` : ''}
+                </div>
+                <span class="event-log-timestamp">\${formatTime(item.timestamp)}</span>
               </div>
-              <div class="event-log-summary">
-                Mode: \${item.mode} | Stage: \${item.stage} | ID: \${item.event_id.substring(0, 8)}
+              \${evidenceIds.length > 0 ? \`
+                <div class="log-evidence-ids">
+                  \${evidenceIds.map(id => \`<span class="evidence-token" onclick="event.stopPropagation(); copyEvidenceId('\${id}', this)" title="Click to copy"><span class="evidence-token-icon">📎</span>\${id.substring(0, 10)}...</span>\`).join('')}
+                </div>
+              \` : ''}
+              <div class="log-payload-container" style="display:\${isExpanded ? 'block' : 'none'};">
+                <pre class="log-payload-pre">\${escapeHtml(JSON.stringify(item, null, 2))}</pre>
+                <button class="log-copy-btn" onclick="event.stopPropagation(); copyEventJson('\${item.event_id}')">📋 Copy JSON</button>
               </div>
             </div>
           \`;
         }).join('');
-
-        // Add click handlers
-        document.querySelectorAll('.event-log-item').forEach(item => {
-          item.addEventListener('click', () => {
-            document.querySelectorAll('.event-log-item').forEach(i => i.classList.remove('selected'));
-            item.classList.add('selected');
-          });
-        });
       }
+
+      // Toggle log event expansion
+      window.toggleLogEvent = function(eventId) {
+        if (state.expandedLogEvents.has(eventId)) {
+          state.expandedLogEvents.delete(eventId);
+        } else {
+          state.expandedLogEvents.add(eventId);
+        }
+        renderLogs();
+      };
+
+      // Toggle stream group expansion
+      window.toggleStreamGroup = function(groupIdx) {
+        if (state.expandedStreamGroups.has(groupIdx)) {
+          state.expandedStreamGroups.delete(groupIdx);
+        } else {
+          state.expandedStreamGroups.add(groupIdx);
+        }
+        renderLogs();
+      };
+
+      // Copy evidence ID to clipboard
+      window.copyEvidenceId = function(id, el) {
+        navigator.clipboard.writeText(id).then(() => {
+          el.classList.add('evidence-token-copied');
+          setTimeout(() => el.classList.remove('evidence-token-copied'), 1000);
+        });
+      };
+
+      // Copy event JSON to clipboard
+      window.copyEventJson = function(eventId) {
+        const event = state.events.find(e => e.event_id === eventId);
+        if (event) {
+          navigator.clipboard.writeText(JSON.stringify(event, null, 2));
+        }
+      };
+
+      // Copy text to clipboard
+      window.copyToClipboard = function(btn, text) {
+        navigator.clipboard.writeText(text).then(() => {
+          const orig = btn.textContent;
+          btn.textContent = '✓ Copied!';
+          setTimeout(() => btn.textContent = orig, 1000);
+        });
+      };
+
+      // Setup logs filter listeners
+      function setupLogsFilters() {
+        const searchInput = document.getElementById('logsSearchInput');
+        const typeFilter = document.getElementById('logsTypeFilter');
+        const stageFilter = document.getElementById('logsStageFilter');
+        const modeFilter = document.getElementById('logsModeFilter');
+        
+        if (searchInput) {
+          searchInput.addEventListener('input', (e) => {
+            state.logsFilter.search = e.target.value;
+            renderLogs();
+          });
+        }
+        if (typeFilter) {
+          typeFilter.addEventListener('change', (e) => {
+            state.logsFilter.eventType = e.target.value;
+            renderLogs();
+          });
+        }
+        if (stageFilter) {
+          stageFilter.addEventListener('change', (e) => {
+            state.logsFilter.stage = e.target.value;
+            renderLogs();
+          });
+        }
+        if (modeFilter) {
+          modeFilter.addEventListener('change', (e) => {
+            state.logsFilter.mode = e.target.value;
+            renderLogs();
+          });
+        }
+      }
+      
+      // Call setup after DOM ready
+      setTimeout(setupLogsFilters, 100);
 
       // Add demo event
       function addDemoEvent(type, payload = {}) {
@@ -3019,6 +3890,15 @@ export function getWebviewContent(): string {
       // Handle Model Change
       modelSelect.addEventListener('change', () => {
         state.selectedModel = modelSelect.value;
+        // Update model hint text
+        const modelHint = document.getElementById('modelHint');
+        if (modelHint) {
+          const hints = {
+            'claude-3-haiku': 'Fast / lightweight',
+            'claude-sonnet-4-5': 'Best for building features / multi-file changes'
+          };
+          modelHint.textContent = hints[modelSelect.value] || '';
+        }
       });
 
       // ===== MESSAGE HANDLERS FROM BACKEND =====
@@ -3029,9 +3909,48 @@ export function getWebviewContent(): string {
           
           switch (message.type) {
             case 'ordinex:eventsUpdate':
+              console.log('');
+              console.log('[EVENTS] ╔════════════════════════════════════════╗');
+              console.log('[EVENTS] ║  📨 EVENTS UPDATE FROM BACKEND        ║');
+              console.log('[EVENTS] ╚════════════════════════════════════════╝');
+              
               // Backend sent updated events - replace our state
               if (message.events) {
+                console.log('[EVENTS] Received', message.events.length, 'events');
+                console.log('[EVENTS] Previous events count:', state.events.length);
+                
+                // Log last 3 events for debugging
+                const lastThree = message.events.slice(-3);
+                console.log('[EVENTS] Last 3 events:');
+                lastThree.forEach((e, idx) => {
+                  console.log(\`[EVENTS]   \${idx + 1}. \${e.type}\`, e.payload?.mission_id ? \`(mission: \${e.payload.mission_id.substring(0, 8)}...)\` : '');
+                });
+                
                 state.events = message.events;
+                console.log('[EVENTS] ✓ Events state updated');
+                
+                // CRITICAL: Update Mission Control Bar BEFORE clearing optimistic state
+                // This ensures the UI reflects the running state from actual events
+                console.log('[EVENTS] 🔄 Calling updateMissionControlBar()...');
+                updateMissionControlBar();
+                console.log('[EVENTS] ✓ updateMissionControlBar() completed');
+                
+                // Then clear optimistic mission start if we received actual mission_started event
+                // Do this AFTER UI update so we don't lose the running indicator
+                if (state.missionStartPending) {
+                  console.log('[EVENTS] Checking if should clear optimistic state...');
+                  console.log('[EVENTS] Looking for mission_started with ID:', state.missionStartPending.missionId);
+                  const actualStart = message.events.find(e => 
+                    e.type === 'mission_started' && 
+                    e.payload?.mission_id === state.missionStartPending.missionId
+                  );
+                  if (actualStart) {
+                    console.log('[EVENTS] ✓ Found actual mission_started event, clearing optimistic state');
+                    state.missionStartPending = null;
+                  } else {
+                    console.log('[EVENTS] ⚠️ No matching mission_started event found yet');
+                  }
+                }
                 
                 // Update counters from events (Systems tab)
                 state.counters = {
@@ -3072,6 +3991,15 @@ export function getWebviewContent(): string {
                 renderMission();
                 renderLogs();
                 renderSystemsCounters(); // Update Systems tab
+                
+                // AUTO-SCROLL: Scroll to bottom of content area when new events arrive
+                // This keeps the latest event visible during mission execution
+                setTimeout(() => {
+                  const contentArea = document.querySelector('.content');
+                  if (contentArea) {
+                    contentArea.scrollTop = contentArea.scrollHeight;
+                  }
+                }, 100); // Small delay to ensure rendering is complete
                 
                 // Update status based on last event
                 const lastEvent = state.events[state.events.length - 1];
@@ -3625,57 +4553,131 @@ export function getWebviewContent(): string {
       };
 
       // ===== MISSION CONTROL BAR STATE LOGIC (Compact Bottom Bar) =====
-      // Compute mission progress from events
+      // Compute mission progress from events (PHASE 1: FIXED - Uses event stream reduction)
       function getMissionProgress(events) {
+        console.log('[getMissionProgress] Called with', events.length, 'events');
+        
+        // Edge case: no events
+        if (!events || events.length === 0) {
+          console.log('[getMissionProgress] ❌ No events, returning null');
+          return null;
+        }
+        
         // Find breakdown event
         const breakdownEvent = events.find(e => e.type === 'mission_breakdown_created');
         if (!breakdownEvent) {
+          console.log('[getMissionProgress] ❌ No breakdown event, returning null');
           return null; // No missions, bar hidden
         }
+        console.log('[getMissionProgress] ✓ Found breakdown event');
 
-        const missions = breakdownEvent.payload.missions || [];
+        const missions = breakdownEvent.payload?.missions || [];
         const totalMissions = missions.length;
+        console.log('[getMissionProgress] Total missions:', totalMissions);
         if (totalMissions === 0) return null;
 
-        // Find selected mission
-        const selectedEvent = events.find(e => e.type === 'mission_selected');
+        // CRITICAL FIX: Get LATEST mission_selected event by filtering then taking last
+        const selectedEvents = events.filter(e => e.type === 'mission_selected');
+        console.log('[getMissionProgress] Found', selectedEvents.length, 'mission_selected events');
+        const selectedEvent = selectedEvents[selectedEvents.length - 1]; // Last = Latest
         const selectedMissionId = selectedEvent?.payload?.mission_id;
+        console.log('[getMissionProgress] Selected mission ID:', selectedMissionId);
+        
+        // Edge case: mission ID points to non-existent mission
         const selectedMission = missions.find(m => m.missionId === selectedMissionId);
+        if (selectedMissionId && !selectedMission) {
+          console.warn('[MCB] Selected mission not found:', selectedMissionId);
+          return null; // Fail safely
+        }
 
-        // Count completed missions (those with mission_completed event)
+        // Count completed missions (reduce over events for accuracy)
         const completedMissionIds = new Set();
         events.forEach(e => {
           if (e.type === 'mission_completed') {
-            completedMissionIds.add(e.payload.mission_id);
+            const mid = e.payload?.mission_id;
+            if (mid) completedMissionIds.add(mid);
           }
         });
         const completedCount = completedMissionIds.size;
 
-        // Check if current mission is running
-        const missionStartedEvent = events.find(e => 
+        // Check if CURRENT mission is running (started AND not completed)
+        // CRITICAL FIX: Only check for missions that match the SELECTED mission
+        const isMissionCompleted = selectedMissionId && completedMissionIds.has(selectedMissionId);
+        console.log('[getMissionProgress] Is mission completed?', isMissionCompleted);
+        
+        // Check if mission started for the SELECTED mission
+        const missionStartedEvents = events.filter(e => 
           e.type === 'mission_started' && 
-          e.payload.mission_id === selectedMissionId
+          e.payload?.mission_id === selectedMissionId
         );
-        const isRunning = missionStartedEvent && !completedMissionIds.has(selectedMissionId);
+        const hasMissionStarted = missionStartedEvents.length > 0;
+        const lastMissionStarted = missionStartedEvents[missionStartedEvents.length - 1];
+        console.log('[getMissionProgress] Has mission started?', hasMissionStarted, '(', missionStartedEvents.length, 'events)');
+        
+        // OPTIMISTIC UI: Check if we have a pending mission start for this mission
+        const hasPendingStart = state.missionStartPending && 
+                               state.missionStartPending.missionId === selectedMissionId;
+        console.log('[getMissionProgress] Has pending start?', hasPendingStart);
+        
+        // Check for execution pause/block states AFTER the mission started
+        // CRITICAL FIX: Only consider pause events that came AFTER the mission started
+        let isPaused = false;
+        if (hasMissionStarted && lastMissionStarted) {
+          const startIndex = events.indexOf(lastMissionStarted);
+          const eventsAfterStart = events.slice(startIndex + 1);
+          
+          // Find if there's a pause event after start that hasn't been resumed
+          const lastPauseAfterStart = [...eventsAfterStart].reverse().find(e => 
+            e.type === 'execution_paused' || e.type === 'mission_paused'
+          );
+          
+          if (lastPauseAfterStart) {
+            const pauseIndex = events.indexOf(lastPauseAfterStart);
+            const eventsAfterPause = events.slice(pauseIndex + 1);
+            // Check if there's a resume or new mission_started after the pause
+            isPaused = !eventsAfterPause.some(e => 
+              e.type === 'execution_resumed' || e.type === 'mission_started'
+            );
+          }
+        }
+        
+        // isRunning = (started OR pending start) AND not completed AND not paused
+        const isRunning = (hasMissionStarted || hasPendingStart) && !isMissionCompleted && !isPaused;
+        console.log('[getMissionProgress] 🎯 IS RUNNING?', isRunning);
+        console.log('[getMissionProgress]   - hasMissionStarted:', hasMissionStarted);
+        console.log('[getMissionProgress]   - hasPendingStart:', hasPendingStart);
+        console.log('[getMissionProgress]   - isMissionCompleted:', isMissionCompleted);
+        console.log('[getMissionProgress]   - isPaused:', isPaused);
 
-        // Determine current mission index (1-based)
+        // Determine current mission index (1-based, handle missing selection)
         const currentMissionIndex = selectedMission 
           ? missions.findIndex(m => m.missionId === selectedMissionId) + 1
-          : completedCount + 1;
+          : Math.min(completedCount + 1, totalMissions);
 
-        return {
+        const result = {
           total: totalMissions,
           current: Math.min(currentMissionIndex, totalMissions),
           completed: completedCount,
           selectedMission: selectedMission,
           isRunning: isRunning,
+          isPaused: isPaused,
           allDone: completedCount >= totalMissions,
           taskId: events[0]?.task_id || 'unknown'
         };
+        
+        console.log('[getMissionProgress] 📦 Returning:', JSON.stringify(result, null, 2));
+        console.log('[getMissionProgress] ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+        return result;
       }
 
       // Update Mission Control Bar UI
       function updateMissionControlBar() {
+        console.log('');
+        console.log('[MCB] ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+        console.log('[MCB] 🔄 UPDATE MISSION CONTROL BAR CALLED');
+        console.log('[MCB] state.events.length:', state.events.length);
+        console.log('[MCB] state.missionStartPending:', JSON.stringify(state.missionStartPending));
+        
         const bar = document.getElementById('missionControlBar');
         const statusIcon = document.getElementById('mcbStatusIcon');
         const count = document.getElementById('mcbCount');
@@ -3683,7 +4685,9 @@ export function getWebviewContent(): string {
         const progressFill = document.getElementById('mcbProgressFill');
         const cta = document.getElementById('mcbCta');
 
+        console.log('[MCB] 📊 Calling getMissionProgress()...');
         const progress = getMissionProgress(state.events);
+        console.log('[MCB] 📊 Progress result:', JSON.stringify(progress, null, 2));
 
         if (!progress) {
           // Hide bar if no mission breakdown
@@ -3704,6 +4708,7 @@ export function getWebviewContent(): string {
         // Determine state and update accordingly
         if (progress.allDone) {
           // All missions complete
+          console.log('[MCB] State: All Done');
           bar.classList.remove('running', 'complete');
           bar.classList.add('all-done');
           statusIcon.textContent = '🎉';
@@ -3715,6 +4720,7 @@ export function getWebviewContent(): string {
           cta.disabled = true;
         } else if (progress.isRunning) {
           // Currently running a mission
+          console.log('[MCB] State: Running');
           bar.classList.remove('complete', 'all-done');
           bar.classList.add('running');
           statusIcon.textContent = '🔄';
@@ -3726,6 +4732,7 @@ export function getWebviewContent(): string {
           cta.disabled = true;
         } else if (progress.selectedMission) {
           // Mission selected, ready to start
+          console.log('[MCB] State: Ready to Start');
           bar.classList.remove('running', 'all-done');
           bar.classList.add('complete'); // "ready" state
           statusIcon.textContent = '🚀';
@@ -3739,6 +4746,7 @@ export function getWebviewContent(): string {
           cta.setAttribute('data-mission-id', progress.selectedMission.missionId);
         } else {
           // No mission selected yet
+          console.log('[MCB] State: No Selection');
           bar.classList.remove('running', 'complete', 'all-done');
           statusIcon.textContent = '🎯';
           statusIcon.classList.remove('spinning');
@@ -3796,7 +4804,21 @@ export function getWebviewContent(): string {
       };
 
       window.handleStartMission = function(taskId, missionId) {
-        console.log('Start Mission clicked', { taskId, missionId });
+        console.log('====================================');
+        console.log('[MCB] 🚀 START MISSION CLICKED');
+        console.log('[MCB] Task ID:', taskId);
+        console.log('[MCB] Mission ID:', missionId);
+        console.log('[MCB] Current state.events.length:', state.events.length);
+        console.log('====================================');
+        
+        // OPTIMISTIC UI UPDATE: Set pending state immediately
+        state.missionStartPending = { taskId, missionId };
+        console.log('[MCB] ✓ Set pending state:', JSON.stringify(state.missionStartPending));
+        
+        // Force immediate UI update
+        console.log('[MCB] 📢 Calling updateMissionControlBar()...');
+        updateMissionControlBar();
+        console.log('[MCB] ✓ updateMissionControlBar() completed');
         
         // Send message to extension
         if (typeof vscode !== 'undefined') {
@@ -3826,6 +4848,7 @@ export function getWebviewContent(): string {
             parent_event_id: null
           };
           state.events.push(event);
+          state.missionStartPending = null; // Clear in demo mode
           renderMission();
           renderLogs();
         }

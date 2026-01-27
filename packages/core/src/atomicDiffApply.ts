@@ -188,22 +188,39 @@ export class AtomicDiffApplier {
         const absolutePath = path.join(this.workspaceRoot, filePath);
         const tempPath = `${absolutePath}.ordinex_temp`;
 
-        // Read current content
+        // Check if file exists - determine create vs modify
         let originalContent: string;
+        let isCreatingFile = false;
+
         try {
+          await fs.access(absolutePath);
+          // File exists - read it
           originalContent = await fs.readFile(absolutePath, 'utf-8');
         } catch (error) {
-          return {
-            success: false,
-            applied_files: [],
-            failed_files: [{ path: filePath, error: 'File not found' }],
-            rollback_performed: false,
-            error: {
-              type: 'io_error',
-              message: `Could not read file ${filePath}`,
-              details: { file: filePath },
-            },
-          };
+          // File doesn't exist - this is a CREATE operation
+          isCreatingFile = true;
+          originalContent = ''; // Empty baseline for new files
+          
+          // Ensure parent directory exists
+          const parentDir = path.dirname(absolutePath);
+          try {
+            await fs.mkdir(parentDir, { recursive: true });
+          } catch (mkdirError) {
+            return {
+              success: false,
+              applied_files: [],
+              failed_files: [{ 
+                path: filePath, 
+                error: `Cannot create parent directory: ${mkdirError instanceof Error ? mkdirError.message : String(mkdirError)}` 
+              }],
+              rollback_performed: false,
+              error: {
+                type: 'io_error',
+                message: `Cannot create parent directory for ${filePath}`,
+                details: { file: filePath, parent_dir: parentDir },
+              },
+            };
+          }
         }
 
         // Apply hunks to produce new content
@@ -233,7 +250,7 @@ export class AtomicDiffApplier {
           tempPath,
           originalContent,
           newContent,
-          before_sha: computeBaseSha(originalContent),
+          before_sha: isCreatingFile ? 'NEW_FILE' : computeBaseSha(originalContent),
           after_sha: computeBaseSha(newContent),
           additions: fileDiff.additions,
           deletions: fileDiff.deletions,

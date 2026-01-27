@@ -82,7 +82,18 @@ export type EventType =
   | 'context_snapshot_created'
   // Step 28: Self-Correction Loop
   | 'failure_classified'
-  | 'decision_point_needed';
+  | 'decision_point_needed'
+  // Step 29: Systems Tab (Replay-safe operational truth)
+  | 'run_scope_initialized'
+  | 'repair_policy_snapshot'
+  // Step 30+: Truncation-Safe Edit Execution
+  | 'preflight_complete'
+  | 'truncation_detected'
+  | 'edit_split_triggered'
+  | 'edit_chunk_started'
+  | 'edit_chunk_completed'
+  | 'edit_chunk_failed'
+  | 'edit_step_paused';
 
 export const CANONICAL_EVENT_TYPES: readonly EventType[] = [
   'intent_received',
@@ -151,6 +162,17 @@ export const CANONICAL_EVENT_TYPES: readonly EventType[] = [
   // Step 28: Self-Correction Loop
   'failure_classified',
   'decision_point_needed',
+  // Step 29: Systems Tab (Replay-safe operational truth)
+  'run_scope_initialized',
+  'repair_policy_snapshot',
+  // Step 30+: Truncation-Safe Edit Execution
+  'preflight_complete',
+  'truncation_detected',
+  'edit_split_triggered',
+  'edit_chunk_started',
+  'edit_chunk_completed',
+  'edit_chunk_failed',
+  'edit_step_paused',
 ] as const;
 
 export type Mode = 'ANSWER' | 'PLAN' | 'MISSION';
@@ -320,3 +342,149 @@ export interface PlanMeta {
   /** LLM's confidence in plan scope accuracy */
   confidence: 'low' | 'medium' | 'high';
 }
+
+// ============================================================================
+// EVENT CONTRACT STABILIZATION - Primitive Event Types (Enterprise-Grade)
+// ============================================================================
+
+/**
+ * Stable Primitive Event Types - The ONLY types new features should use
+ * 
+ * These primitives are designed for extensibility via kind/code/details fields.
+ * Existing raw EventType values remain valid (deprecated but allowlisted).
+ * 
+ * @see eventNormalizer.ts for mapping from raw EventType to PrimitiveEventType
+ */
+export type PrimitiveEventType =
+  // Lifecycle boundaries
+  | 'run_started'
+  | 'run_completed'
+  | 'step_started'
+  | 'step_completed'
+  // Tool execution
+  | 'tool_started'
+  | 'tool_completed'
+  // Artifacts (plans, diffs, checkpoints)
+  | 'artifact_proposed'
+  | 'artifact_applied'
+  // Decision points (approvals, clarifications, scope)
+  | 'decision_point_needed'
+  | 'user_action_taken'
+  // Progress tracking (incremental only, not lifecycle)
+  | 'progress_updated'
+  // State transitions (mode, stage, pause/resume, repair loops)
+  | 'state_changed'
+  // Warnings and errors
+  | 'warning_raised'
+  | 'error_raised'
+  // Safe fallback for unknown raw types
+  | 'unknown_event';
+
+/**
+ * Scope values for normalized events
+ * Indicates at what level the event operates
+ */
+export type NormalizedScope = 'run' | 'mission' | 'step' | 'tool' | 'ui';
+
+/**
+ * Normalized event structure - READ-TIME ONLY (never stored)
+ * 
+ * This interface wraps raw events with normalized metadata for UI rendering
+ * and state derivation. The raw event is ALWAYS preserved exactly as stored.
+ * 
+ * CRITICAL CONSTRAINTS:
+ * - raw: Original event, never modified
+ * - normalized: Derived at read-time for rendering
+ * - Never write NormalizedEvent to storage
+ * - Logs/Audit must show raw events verbatim
+ */
+export interface NormalizedEvent {
+  /**
+   * Original raw event exactly as stored (untouched)
+   * This is the source of truth for replay and audit
+   */
+  raw: Event;
+
+  /**
+   * Derived normalized representation for UI/state
+   * Generated at read-time by eventNormalizer
+   */
+  normalized: {
+    /**
+     * Stable primitive type (from PrimitiveEventType union)
+     */
+    type: PrimitiveEventType;
+
+    /**
+     * Open-ended kind string for sub-categorization
+     * Examples: "plan", "diff", "truncation", "preflight", "approval"
+     * NOT validated against a strict allowlist
+     */
+    kind: string;
+
+    /**
+     * Optional code for warnings/errors
+     * Examples: "TRUNCATED_OUTPUT_RECOVERED", "PLAN_LARGE_DETECTED"
+     */
+    code?: string;
+
+    /**
+     * Scope at which this event operates
+     */
+    scope: NormalizedScope;
+
+    /**
+     * For state_changed events: previous state
+     * REQUIRED when type === 'state_changed'
+     */
+    from?: string;
+
+    /**
+     * For state_changed events: new state
+     * REQUIRED when type === 'state_changed'
+     */
+    to?: string;
+
+    /**
+     * Extracted/derived details from raw payload
+     * Structured for easier UI consumption
+     */
+    details: Record<string, unknown>;
+
+    /**
+     * Optional UI hint for card type selection
+     * Allows raw events to suggest specific card rendering
+     */
+    ui_hint?: string;
+  };
+
+  /**
+   * Version of the normalizer that produced this
+   * For backwards compatibility tracking
+   */
+  normalizer_version: string;
+}
+
+/**
+ * Current normalizer version
+ * Increment when normalization logic changes significantly
+ */
+export const NORMALIZER_VERSION = '1.0.0';
+
+/**
+ * Type guard: Check if a string is a valid PrimitiveEventType
+ */
+export function isPrimitiveEventType(type: string): type is PrimitiveEventType {
+  const primitives: PrimitiveEventType[] = [
+    'run_started', 'run_completed',
+    'step_started', 'step_completed',
+    'tool_started', 'tool_completed',
+    'artifact_proposed', 'artifact_applied',
+    'decision_point_needed', 'user_action_taken',
+    'progress_updated', 'state_changed',
+    'warning_raised', 'error_raised',
+    'unknown_event'
+  ];
+  return primitives.includes(type as PrimitiveEventType);
+}
+

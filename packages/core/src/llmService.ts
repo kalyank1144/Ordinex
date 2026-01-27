@@ -8,6 +8,7 @@
 
 import { EventBus } from './eventBus';
 import { Mode, Stage, Evidence } from './types';
+import { safeJsonParse } from './jsonRepair';
 
 export interface LLMConfig {
   apiKey: string;
@@ -34,16 +35,57 @@ export interface LLMResponse {
  * Maps user-selected model IDs to actual Anthropic model names
  */
 const MODEL_MAP: Record<string, string> = {
-  'claude-3-haiku': 'claude-3-haiku-20240307',  // Most widely available
+  'claude-3-haiku': 'claude-3-haiku-20240307',  // Fast / lightweight
+  'claude-sonnet-4-5': 'claude-sonnet-4-20250514',  // Best for building features / multi-file changes
   'claude-3-sonnet': 'claude-3-sonnet-20240229',
   'claude-3-opus': 'claude-3-opus-20240229',
-  'sonnet-4.5': 'claude-3-haiku-20240307',  // Fallback to Haiku
-  'opus-4.5': 'claude-3-haiku-20240307',
-  'gpt-5.2': 'claude-3-haiku-20240307',
-  'gemini-3': 'claude-3-haiku-20240307',
+  'sonnet-4.5': 'claude-sonnet-4-20250514',  // Alias for claude-sonnet-4-5
+  'opus-4.5': 'claude-3-haiku-20240307',  // Fallback to Haiku
+  'gpt-5.2': 'claude-3-haiku-20240307',  // Fallback to Haiku
+  'gemini-3': 'claude-3-haiku-20240307',  // Fallback to Haiku
 };
 
 const DEFAULT_MODEL = 'claude-3-haiku-20240307';
+
+/**
+ * LLM Error types for provider integration
+ */
+export type LLMErrorType = 
+  | 'model_not_available'
+  | 'unauthorized'
+  | 'rate_limit'
+  | 'invalid_request'
+  | 'server_error'
+  | 'timeout'
+  | 'unknown';
+
+/**
+ * Map Anthropic API error codes to LLMErrorType
+ */
+function mapApiErrorToType(error: Error): LLMErrorType {
+  const message = error.message.toLowerCase();
+  
+  if (message.includes('model') && (message.includes('not found') || message.includes('not available') || message.includes('does not exist'))) {
+    return 'model_not_available';
+  }
+  if (message.includes('unauthorized') || message.includes('invalid api key') || message.includes('authentication')) {
+    return 'unauthorized';
+  }
+  if (message.includes('rate limit') || message.includes('too many requests') || message.includes('quota')) {
+    return 'rate_limit';
+  }
+  if (message.includes('invalid') || message.includes('bad request') || message.includes('malformed')) {
+    return 'invalid_request';
+  }
+  if (message.includes('timeout') || message.includes('timed out')) {
+    return 'timeout';
+  }
+  if (message.includes('server') || message.includes('internal') || message.includes('503') || message.includes('500')) {
+    return 'server_error';
+  }
+  
+  return 'unknown';
+}
 
 /**
  * LLM Service for ANSWER mode
@@ -708,36 +750,26 @@ Step to implement: ${stepText}`;
 
   /**
    * Extract patches from LLM response with robust JSON extraction
-   * Handles markdown code blocks, leading/trailing whitespace, etc.
+   * Uses safeJsonParse for handling malformed LLM JSON output
    */
   private extractPatchesFromResponse(content: string): any[] {
-    // Remove markdown code block formatting if present
-    let cleanedContent = content.trim();
+    // Use robust JSON repair utility
+    const parseResult = safeJsonParse(content);
     
-    // Check for markdown JSON code blocks
-    const jsonBlockMatch = cleanedContent.match(/```json\s*([\s\S]*?)\s*```/);
-    if (jsonBlockMatch) {
-      cleanedContent = jsonBlockMatch[1].trim();
-    } else {
-      // Check for generic code blocks
-      const codeBlockMatch = cleanedContent.match(/```\s*([\s\S]*?)\s*```/);
-      if (codeBlockMatch) {
-        cleanedContent = codeBlockMatch[1].trim();
-      }
+    if (!parseResult.success || !parseResult.data) {
+      console.error('[LLMService] JSON parse failed:', parseResult.error);
+      console.error('[LLMService] Repairs attempted:', parseResult.repairs);
+      throw new Error(parseResult.error || 'Failed to parse JSON');
     }
-
-    // Try to extract JSON object if there's surrounding text
-    const jsonMatch = cleanedContent.match(/\{[\s\S]*\}/);
-    if (jsonMatch) {
-      cleanedContent = jsonMatch[0];
+    
+    // Log successful repairs for debugging
+    if (parseResult.repairs && parseResult.repairs.length > 0) {
+      console.log('[LLMService] JSON repairs applied:', parseResult.repairs);
     }
-
-    // Parse JSON
-    const parsed = JSON.parse(cleanedContent);
 
     // Extract patches array
-    if (parsed.patches && Array.isArray(parsed.patches)) {
-      return parsed.patches;
+    if (parseResult.data.patches && Array.isArray(parseResult.data.patches)) {
+      return parseResult.data.patches;
     }
 
     throw new Error('No patches array found in response');

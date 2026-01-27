@@ -12,6 +12,7 @@ import { FileContextEntry } from './excerptSelector';
 import { validateDiff, ParsedDiff } from './unifiedDiffParser';
 import { LLMConfig } from './llmService';
 import { randomUUID } from 'crypto';
+import { safeJsonParse } from './jsonRepair';
 
 /**
  * LLM Edit Step Input (as per spec)
@@ -73,15 +74,17 @@ export interface LLMEditStepResult {
 
 /**
  * Model fallback map
+ * Maps user-selected model IDs to actual Anthropic model names
  */
 const MODEL_MAP: Record<string, string> = {
-  'claude-3-haiku': 'claude-3-haiku-20240307',
+  'claude-3-haiku': 'claude-3-haiku-20240307',  // Fast / lightweight
+  'claude-sonnet-4-5': 'claude-sonnet-4-20250514',  // Best for building features / multi-file changes
   'claude-3-sonnet': 'claude-3-sonnet-20240229',
   'claude-3-opus': 'claude-3-opus-20240229',
-  'sonnet-4.5': 'claude-3-haiku-20240307',
-  'opus-4.5': 'claude-3-haiku-20240307',
-  'gpt-5.2': 'claude-3-haiku-20240307',
-  'gemini-3': 'claude-3-haiku-20240307',
+  'sonnet-4.5': 'claude-sonnet-4-20250514',  // Alias for claude-sonnet-4-5
+  'opus-4.5': 'claude-3-haiku-20240307',  // Fallback to Haiku
+  'gpt-5.2': 'claude-3-haiku-20240307',  // Fallback to Haiku
+  'gemini-3': 'claude-3-haiku-20240307',  // Fallback to Haiku
 };
 
 const DEFAULT_MODEL = 'claude-3-haiku-20240307';
@@ -140,13 +143,14 @@ export class LLMEditTool {
       // Build user prompt with file context
       const userPrompt = this.buildUserPrompt(input);
       
-      // Call LLM
+      // Call LLM with higher token limit for edit operations
+      // Edit responses can be very long (full file content)
       const llmResponse = await this.callLLM(
         systemPrompt,
         userPrompt,
         config.apiKey,
         actualModel,
-        config.maxTokens || 8192
+        config.maxTokens || 16384  // Increased from 8192 to handle large file outputs
       );
 
       const duration_ms = Date.now() - startTime;
@@ -488,34 +492,74 @@ Generate the unified diff to implement this step. Output ONLY valid JSON.`;
 
   /**
    * Parse LLM output into structured format
+   * Uses robust JSON repair to handle common LLM formatting issues
    */
   private parseOutput(response: string): { success: boolean; output?: LLMEditStepOutput; error?: LLMEditStepResult['error'] } {
-    try {
-      // Try to extract JSON from response
-      let jsonStr = response.trim();
+    // ENHANCED LOGGING for debugging JSON parse issues
+    console.log('[llmEditTool] ========== RAW LLM RESPONSE ==========');
+    console.log('[llmEditTool] Response length:', response.length);
+    console.log('[llmEditTool] First 500 chars:', response.substring(0, 500));
+    console.log('[llmEditTool] Last 200 chars:', response.substring(Math.max(0, response.length - 200)));
+    
+    // Check if response looks like JSON
+    const trimmed = response.trim();
+    const startsWithJson = trimmed.startsWith('{') || trimmed.startsWith('[');
+    console.log('[llmEditTool] Starts with JSON:', startsWithJson);
+    console.log('[llmEditTool] First char:', JSON.stringify(trimmed.charAt(0)));
+    
+    // Use robust JSON repair utility
+    const parseResult = safeJsonParse(response);
+    
+    if (!parseResult.success || !parseResult.data) {
+      console.error('[llmEditTool] ========== JSON PARSE FAILED ==========');
+      console.error('[llmEditTool] Error:', parseResult.error);
+      console.error('[llmEditTool] Repairs attempted:', parseResult.repairs);
+      console.error('[llmEditTool] Full response (first 2000 chars):', response.substring(0, 2000));
       
-      // Remove markdown code blocks if present
-      const jsonBlockMatch = jsonStr.match(/```json\s*([\s\S]*?)\s*```/);
-      if (jsonBlockMatch) {
-        jsonStr = jsonBlockMatch[1].trim();
-      } else {
-        const codeBlockMatch = jsonStr.match(/```\s*([\s\S]*?)\s*```/);
-        if (codeBlockMatch) {
-          jsonStr = codeBlockMatch[1].trim();
+      // Try to identify the exact issue
+      try {
+        JSON.parse(response);
+      } catch (e) {
+        const err = e as Error;
+        console.error('[llmEditTool] Native JSON.parse error:', err.message);
+        
+        // Extract position from error
+        const posMatch = err.message.match(/position (\d+)/);
+        if (posMatch) {
+          const pos = parseInt(posMatch[1], 10);
+          const contextStart = Math.max(0, pos - 50);
+          const contextEnd = Math.min(response.length, pos + 50);
+          console.error(`[llmEditTool] Context around position ${pos}:`);
+          console.error(`[llmEditTool] Before: "${response.substring(contextStart, pos)}"`);
+          console.error(`[llmEditTool] AT: "${response.charAt(pos)}" (charCode: ${response.charCodeAt(pos)})`);
+          console.error(`[llmEditTool] After: "${response.substring(pos + 1, contextEnd)}"`);
         }
       }
+      
+      return {
+        success: false,
+        error: {
+          type: 'parse_error',
+          message: parseResult.error || 'Failed to parse JSON',
+          details: { 
+            raw_response: response.substring(0, 500),
+            repairs_attempted: parseResult.repairs 
+          },
+        },
+      };
+    }
+    
+    console.log('[llmEditTool] ========== JSON PARSE SUCCEEDED ==========');
+    console.log('[llmEditTool] Repairs applied:', parseResult.repairs);
 
-      // Try to extract JSON object
-      const jsonMatch = jsonStr.match(/\{[\s\S]*\}/);
-      if (jsonMatch) {
-        jsonStr = jsonMatch[0];
-      }
+    const parsed = parseResult.data;
+    
+    // Log successful repairs for debugging
+    if (parseResult.repairs && parseResult.repairs.length > 0) {
+      console.log('[llmEditTool] JSON repairs applied:', parseResult.repairs);
+    }
 
-      // FIX: Sanitize control characters in JSON string values
-      // LLMs sometimes return JSON with literal newlines/tabs inside string values
-      jsonStr = this.sanitizeJsonString(jsonStr);
-
-      const parsed = JSON.parse(jsonStr);
+    try {
 
       // Validate required fields
       const requiredFields = ['unified_diff', 'touched_files', 'confidence', 'notes', 'validation_status'];
@@ -659,7 +703,8 @@ Generate the unified diff to implement this step. Output ONLY valid JSON.`;
   }
 
   /**
-   * Call LLM API
+   * Call LLM API with retry logic for transient errors
+   * Now includes TRUNCATION DETECTION via stop_reason
    */
   private async callLLM(
     systemPrompt: string,
@@ -675,25 +720,97 @@ Generate the unified diff to implement this step. Output ONLY valid JSON.`;
       apiKey: apiKey,
     });
 
-    const response = await client.messages.create({
-      model: model,
-      max_tokens: maxTokens,
-      system: systemPrompt,
-      messages: [
-        {
-          role: 'user',
-          content: userPrompt,
-        },
-      ],
-    });
+    // Retry configuration for transient errors
+    const MAX_RETRIES = 3;
+    const BASE_DELAY_MS = 2000; // 2 seconds
 
-    // Extract text content
-    const content = response.content
-      .filter((block: any) => block.type === 'text')
-      .map((block: any) => block.text)
-      .join('');
+    for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
+      try {
+        console.log(`[llmEditTool] API call attempt ${attempt}/${MAX_RETRIES}...`);
+        
+        const response = await client.messages.create({
+          model: model,
+          max_tokens: maxTokens,
+          system: systemPrompt,
+          messages: [
+            {
+              role: 'user',
+              content: userPrompt,
+            },
+          ],
+        });
 
-    return content;
+        // Extract text content
+        const content = response.content
+          .filter((block: any) => block.type === 'text')
+          .map((block: any) => block.text)
+          .join('');
+
+        // CRITICAL: Check stop_reason for truncation detection
+        const stopReason = response.stop_reason;
+        console.log(`[llmEditTool] API call succeeded on attempt ${attempt}, stop_reason: ${stopReason}`);
+
+        // If output was truncated due to max_tokens, throw a clear error
+        if (stopReason === 'max_tokens') {
+          console.error('[llmEditTool] ========== OUTPUT TRUNCATED ==========');
+          console.error(`[llmEditTool] Response was truncated at ${content.length} chars`);
+          console.error('[llmEditTool] This step needs to be split into smaller tasks');
+          throw new Error(
+            `LLM output was truncated (stop_reason: max_tokens). ` +
+            `The step "${this.taskId}" is too complex for a single API call. ` +
+            `Please break this step into smaller sub-steps, or create fewer files per step.`
+          );
+        }
+
+        return content;
+
+      } catch (error: any) {
+        // Check for overloaded/rate limit errors that are retryable
+        const errorMessage = error?.message || String(error);
+        const statusCode = error?.status || error?.statusCode;
+        const errorType = error?.error?.type || '';
+        
+        const isOverloaded = statusCode === 529 || 
+                            errorType === 'overloaded_error' || 
+                            errorMessage.includes('overloaded') ||
+                            errorMessage.includes('Overloaded');
+        
+        const isRateLimited = statusCode === 429 || 
+                             errorType === 'rate_limit_error' ||
+                             errorMessage.includes('rate limit');
+
+        const isRetryable = isOverloaded || isRateLimited;
+
+        console.error(`[llmEditTool] API call failed (attempt ${attempt}/${MAX_RETRIES}):`, {
+          statusCode,
+          errorType,
+          message: errorMessage.substring(0, 200),
+          isOverloaded,
+          isRateLimited,
+          isRetryable,
+        });
+
+        if (isRetryable && attempt < MAX_RETRIES) {
+          // Exponential backoff with jitter
+          const delay = BASE_DELAY_MS * Math.pow(2, attempt - 1) + Math.random() * 1000;
+          console.log(`[llmEditTool] Retrying in ${Math.round(delay)}ms...`);
+          await new Promise(resolve => setTimeout(resolve, delay));
+          continue;
+        }
+
+        // Non-retryable error or exhausted retries
+        if (isOverloaded) {
+          throw new Error(`Claude API is temporarily overloaded (HTTP 529). Please try again in a few minutes.`);
+        } else if (isRateLimited) {
+          throw new Error(`Claude API rate limit exceeded. Please try again later.`);
+        } else {
+          throw error; // Re-throw original error
+        }
+      }
+    }
+
+    // Should not reach here, but just in case
+    throw new Error('LLM API call failed after all retries');
   }
 
   /**
@@ -783,6 +900,93 @@ Generate the unified diff to implement this step. Output ONLY valid JSON.`;
       }
     }
 
+    return result;
+  }
+
+  /**
+   * Repair unterminated strings in JSON
+   * When LLM output is truncated or malformed, strings may be left unterminated
+   * This attempts to close them by adding missing quotes before structural chars
+   */
+  private repairUnterminatedStrings(jsonStr: string): string {
+    // Count quotes to check if balanced
+    let quoteCount = 0;
+    let escapeNext = false;
+    
+    for (let i = 0; i < jsonStr.length; i++) {
+      const char = jsonStr[i];
+      
+      if (escapeNext) {
+        escapeNext = false;
+        continue;
+      }
+      
+      if (char === '\\') {
+        escapeNext = true;
+        continue;
+      }
+      
+      if (char === '"') {
+        quoteCount++;
+      }
+    }
+    
+    // If quotes are balanced (even count), no repair needed
+    if (quoteCount % 2 === 0) {
+      return jsonStr;
+    }
+    
+    // Unbalanced quotes - try to find and close unclosed string
+    console.warn('[llmEditTool] Detected unterminated string, attempting repair');
+    
+    // Find the last unclosed string and close it before the next structural char
+    let result = '';
+    let inString = false;
+    let lastStringStart = -1;
+    escapeNext = false;
+    
+    for (let i = 0; i < jsonStr.length; i++) {
+      const char = jsonStr[i];
+      
+      if (escapeNext) {
+        result += char;
+        escapeNext = false;
+        continue;
+      }
+      
+      if (char === '\\') {
+        result += char;
+        escapeNext = true;
+        continue;
+      }
+      
+      if (char === '"') {
+        inString = !inString;
+        if (inString) {
+          lastStringStart = i;
+        }
+        result += char;
+        continue;
+      }
+      
+      // If we're supposedly inside a string but hit a structural character,
+      // the string is likely unclosed - close it first
+      if (inString && (char === '}' || char === ']' || char === ',')) {
+        console.warn(`[llmEditTool] Closing unterminated string at position ${i}`);
+        result += '"' + char;
+        inString = false;
+        continue;
+      }
+      
+      result += char;
+    }
+    
+    // If still in string at end, close it
+    if (inString) {
+      result += '"';
+      console.warn('[llmEditTool] Closed unterminated string at end of JSON');
+    }
+    
     return result;
   }
 }

@@ -69,7 +69,12 @@ import {
   FailureClassification,
   SelfCorrectionPolicy,
   DecisionPoint,
-  StopReason
+  StopReason,
+  // Workspace Safety imports
+  resolveTargetWorkspace,
+  getWorkspaceCandidateInfo,
+  validateFileOperations,
+  classifyFileOperations
 } from 'core';
 
 class MissionControlViewProvider implements vscode.WebviewViewProvider {
@@ -82,6 +87,9 @@ class MissionControlViewProvider implements vscode.WebviewViewProvider {
   private isProcessing: boolean = false; // Prevent double submissions
   private activeApprovalManager: ApprovalManager | null = null; // Store active approval manager
   private activeMissionRunner: MissionRunner | null = null; // Step 27: Store active mission runner for cancellation
+  private selectedWorkspaceRoot: string | null = null; // Workspace targeting: store selected workspace for this session
+  private isMissionExecuting: boolean = false; // CRITICAL: Prevent duplicate mission starts
+  private currentExecutingMissionId: string | null = null; // Track which mission is running
 
   constructor(
     private readonly _extensionUri: vscode.Uri,
@@ -189,6 +197,11 @@ class MissionControlViewProvider implements vscode.WebviewViewProvider {
       // Step 27: Mission Runner cancellation
       case 'ordinex:cancelMission':
         await this.handleCancelMission(message, webview);
+        break;
+
+      // Start mission execution (from Mission Control Bar "Start" button)
+      case 'ordinex:startMission':
+        await this.handleStartSelectedMission(message, webview);
         break;
 
       default:
@@ -413,7 +426,7 @@ class MissionControlViewProvider implements vscode.WebviewViewProvider {
   }
 
   private async handleExecutePlan(message: any, webview: vscode.Webview) {
-    const { taskId } = message;
+    const { taskId, planOverride, missionId, emitMissionStarted } = message;
 
     if (!taskId) {
       console.error('Missing taskId in executePlan');
@@ -436,7 +449,19 @@ class MissionControlViewProvider implements vscode.WebviewViewProvider {
         throw new Error('No plan found to execute');
       }
 
-      const plan = planEvent.payload as unknown as StructuredPlan;
+      const plan = (planOverride || planEvent.payload) as unknown as StructuredPlan;
+      if (planOverride) {
+        console.log('[handleExecutePlan] Using mission-scoped plan override', {
+          missionId,
+          steps: plan.steps?.length || 0,
+          goal: plan.goal
+        });
+      } else {
+        console.log('[handleExecutePlan] Using latest stored plan event', {
+          steps: plan.steps?.length || 0,
+          goal: plan.goal
+        });
+      }
       console.log('[handleExecutePlan] Found plan with', plan.steps?.length || 0, 'steps');
 
       // Initialize required components
@@ -473,13 +498,27 @@ class MissionControlViewProvider implements vscode.WebviewViewProvider {
         // Events are already persisted by MissionExecutor's eventBus
         // We just need to send updated events to webview in real-time
         await this.sendEventsToWebview(webview, taskId);
+        
+        // CRITICAL: Handle mission completion to trigger next mission in breakdown
+        if (event.type === 'mission_completed') {
+          console.log('[handleExecutePlan] 🎉 mission_completed detected, triggering sequencing logic');
+          console.log('[handleExecutePlan] Event payload:', JSON.stringify(event.payload, null, 2));
+          
+          // CRITICAL: Clear mission executing flag so next mission can start
+          this.isMissionExecuting = false;
+          this.currentExecutingMissionId = null;
+          console.log('[handleExecutePlan] ✓ Mission execution flag cleared');
+          
+          await this.handleMissionCompletionSequencing(taskId, webview);
+        }
       });
 
       // Prepare LLM config for edit stage
+      // CRITICAL: Use 16384 tokens to avoid truncation on complex file generation
       const llmConfig = {
         apiKey,
         model: modelId,
-        maxTokens: 4096
+        maxTokens: 16384  // Increased from 4096 to handle complex files like auth.ts
       };
 
       // PHASE 6: Create workspace adapters for real file operations
@@ -505,7 +544,10 @@ class MissionControlViewProvider implements vscode.WebviewViewProvider {
       console.log('[handleExecutePlan] MissionExecutor created, starting execution...');
 
       // Execute the plan (runs asynchronously)
-      missionExecutor.executePlan(plan).catch(error => {
+      missionExecutor.executePlan(plan, {
+        missionId,
+        emitMissionStarted
+      }).catch(error => {
         console.error('[handleExecutePlan] Mission execution error:', error);
         vscode.window.showErrorMessage(`Mission execution failed: ${error}`);
       });
@@ -2342,12 +2384,24 @@ This demonstrates the diff proposal pipeline without requiring LLM integration.
       return;
     }
 
+    // CRITICAL: Check if mission is already executing (prevent duplicate starts from multiple clicks)
+    if (this.isMissionExecuting) {
+      console.log(`${LOG_PREFIX} ⚠️ Mission already executing, ignoring duplicate start request`);
+      vscode.window.showWarningMessage('Mission is already running. Please wait for it to complete.');
+      return;
+    }
+
     console.log(`${LOG_PREFIX} Starting selected mission...`);
 
     try {
       // Get events to find the selected mission
       const events = this.eventStore?.getEventsByTaskId(task_id) || [];
-      const selectionEvent = events.find((e: Event) => e.type === 'mission_selected');
+      
+      // CRITICAL FIX: Find the LAST mission_selected event, not the first
+      // After mission 1 completes, a new mission_selected is emitted for mission 2
+      const missionSelectionEvents = events.filter((e: Event) => e.type === 'mission_selected');
+      const selectionEvent = missionSelectionEvents[missionSelectionEvents.length - 1];
+      
       const breakdownEvent = events.find((e: Event) => e.type === 'mission_breakdown_created');
 
       if (!selectionEvent || !breakdownEvent) {
@@ -2367,6 +2421,7 @@ This demonstrates the diff proposal pipeline without requiring LLM integration.
       }
 
       console.log(`${LOG_PREFIX} Starting mission: ${selectedMission.title}`);
+      console.log(`${LOG_PREFIX} Selected mission ID: ${selectedMissionId}`);
 
       // Create a filtered plan with only the selected mission's steps
       const planEvents = events.filter((e: Event) => 
@@ -2400,6 +2455,12 @@ This demonstrates the diff proposal pipeline without requiring LLM integration.
         steps: missionSteps.length > 0 ? missionSteps : fullPlan.steps.slice(0, 3),
         risks: selectedMission.risk?.notes || []
       };
+      console.log(`${LOG_PREFIX} Mission plan scoped: steps=${missionPlan.steps.length}, filtered=${missionSteps.length > 0}`);
+
+      // CRITICAL: Set mission executing flag BEFORE starting execution
+      this.isMissionExecuting = true;
+      this.currentExecutingMissionId = selectedMissionId;
+      console.log(`${LOG_PREFIX} ✓ Mission execution flag set, ID: ${selectedMissionId}`);
 
       // Trigger handleExecutePlan with the mission plan
       // We'll emit the mission_started event and then call executePlan logic
@@ -2412,6 +2473,7 @@ This demonstrates the diff proposal pipeline without requiring LLM integration.
         stage: this.currentStage,
         payload: {
           mission_id: selectedMissionId,
+          goal: selectedMission.title,
           mission_title: selectedMission.title,
           steps_count: missionPlan.steps.length
         },
@@ -2419,12 +2481,170 @@ This demonstrates the diff proposal pipeline without requiring LLM integration.
         parent_event_id: null,
       });
 
+      // CRITICAL FIX: Send events to webview immediately so UI updates before execution starts
+      await this.sendEventsToWebview(webview, task_id);
+      console.log(`${LOG_PREFIX} ✓ mission_started event broadcasted to webview`);
+
       // Now call the existing execute plan logic
-      await this.handleExecutePlan({ taskId: task_id }, webview);
+      await this.handleExecutePlan(
+        { taskId: task_id, planOverride: missionPlan, missionId: selectedMissionId, emitMissionStarted: false },
+        webview
+      );
 
     } catch (error) {
       console.error('Error handling startSelectedMission:', error);
       vscode.window.showErrorMessage(`Failed to start mission: ${error}`);
+    }
+  }
+
+  /**
+   * Handle mission completion sequencing - check if there are more missions and trigger next
+   */
+  private async handleMissionCompletionSequencing(taskId: string, webview: vscode.Webview) {
+    const LOG_PREFIX = '[Ordinex:MissionSequencing]';
+    console.log(`${LOG_PREFIX} ========================================`);
+    console.log(`${LOG_PREFIX} Mission completed, checking for next mission...`);
+
+    try {
+      if (!this.eventStore) {
+        console.log(`${LOG_PREFIX} ❌ No eventStore available`);
+        return;
+      }
+
+      const events = this.eventStore.getEventsByTaskId(taskId);
+      console.log(`${LOG_PREFIX} Found ${events.length} total events for task ${taskId}`);
+      
+      // Find the breakdown event
+      const breakdownEvent = events.find((e: Event) => e.type === 'mission_breakdown_created');
+      if (!breakdownEvent) {
+        console.log(`${LOG_PREFIX} ℹ️ No breakdown found - single mission, done`);
+        return;
+      }
+
+      console.log(`${LOG_PREFIX} ✓ Found breakdown event`);
+      const missions = breakdownEvent.payload.missions as any[];
+      const totalMissions = missions.length;
+      console.log(`${LOG_PREFIX} Total missions in breakdown: ${totalMissions}`);
+
+      // Find all mission_completed events to see how many are done
+      const completedMissionEvents = events.filter((e: Event) => e.type === 'mission_completed');
+      
+      // CRITICAL FIX: Count UNIQUE completed missions (prevent duplicates from causing wrong index)
+      const completedMissionIds = new Set<string>();
+      for (const event of completedMissionEvents) {
+        const missionId = event.payload.mission_id as string || event.payload.missionId as string;
+        if (missionId) {
+          completedMissionIds.add(missionId);
+        }
+      }
+      
+      const completedCount = completedMissionIds.size;
+      console.log(`${LOG_PREFIX} ✓ Progress: ${completedCount}/${totalMissions} missions completed`);
+      console.log(`${LOG_PREFIX} ✓ Unique completed mission IDs:`, Array.from(completedMissionIds));
+
+      // CRITICAL FIX: The next mission index = number of completed missions
+      // This is reliable because missions are executed in order (0, 1, 2...)
+      let nextMissionIndex = completedCount;
+      
+      // Safety checks
+      if (nextMissionIndex < 0) {
+        console.log(`${LOG_PREFIX} ⚠️ Invalid nextMissionIndex (${nextMissionIndex}), defaulting to 0`);
+        nextMissionIndex = 0;
+      }
+      
+      if (nextMissionIndex >= totalMissions) {
+        console.log(`${LOG_PREFIX} ✓ nextMissionIndex (${nextMissionIndex}) >= totalMissions (${totalMissions})`);
+      } else {
+        console.log(`${LOG_PREFIX} ✓ Next mission index: ${nextMissionIndex} (${nextMissionIndex + 1}/${totalMissions})`);
+      }
+
+      if (nextMissionIndex >= totalMissions) {
+        // All missions complete!
+        console.log(`${LOG_PREFIX} ========================================`);
+        console.log(`${LOG_PREFIX} 🎉 All ${totalMissions} missions completed!`);
+        
+        await this.emitEvent({
+          event_id: this.generateId(),
+          task_id: taskId,
+          timestamp: new Date().toISOString(),
+          type: 'final',
+          mode: 'MISSION',
+          stage: this.currentStage,
+          payload: {
+            success: true,
+            total_missions: totalMissions,
+            completed_missions: completedCount,
+            message: `All ${totalMissions} missions completed successfully`
+          },
+          evidence_ids: [],
+          parent_event_id: null,
+        });
+
+        await this.sendEventsToWebview(webview, taskId);
+        vscode.window.showInformationMessage(`🎉 All ${totalMissions} missions completed successfully!`);
+        return;
+      }
+
+      // There's a next mission - auto-select it and pause for user to start
+      const nextMission = missions[nextMissionIndex];
+      console.log(`${LOG_PREFIX} ========================================`);
+      console.log(`${LOG_PREFIX} ➡️ Next mission available: ${nextMission.title}`);
+      console.log(`${LOG_PREFIX} Mission ${nextMissionIndex + 1}/${totalMissions}`);
+      console.log(`${LOG_PREFIX} Mission ID: ${nextMission.missionId}`);
+
+      // Emit mission_selected for the next mission
+      console.log(`${LOG_PREFIX} 📤 Emitting mission_selected event...`);
+      await this.emitEvent({
+        event_id: this.generateId(),
+        task_id: taskId,
+        timestamp: new Date().toISOString(),
+        type: 'mission_selected',
+        mode: 'MISSION',
+        stage: this.currentStage,
+        payload: {
+          mission_id: nextMission.missionId,
+          breakdown_id: breakdownEvent.payload.breakdown_id,
+          mission_index: nextMissionIndex,
+          total_missions: totalMissions,
+          auto_selected: true,
+          previous_mission_completed: true
+        },
+        evidence_ids: [],
+        parent_event_id: null,
+      });
+      console.log(`${LOG_PREFIX} ✓ mission_selected event emitted`);
+
+      console.log(`${LOG_PREFIX} 📤 Sending updated events to webview...`);
+      await this.sendEventsToWebview(webview, taskId);
+      console.log(`${LOG_PREFIX} ✓ Events sent to webview`);
+
+      // PAUSE: Let user manually start the next mission
+      // Emit execution_paused so UI shows "Start" button (not auto-start)
+      await this.emitEvent({
+        event_id: this.generateId(),
+        task_id: taskId,
+        timestamp: new Date().toISOString(),
+        type: 'execution_paused',
+        mode: 'MISSION',
+        stage: this.currentStage,
+        payload: {
+          reason: 'awaiting_mission_start',
+          description: `Mission ${nextMissionIndex + 1}/${totalMissions} selected - click Start to begin`
+        },
+        evidence_ids: [],
+        parent_event_id: null,
+      });
+
+      await this.sendEventsToWebview(webview, taskId);
+      
+      console.log(`${LOG_PREFIX} ⏸️ Paused - awaiting user to click Start for mission ${nextMissionIndex + 1}/${totalMissions}`);
+      console.log(`${LOG_PREFIX} ========================================`);
+
+    } catch (error) {
+      console.error(`${LOG_PREFIX} ========================================`);
+      console.error(`${LOG_PREFIX} ❌ Error handling mission sequencing:`, error);
+      console.error(`${LOG_PREFIX} Error stack:`, error instanceof Error ? error.stack : 'N/A');
+      console.error(`${LOG_PREFIX} ========================================`);
     }
   }
 
