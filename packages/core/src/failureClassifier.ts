@@ -1,8 +1,13 @@
 /**
- * Failure Classifier - Step 28 Self-Correction Loop
+ * Failure Classifier - Step 28 Self-Correction Loop + Step 32 Universal Error Taxonomy
  * 
  * Classifies test/build/lint failures into normalized categories
  * and generates stable signatures for loop detection.
+ * 
+ * STEP 32 EXTENSION: Universal error taxonomy for ALL executors
+ * - ErrorCategory: Unified categories across PLAN/MISSION/EDIT/TOOL/APPLY/VERIFY
+ * - ErrorDescriptor: Rich error structure with actionable info
+ * - classifyError: Universal classifier for any error type
  * 
  * NON-NEGOTIABLE RULES:
  * - Normalization MUST strip volatile data (timestamps, PIDs, memory addresses)
@@ -14,11 +19,420 @@ import * as crypto from 'crypto';
 import * as path from 'path';
 
 // ============================================================================
-// FAILURE TYPES
+// UNIVERSAL ERROR TAXONOMY (Step 32)
 // ============================================================================
 
 /**
- * Failure type classification
+ * Universal error category - used across ALL executors
+ * Maps any error to a broad category for recovery policy decisions
+ */
+export type ErrorCategory =
+  | 'USER_INPUT'           // Missing info, bad prompt, invalid request
+  | 'WORKSPACE_STATE'      // File not found, dir missing, permission denied
+  | 'LLM_TRUNCATION'       // Output cut off by max_tokens
+  | 'LLM_OUTPUT_INVALID'   // Bad JSON, missing fields, schema violation
+  | 'TOOL_FAILURE'         // Command failed, tool crashed
+  | 'APPLY_CONFLICT'       // Patch can't apply (stale context, hunk mismatch)
+  | 'VERIFY_FAILURE'       // Tests failed after apply
+  | 'NETWORK_TRANSIENT'    // 529 overloaded, timeout, connection reset
+  | 'RATE_LIMIT'           // 429 too many requests
+  | 'PERMISSION'           // EACCES, EPERM, forbidden
+  | 'INTERNAL_BUG';        // Unexpected exception, should never happen
+
+/**
+ * Suggested action for error recovery
+ * Recovery ladder: RETRY_SAME → RETRY_SPLIT → REGENERATE_PATCH → ASK_USER → PAUSE → ABORT
+ */
+export type SuggestedAction =
+  | 'RETRY_SAME'           // Safe to retry as-is (transient, no side effect)
+  | 'RETRY_SPLIT'          // Split by file and retry (truncation)
+  | 'REGENERATE_PATCH'     // Get new patch with fresh context (stale)
+  | 'ASK_USER'             // Need user input (missing info)
+  | 'PAUSE'                // Pause with decision point
+  | 'ABORT';               // Fatal, stop execution
+
+/**
+ * Stable error codes - programmatic identifiers
+ * Use these for deterministic UI rendering and event payload
+ */
+export type ErrorCode =
+  // Workspace/File errors
+  | 'FILE_NOT_FOUND'
+  | 'DIR_MISSING'
+  | 'WORKSPACE_MISMATCH'
+  | 'PERMISSION_DENIED'
+  | 'PATH_TRAVERSAL'
+  // Apply/Patch errors
+  | 'PATCH_APPLY_FAILED'
+  | 'STALE_CONTEXT'
+  | 'HUNK_MISMATCH'
+  | 'INVALID_DIFF'
+  | 'EMPTY_DIFF'
+  // LLM errors
+  | 'OUTPUT_TRUNCATED'
+  | 'JSON_PARSE_FAILED'
+  | 'SCHEMA_INVALID'
+  | 'MISSING_SENTINEL'
+  // Network/API errors
+  | 'RATE_LIMITED'
+  | 'API_OVERLOADED'
+  | 'CONNECTION_TIMEOUT'
+  | 'CONNECTION_RESET'
+  // Tool errors
+  | 'TOOL_TIMEOUT'
+  | 'TOOL_CRASHED'
+  | 'TOOL_NOT_FOUND'
+  | 'COMMAND_FAILED'
+  // Verification errors
+  | 'TEST_FAILED'
+  | 'LINT_FAILED'
+  | 'TYPECHECK_FAILED'
+  | 'BUILD_FAILED'
+  // Generic
+  | 'UNKNOWN_ERROR'
+  | 'INTERNAL_ERROR';
+
+/**
+ * Universal error descriptor - rich error structure for all executors
+ * 
+ * CRITICAL: This is the single source of truth for error information.
+ * All executors MUST use this when emitting failure events.
+ */
+export interface ErrorDescriptor {
+  /** Broad category for recovery policy */
+  category: ErrorCategory;
+  
+  /** Whether error is likely to succeed on retry without user changes */
+  retryable: boolean;
+  
+  /** Suggested recovery action */
+  suggested_action: SuggestedAction;
+  
+  /** Short, actionable message for UI (no technical jargon) */
+  user_message: string;
+  
+  /** Stable code for programmatic handling */
+  code: ErrorCode;
+  
+  /** Developer details (for Logs tab, not Mission feed) */
+  developer_details: {
+    raw_error?: string;
+    stack_preview?: string;
+    context?: Record<string, unknown>;
+  };
+}
+
+/**
+ * Context for error classification
+ */
+export interface ErrorClassificationContext {
+  /** Execution stage where error occurred */
+  stage: 'preflight' | 'tool' | 'diff_gen' | 'apply' | 'verify' | 'unknown';
+  
+  /** Whether a tool has already executed with side effects */
+  toolHadSideEffect?: boolean;
+  
+  /** Affected file path if known */
+  file?: string;
+  
+  /** Additional context */
+  extra?: Record<string, unknown>;
+}
+
+/**
+ * Universal error classifier - classifies ANY error into ErrorDescriptor
+ * 
+ * RULES:
+ * - NEVER retry after tool side effect (unless tool is idempotent)
+ * - NETWORK_TRANSIENT and RATE_LIMIT are retryable (with backoff)
+ * - LLM_TRUNCATION suggests RETRY_SPLIT
+ * - APPLY_CONFLICT suggests REGENERATE_PATCH (bounded)
+ * - WORKSPACE_STATE needs user decision
+ */
+export function classifyError(
+  error: unknown,
+  context: ErrorClassificationContext
+): ErrorDescriptor {
+  const rawError = error instanceof Error 
+    ? error.message 
+    : String(error);
+  
+  const stackPreview = error instanceof Error && error.stack
+    ? error.stack.substring(0, 500)
+    : undefined;
+
+  // Default values
+  let category: ErrorCategory = 'INTERNAL_BUG';
+  let code: ErrorCode = 'UNKNOWN_ERROR';
+  let retryable = false;
+  let suggested_action: SuggestedAction = 'PAUSE';
+  let user_message = 'An unexpected error occurred';
+
+  // ============================================================================
+  // CLASSIFICATION RULES (ordered by specificity)
+  // ============================================================================
+
+  // 1. Check for network/API errors
+  if (isNetworkError(rawError)) {
+    if (isRateLimitError(rawError)) {
+      category = 'RATE_LIMIT';
+      code = 'RATE_LIMITED';
+      retryable = !context.toolHadSideEffect;
+      suggested_action = retryable ? 'RETRY_SAME' : 'PAUSE';
+      user_message = 'API rate limit reached. Waiting to retry...';
+    } else if (isOverloadedError(rawError)) {
+      category = 'NETWORK_TRANSIENT';
+      code = 'API_OVERLOADED';
+      retryable = !context.toolHadSideEffect;
+      suggested_action = retryable ? 'RETRY_SAME' : 'PAUSE';
+      user_message = 'API temporarily overloaded. Waiting to retry...';
+    } else if (isTimeoutError(rawError)) {
+      category = 'NETWORK_TRANSIENT';
+      code = 'CONNECTION_TIMEOUT';
+      retryable = !context.toolHadSideEffect;
+      suggested_action = retryable ? 'RETRY_SAME' : 'PAUSE';
+      user_message = 'Connection timed out. Will retry...';
+    } else {
+      category = 'NETWORK_TRANSIENT';
+      code = 'CONNECTION_RESET';
+      retryable = !context.toolHadSideEffect;
+      suggested_action = retryable ? 'RETRY_SAME' : 'PAUSE';
+      user_message = 'Network error. Will retry...';
+    }
+  }
+  // 2. Check for LLM output errors
+  else if (isTruncationError(rawError)) {
+    category = 'LLM_TRUNCATION';
+    code = 'OUTPUT_TRUNCATED';
+    retryable = true;
+    suggested_action = 'RETRY_SPLIT';
+    user_message = 'Output was truncated. Splitting into smaller parts...';
+  }
+  else if (isJsonParseError(rawError)) {
+    category = 'LLM_OUTPUT_INVALID';
+    code = 'JSON_PARSE_FAILED';
+    retryable = true;
+    suggested_action = 'RETRY_SAME';
+    user_message = 'Invalid response format. Retrying...';
+  }
+  else if (isSchemaMissingError(rawError)) {
+    category = 'LLM_OUTPUT_INVALID';
+    code = 'SCHEMA_INVALID';
+    retryable = true;
+    suggested_action = 'RETRY_SAME';
+    user_message = 'Response missing required fields. Retrying...';
+  }
+  // 3. Check for workspace/file errors
+  else if (isFileNotFoundError(rawError)) {
+    category = 'WORKSPACE_STATE';
+    code = 'FILE_NOT_FOUND';
+    retryable = false;
+    suggested_action = 'ASK_USER';
+    user_message = context.file 
+      ? `File not found: ${context.file}`
+      : 'Required file not found';
+  }
+  else if (isDirMissingError(rawError)) {
+    category = 'WORKSPACE_STATE';
+    code = 'DIR_MISSING';
+    retryable = false;
+    suggested_action = 'ASK_USER';
+    user_message = 'Required directory does not exist';
+  }
+  else if (isPermissionError(rawError)) {
+    category = 'PERMISSION';
+    code = 'PERMISSION_DENIED';
+    retryable = false;
+    suggested_action = 'PAUSE';
+    user_message = context.file 
+      ? `Permission denied: ${context.file}`
+      : 'Permission denied';
+  }
+  else if (isPathTraversalError(rawError)) {
+    category = 'WORKSPACE_STATE';
+    code = 'PATH_TRAVERSAL';
+    retryable = false;
+    suggested_action = 'ABORT';
+    user_message = 'Security violation: path traversal detected';
+  }
+  // 4. Check for apply/patch errors
+  else if (isStaleContextError(rawError)) {
+    category = 'APPLY_CONFLICT';
+    code = 'STALE_CONTEXT';
+    retryable = true;
+    suggested_action = 'REGENERATE_PATCH';
+    user_message = context.file 
+      ? `File changed since edit was proposed: ${context.file}`
+      : 'File changed since edit was proposed';
+  }
+  else if (isHunkMismatchError(rawError)) {
+    category = 'APPLY_CONFLICT';
+    code = 'HUNK_MISMATCH';
+    retryable = true;
+    suggested_action = 'REGENERATE_PATCH';
+    user_message = 'Patch could not be applied. Regenerating...';
+  }
+  else if (isPatchApplyError(rawError)) {
+    category = 'APPLY_CONFLICT';
+    code = 'PATCH_APPLY_FAILED';
+    retryable = true;
+    suggested_action = 'REGENERATE_PATCH';
+    user_message = 'Failed to apply changes';
+  }
+  // 5. Check for tool errors
+  else if (isToolTimeoutError(rawError)) {
+    category = 'TOOL_FAILURE';
+    code = 'TOOL_TIMEOUT';
+    retryable = false;
+    suggested_action = 'PAUSE';
+    user_message = 'Command timed out';
+  }
+  else if (isToolCrashedError(rawError)) {
+    category = 'TOOL_FAILURE';
+    code = 'TOOL_CRASHED';
+    retryable = false;
+    suggested_action = 'PAUSE';
+    user_message = 'Command crashed unexpectedly';
+  }
+  else if (isToolNotFoundError(rawError)) {
+    category = 'TOOL_FAILURE';
+    code = 'TOOL_NOT_FOUND';
+    retryable = false;
+    suggested_action = 'PAUSE';
+    user_message = 'Required tool not found';
+  }
+  // 6. Check for test/verify errors
+  else if (isTestFailedError(rawError)) {
+    category = 'VERIFY_FAILURE';
+    code = 'TEST_FAILED';
+    retryable = false;
+    suggested_action = 'PAUSE';
+    user_message = 'Tests failed after changes';
+  }
+  // 7. Default: Internal bug
+  else {
+    category = 'INTERNAL_BUG';
+    code = 'INTERNAL_ERROR';
+    retryable = false;
+    suggested_action = 'PAUSE';
+    user_message = 'An unexpected error occurred';
+  }
+
+  // Override retryable if tool had side effect
+  if (context.toolHadSideEffect && retryable) {
+    retryable = false;
+    suggested_action = 'PAUSE';
+  }
+
+  return {
+    category,
+    retryable,
+    suggested_action,
+    user_message,
+    code,
+    developer_details: {
+      raw_error: rawError,
+      stack_preview: stackPreview,
+      context: context.extra,
+    },
+  };
+}
+
+// ============================================================================
+// ERROR DETECTION HELPERS
+// ============================================================================
+
+function isNetworkError(msg: string): boolean {
+  const patterns = [
+    /ECONNRESET/i,
+    /ECONNREFUSED/i,
+    /ETIMEDOUT/i,
+    /ENOTFOUND/i,
+    /network\s+error/i,
+    /connection\s+refused/i,
+    /connection\s+reset/i,
+    /fetch\s+failed/i,
+    /status\s+5\d\d/i,
+    /status\s+429/i,
+    /overloaded/i,
+  ];
+  return patterns.some(p => p.test(msg));
+}
+
+function isRateLimitError(msg: string): boolean {
+  return /429|rate\s*limit|too\s+many\s+requests/i.test(msg);
+}
+
+function isOverloadedError(msg: string): boolean {
+  return /529|overloaded|capacity/i.test(msg);
+}
+
+function isTimeoutError(msg: string): boolean {
+  return /timeout|ETIMEDOUT|timed?\s*out/i.test(msg);
+}
+
+function isTruncationError(msg: string): boolean {
+  return /truncat|max_tokens|stop_reason.*length|incomplete\s+output/i.test(msg);
+}
+
+function isJsonParseError(msg: string): boolean {
+  return /JSON\.parse|SyntaxError.*JSON|invalid\s+json|unexpected\s+token/i.test(msg);
+}
+
+function isSchemaMissingError(msg: string): boolean {
+  return /missing\s+(required|field)|schema|complete.*false|sentinel/i.test(msg);
+}
+
+function isFileNotFoundError(msg: string): boolean {
+  return /ENOENT|file\s+not\s+found|no\s+such\s+file/i.test(msg);
+}
+
+function isDirMissingError(msg: string): boolean {
+  return /ENOENT.*directory|directory\s+not\s+found|no\s+such\s+directory/i.test(msg);
+}
+
+function isPermissionError(msg: string): boolean {
+  return /EACCES|EPERM|permission\s+denied|access\s+denied/i.test(msg);
+}
+
+function isPathTraversalError(msg: string): boolean {
+  return /path\s+traversal|outside\s+workspace|security.*path/i.test(msg);
+}
+
+function isStaleContextError(msg: string): boolean {
+  return /stale|changed\s+since|file\s+modified|base_sha\s+mismatch/i.test(msg);
+}
+
+function isHunkMismatchError(msg: string): boolean {
+  return /hunk|context\s+mismatch|cannot\s+apply\s+hunk/i.test(msg);
+}
+
+function isPatchApplyError(msg: string): boolean {
+  return /apply.*failed|patch.*failed|failed\s+to\s+apply/i.test(msg);
+}
+
+function isToolTimeoutError(msg: string): boolean {
+  return /command.*timeout|tool.*timeout|execution.*timeout/i.test(msg);
+}
+
+function isToolCrashedError(msg: string): boolean {
+  return /command.*crash|tool.*crash|SIGKILL|SIGTERM|exit\s+code\s+[1-9]/i.test(msg);
+}
+
+function isToolNotFoundError(msg: string): boolean {
+  return /command\s+not\s+found|tool\s+not\s+found|not\s+installed/i.test(msg);
+}
+
+function isTestFailedError(msg: string): boolean {
+  return /test.*fail|spec.*fail|assertion.*fail|expect.*fail/i.test(msg);
+}
+
+// ============================================================================
+// FAILURE TYPES (Step 28 - Preserved)
+// ============================================================================
+
+/**
+ * Failure type classification (for test/build output)
  */
 export type FailureType =
   | 'TEST_ASSERTION'   // Test assertions failed (expect, assert, etc.)
@@ -30,7 +444,7 @@ export type FailureType =
   | 'UNKNOWN';         // Cannot classify
 
 /**
- * Classification result
+ * Classification result (for test/build output)
  */
 export interface FailureClassification {
   /** Category of failure */
@@ -379,7 +793,7 @@ function isCodeFixable(type: FailureType): boolean {
 }
 
 /**
- * Main classification function
+ * Main classification function for test/build output
  * 
  * Classifies raw test/build output into a structured result
  * with stable signature for deduplication.
@@ -416,6 +830,56 @@ export function classifyFailure(output: string): FailureClassification {
     isCodeFixable: isCodeFixable(type),
     fileReferences,
     failingTests,
+  };
+}
+
+// ============================================================================
+// BRIDGE: Convert FailureClassification to ErrorDescriptor
+// ============================================================================
+
+/**
+ * Convert a test/build FailureClassification to universal ErrorDescriptor
+ */
+export function failureToErrorDescriptor(
+  classification: FailureClassification,
+  context?: ErrorClassificationContext
+): ErrorDescriptor {
+  // Map FailureType to ErrorCategory
+  const categoryMap: Record<FailureType, ErrorCategory> = {
+    'TEST_ASSERTION': 'VERIFY_FAILURE',
+    'TYPECHECK': 'VERIFY_FAILURE',
+    'LINT': 'VERIFY_FAILURE',
+    'BUILD_COMPILE': 'VERIFY_FAILURE',
+    'TOOLING_ENV': 'TOOL_FAILURE',
+    'TIMEOUT': 'TOOL_FAILURE',
+    'UNKNOWN': 'INTERNAL_BUG',
+  };
+
+  // Map FailureType to ErrorCode
+  const codeMap: Record<FailureType, ErrorCode> = {
+    'TEST_ASSERTION': 'TEST_FAILED',
+    'TYPECHECK': 'TYPECHECK_FAILED',
+    'LINT': 'LINT_FAILED',
+    'BUILD_COMPILE': 'BUILD_FAILED',
+    'TOOLING_ENV': 'COMMAND_FAILED',
+    'TIMEOUT': 'TOOL_TIMEOUT',
+    'UNKNOWN': 'UNKNOWN_ERROR',
+  };
+
+  return {
+    category: categoryMap[classification.failureType],
+    retryable: false, // Test failures are not retryable without code fix
+    suggested_action: 'PAUSE',
+    user_message: classification.summary,
+    code: codeMap[classification.failureType],
+    developer_details: {
+      raw_error: classification.normalizedKey,
+      context: {
+        files: classification.fileReferences,
+        tests: classification.failingTests,
+        signature: classification.failureSignature,
+      },
+    },
   };
 }
 

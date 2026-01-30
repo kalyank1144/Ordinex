@@ -529,6 +529,66 @@ const NORMALIZATION_MAP: Partial<Record<EventType, NormalizationMapping>> = {
     scope: 'step',
     ui_hint: 'error_card'
   },
+
+  // ========== STEP 34: VERIFY + REPAIR ==========
+  
+  verify_started: {
+    type: 'state_changed',
+    kind: 'verify',
+    scope: 'step',
+    ui_hint: 'verify_card'
+  },
+  verify_completed: {
+    type: 'state_changed',
+    kind: 'verify',
+    scope: 'step',
+    ui_hint: 'verify_card'
+  },
+  verify_proposed: {
+    type: 'decision_point_needed',
+    kind: 'verify',
+    scope: 'step',
+    ui_hint: 'verify_card'
+  },
+  verify_skipped: {
+    type: 'progress_updated',
+    kind: 'verify_skipped',
+    scope: 'step',
+    ui_hint: 'verify_card'
+  },
+  command_started: {
+    type: 'tool_started',
+    kind: 'command',
+    scope: 'tool',
+    ui_hint: 'command_card'
+  },
+  command_completed: {
+    type: 'tool_completed',
+    kind: 'command',
+    scope: 'tool',
+    ui_hint: 'command_card'
+  },
+
+  // ========== STEP 34.5: Command Execution Phase ==========
+  
+  command_proposed: {
+    type: 'decision_point_needed',
+    kind: 'command_approval',
+    scope: 'tool',
+    ui_hint: 'command_proposed_card'
+  },
+  command_skipped: {
+    type: 'progress_updated',
+    kind: 'command_skipped',
+    scope: 'tool',
+    ui_hint: 'command_skipped_card'
+  },
+  command_progress: {
+    type: 'progress_updated',
+    kind: 'command_progress',
+    scope: 'tool',
+    ui_hint: 'command_progress_card'
+  },
 };
 
 // ============================================================================

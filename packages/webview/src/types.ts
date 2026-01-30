@@ -51,7 +51,7 @@ export interface ScopeExpansionRequest {
 
 export type Mode = 'ANSWER' | 'PLAN' | 'MISSION';
 
-export type Stage = 'plan' | 'retrieve' | 'edit' | 'test' | 'repair' | 'none';
+export type Stage = 'plan' | 'retrieve' | 'edit' | 'test' | 'repair' | 'command' | 'none';
 
 export type TaskStatus = 'ready' | 'running' | 'paused' | 'awaiting_approval' | 'error';
 
@@ -147,7 +147,18 @@ export type EventType =
   | 'edit_chunk_failed'
   | 'edit_step_paused'
   // Large Plan Detection
-  | 'plan_large_detected';
+  | 'plan_large_detected'
+  // Step 34: Auto-Verify + Repair
+  | 'verify_started'
+  | 'verify_completed'
+  | 'verify_proposed'
+  | 'verify_skipped'
+  | 'command_started'
+  | 'command_completed'
+  // Step 34.5: Command Execution Phase
+  | 'command_proposed'
+  | 'command_skipped'
+  | 'command_progress';
 
 export interface Event {
   event_id: string;

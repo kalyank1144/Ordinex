@@ -42,6 +42,15 @@ import {
   combinePromptWithClarification,
   PromptQualityAssessment,
   AssessmentContext,
+  // Step 34.5: Command Execution imports
+  runCommandPhase,
+  CommandPhaseContext,
+  resolveCommandPolicy,
+  CommandPolicyConfig,
+  DEFAULT_COMMAND_POLICY,
+  CommandIntentResult,
+  discoverVerifyCommands,
+  detectCommandIntent,
   // New Plan Enhancer imports
   collectLightContext,
   assessPromptClarity,
@@ -74,7 +83,15 @@ import {
   resolveTargetWorkspace,
   getWorkspaceCandidateInfo,
   validateFileOperations,
-  classifyFileOperations
+  classifyFileOperations,
+  // Step 33: Intent Analysis & Behavior Handlers
+  analyzeIntent,
+  executeBehavior,
+  detectActiveRun,
+  IntentAnalysisContext,
+  BehaviorHandlerResult,
+  processClarificationResponse,
+  processContinueRunResponse
 } from 'core';
 
 class MissionControlViewProvider implements vscode.WebviewViewProvider {
@@ -90,6 +107,8 @@ class MissionControlViewProvider implements vscode.WebviewViewProvider {
   private selectedWorkspaceRoot: string | null = null; // Workspace targeting: store selected workspace for this session
   private isMissionExecuting: boolean = false; // CRITICAL: Prevent duplicate mission starts
   private currentExecutingMissionId: string | null = null; // Track which mission is running
+  private pendingCommandContexts: Map<string, CommandPhaseContext> = new Map(); // Awaiting command approval by task
+  private activeTerminals: Map<string, vscode.Terminal> = new Map(); // Track terminals by task ID
 
   constructor(
     private readonly _extensionUri: vscode.Uri,
@@ -172,6 +191,10 @@ class MissionControlViewProvider implements vscode.WebviewViewProvider {
         await this.handleResolveApproval(message, webview);
         break;
 
+      case 'ordinex:resolveDecisionPoint':
+        await this.handleResolveDecisionPoint(message, webview);
+        break;
+
       case 'ordinex:refinePlan':
         await this.handleRefinePlan(message, webview);
         break;
@@ -210,7 +233,7 @@ class MissionControlViewProvider implements vscode.WebviewViewProvider {
   }
 
   private async handleSubmitPrompt(message: any, webview: vscode.Webview) {
-    console.log('=== handleSubmitPrompt START ===');
+    console.log('=== handleSubmitPrompt START (Step 33) ===');
     const { text, userSelectedMode, modelId } = message;
     console.log('Params:', { text, userSelectedMode, modelId });
     
@@ -234,120 +257,378 @@ class MissionControlViewProvider implements vscode.WebviewViewProvider {
     try {
       // 1. Emit intent_received event
       console.log('About to emit intent_received event...');
-      try {
-        await this.emitEvent({
-          event_id: this.generateId(),
-          task_id: taskId,
-          timestamp: new Date().toISOString(),
-          type: 'intent_received',
-          mode: userSelectedMode,
-          stage: this.currentStage,
-          payload: {
-            prompt: text,
-            model_id: modelId || 'sonnet-4.5',
-          },
-          evidence_ids: [],
-          parent_event_id: null,
-        });
-        console.log('✓ intent_received event emitted successfully');
-        
-        // Send to webview immediately so UI updates
-        await this.sendEventsToWebview(webview, taskId);
-      } catch (emitError) {
-        console.error('❌ FAILED to emit intent_received event:', emitError);
-        throw emitError;
-      }
-
-      // 2. Classify prompt to get suggested mode
-      const classification = classifyPrompt(text);
-      const requiresConfirmation = shouldRequireConfirmation(
-        userSelectedMode,
-        classification.suggestedMode,
-        classification.confidence
-      );
-
-      // 3. Emit mode_set event
-      const modeSetPayload: any = {
+      await this.emitEvent({
+        event_id: this.generateId(),
+        task_id: taskId,
+        timestamp: new Date().toISOString(),
+        type: 'intent_received',
         mode: userSelectedMode,
-        effectiveMode: userSelectedMode,
-      };
+        stage: this.currentStage,
+        payload: {
+          prompt: text,
+          model_id: modelId || 'sonnet-4.5',
+          user_selected_mode: userSelectedMode,
+        },
+        evidence_ids: [],
+        parent_event_id: null,
+      });
+      console.log('✓ intent_received event emitted');
+      await this.sendEventsToWebview(webview, taskId);
 
-      if (requiresConfirmation) {
-        modeSetPayload.suggestedMode = classification.suggestedMode;
-        modeSetPayload.suggestionReason = classification.reasoning;
-        modeSetPayload.requiresConfirmation = true;
+      // 2. STEP 33: Build intent analysis context
+      const events = this.eventStore?.getEventsByTaskId(taskId) || [];
+      const activeRun = detectActiveRun(events);
+      const analysisContext: IntentAnalysisContext = {
+        clarificationAttempts: events.filter(e => e.type === 'clarification_requested').length,
+        lastOpenEditor: vscode.window.activeTextEditor?.document.fileName,
+        activeRun: activeRun === null ? undefined : activeRun,
+        lastAppliedDiff: this.getLastAppliedDiff(events),
+      };
+      console.log('[Step33] Analysis context:', analysisContext);
+
+      // 3. STEP 33: Analyze intent (behavior-first)
+      const commandDetection = detectCommandIntent(text);
+      console.log('[Step33] Command detection:', commandDetection);
+
+      let analysis = analyzeIntent(text, analysisContext);
+
+      // If a clear command intent is detected, do not block on stale active-run state
+      if (analysis.behavior === 'CONTINUE_RUN' && commandDetection.isCommandIntent && commandDetection.confidence >= 0.75) {
+        console.log('[Step33] Overriding CONTINUE_RUN due to command intent');
+        analysis = {
+          ...analysis,
+          behavior: 'QUICK_ACTION',
+          derived_mode: 'MISSION',
+          reasoning: `Command intent override: ${commandDetection.reasoning}`,
+        };
       }
 
+      console.log('[Step33] Intent analysis:', {
+        behavior: analysis.behavior,
+        derived_mode: analysis.derived_mode,
+        confidence: analysis.confidence,
+        reasoning: analysis.reasoning
+      });
+
+      // 4. Emit mode_set with Step 33 analysis
       await this.emitEvent({
         event_id: this.generateId(),
         task_id: taskId,
         timestamp: new Date().toISOString(),
         type: 'mode_set',
-        mode: userSelectedMode,
+        mode: analysis.derived_mode,
         stage: this.currentStage,
-        payload: modeSetPayload,
+        payload: {
+          mode: analysis.derived_mode,
+          effectiveMode: analysis.derived_mode,
+          behavior: analysis.behavior,
+          user_selected_mode: userSelectedMode,
+          confidence: analysis.confidence,
+          reasoning: analysis.reasoning,
+        },
         evidence_ids: [],
         parent_event_id: null,
       });
-
-      console.log('✓ mode_set event emitted successfully');
-      console.log('Setting currentMode to:', userSelectedMode);
-      this.currentMode = userSelectedMode;
-      
-      // Send to webview immediately so UI updates
+      this.currentMode = analysis.derived_mode;
       await this.sendEventsToWebview(webview, taskId);
 
-      // 4. If confirmation required, stop here and wait
-      console.log('Checking requiresConfirmation:', requiresConfirmation);
-      if (requiresConfirmation) {
-        console.log('Confirmation required - sending events to webview and returning');
-        // Send events to webview
-        await this.sendEventsToWebview(webview, taskId);
-        console.log('Events sent, returning early');
-        return;
-      }
-
-      // 5. If no confirmation needed, handle based on mode
-      console.log('=== CHECKING MODE ===');
-      console.log('userSelectedMode:', userSelectedMode);
-      console.log('requiresConfirmation:', requiresConfirmation);
-      console.log('About to handle mode-specific logic...');
+      // 5. STEP 33: Handle behavior-specific logic
+      console.log(`[Step33] Executing behavior: ${analysis.behavior}`);
       
-      if (userSelectedMode === 'ANSWER') {
-        console.log('>>> ENTERING ANSWER MODE BRANCH <<<');
-        // ANSWER mode: Call LLM service with streaming
-        await this.handleAnswerMode(text, taskId, modelId || 'sonnet-4.5', webview);
-        console.log('>>> ANSWER MODE COMPLETED <<<');
-      } else if (userSelectedMode === 'PLAN') {
-        console.log('>>> ENTERING PLAN MODE BRANCH <<<');
-        // PLAN mode: Generate LLM-based project-aware plan
-        await this.handlePlanMode(text, taskId, modelId || 'sonnet-4.5', webview);
-        console.log('>>> PLAN MODE COMPLETED <<<');
-      } else if (userSelectedMode === 'MISSION') {
-        console.log('>>> ENTERING MISSION MODE BRANCH <<<');
-        // MISSION mode: Generate template plan (deterministic)
-        const plan = generateTemplatePlan(text, userSelectedMode);
-        
-        await this.emitEvent({
-          event_id: this.generateId(),
-          task_id: taskId,
-          timestamp: new Date().toISOString(),
-          type: 'plan_created',
-          mode: userSelectedMode,
-          stage: this.currentStage,
-          payload: plan as unknown as Record<string, unknown>,
-          evidence_ids: [],
-          parent_event_id: null,
-        });
+      switch (analysis.behavior) {
+        case 'ANSWER':
+          console.log('>>> BEHAVIOR: ANSWER <<<');
+          await this.handleAnswerMode(text, taskId, modelId || 'sonnet-4.5', webview);
+          break;
+
+        case 'PLAN':
+          console.log('>>> BEHAVIOR: PLAN <<<');
+          await this.handlePlanMode(text, taskId, modelId || 'sonnet-4.5', webview);
+          break;
+
+        case 'QUICK_ACTION':
+          console.log('>>> BEHAVIOR: QUICK_ACTION <<<');
+          
+          // STEP 34.5: Check if this is a command execution request
+          const commandIntent = detectCommandIntent(text);
+          
+          if (commandIntent.isCommandIntent) {
+            // This is a COMMAND - route to command execution phase
+            console.log('[QUICK_ACTION] Detected command intent:', commandIntent);
+            
+            try {
+              const workspaceRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+              if (!workspaceRoot) {
+                throw new Error('No workspace folder open');
+              }
+
+              if (!this.eventStore) {
+                throw new Error('EventStore not initialized');
+              }
+
+              // Resolve command policy
+              const commandPolicy = resolveCommandPolicy(
+                DEFAULT_COMMAND_POLICY,
+                {} // workspace settings - TODO: wire up from VS Code settings
+              );
+
+              // Create EventBus for command phase (it needs emit() method)
+              const commandEventBus = new EventBus(this.eventStore);
+              
+              // Subscribe to events for UI updates
+              commandEventBus.subscribe(async (event) => {
+                await this.sendEventsToWebview(webview, taskId);
+              });
+
+              // Build command phase context with all required properties
+              const evidenceStore = new InMemoryEvidenceStore();
+              
+              const commandContext: CommandPhaseContext = {
+                run_id: taskId,
+                mission_id: undefined,
+                step_id: undefined,
+                workspaceRoot,
+                eventBus: commandEventBus as any, // EventBus has emit() method that commandPhase needs
+                mode: this.currentMode,
+                previousStage: this.currentStage,
+                commandPolicy,
+                commands: commandIntent.inferredCommands || ['npm run dev'], // Use inferred commands or fallback
+                executionContext: 'user' as any, // User-initiated command execution
+                isReplayOrAudit: false,
+                writeEvidence: async (type: string, content: string, summary: string) => {
+                  const evidenceId = this.generateId();
+                  await evidenceStore.store({
+                    evidence_id: evidenceId,
+                    type: type as any,
+                    source_event_id: taskId,
+                    content_ref: content,
+                    summary,
+                    created_at: new Date().toISOString()
+                  });
+                  return evidenceId;
+                }
+              };
+
+              // Execute command phase
+              console.log('[QUICK_ACTION] Running command phase...');
+              const result = await runCommandPhase(commandContext);
+              
+              console.log('[QUICK_ACTION] Command phase completed:', result.status);
+              
+              if (result.status === 'awaiting_approval') {
+                this.pendingCommandContexts.set(taskId, commandContext);
+              } else {
+                // Emit final event
+                await this.emitEvent({
+                  event_id: this.generateId(),
+                  task_id: taskId,
+                  timestamp: new Date().toISOString(),
+                  type: 'final',
+                  mode: this.currentMode,
+                  stage: 'command',
+                  payload: {
+                    success: result.status === 'success',
+                    command_result: result
+                  },
+                  evidence_ids: result.evidenceRefs || [],
+                  parent_event_id: null,
+                });
+              }
+
+              await this.sendEventsToWebview(webview, taskId);
+
+            } catch (error) {
+              console.error('[QUICK_ACTION] Command execution error:', error);
+              await this.emitEvent({
+                event_id: this.generateId(),
+                task_id: taskId,
+                timestamp: new Date().toISOString(),
+                type: 'failure_detected',
+                mode: 'MISSION',
+                stage: this.currentStage,
+                payload: {
+                  error: error instanceof Error ? error.message : 'Unknown error',
+                  kind: 'command_execution_failed'
+                },
+                evidence_ids: [],
+                parent_event_id: null,
+              });
+              await this.sendEventsToWebview(webview, taskId);
+              vscode.window.showErrorMessage(`Command execution failed: ${error}`);
+            }
+          } else {
+            // This is an EDIT - use MissionExecutor pipeline
+            console.log('[QUICK_ACTION] Using MissionExecutor edit pipeline (no plan UI)');
+
+            try {
+              const referencedFiles = analysis.referenced_files || [];
+              const fileHint = referencedFiles.length > 0 ? referencedFiles.join(', ') : 'target files';
+              const stepDescription = `Edit ${fileHint} to resolve: ${text}`;
+
+              const quickPlan: StructuredPlan = {
+                goal: `Quick fix: ${text}`,
+                assumptions: ['Single focused change', 'Minimal scope', 'Fast execution'],
+                success_criteria: ['Issue resolved', 'No unintended changes'],
+                scope_contract: {
+                  max_files: referencedFiles.length > 0 ? referencedFiles.length : 3,
+                  max_lines: 200,
+                  allowed_tools: ['read', 'write']
+                },
+                steps: [
+                  {
+                    step_id: 'quick_step_1',
+                    description: stepDescription,
+                    expected_evidence: ['diff_proposed', 'diff_applied']
+                  }
+                ],
+                risks: ['May require clarification if file context is missing']
+              };
+
+              await this.handleExecutePlan(
+                { taskId, planOverride: quickPlan, emitMissionStarted: true },
+                webview
+              );
+            } catch (error) {
+              console.error('[QUICK_ACTION] Error:', error);
+              await this.emitEvent({
+                event_id: this.generateId(),
+                task_id: taskId,
+                timestamp: new Date().toISOString(),
+                type: 'failure_detected',
+                mode: 'MISSION',
+                stage: this.currentStage,
+                payload: {
+                  error: error instanceof Error ? error.message : 'Unknown error',
+                  kind: 'quick_action_failed'
+                },
+                evidence_ids: [],
+                parent_event_id: null,
+              });
+              await this.sendEventsToWebview(webview, taskId);
+              vscode.window.showErrorMessage(`Quick action failed: ${error}`);
+            }
+          }
+          break;
+
+        case 'CLARIFY':
+          console.log('>>> BEHAVIOR: CLARIFY <<<');
+          // Emit clarification_requested event
+          await this.emitEvent({
+            event_id: this.generateId(),
+            task_id: taskId,
+            timestamp: new Date().toISOString(),
+            type: 'clarification_requested',
+            mode: this.currentMode,
+            stage: this.currentStage,
+            payload: {
+              question: analysis.clarification?.question || 'Could you provide more details?',
+              options: analysis.clarification?.options || [],
+              context_source: analysis.context_source,
+            },
+            evidence_ids: [],
+            parent_event_id: null,
+          });
+          
+          await this.emitEvent({
+            event_id: this.generateId(),
+            task_id: taskId,
+            timestamp: new Date().toISOString(),
+            type: 'execution_paused',
+            mode: this.currentMode,
+            stage: this.currentStage,
+            payload: {
+              reason: 'awaiting_clarification',
+              description: 'Need more information to proceed'
+            },
+            evidence_ids: [],
+            parent_event_id: null,
+          });
+          await this.sendEventsToWebview(webview, taskId);
+          break;
+
+        case 'CONTINUE_RUN':
+          console.log('>>> BEHAVIOR: CONTINUE_RUN <<<');
+          // Show options to resume, pause, or abort
+          const activeRunStatus = analysisContext.activeRun;
+          const statusText = activeRunStatus
+            ? `An earlier run is ${activeRunStatus.status} (stage: ${activeRunStatus.stage}).`
+            : 'An earlier run appears to be pending user input.';
+          await this.emitEvent({
+            event_id: this.generateId(),
+            task_id: taskId,
+            timestamp: new Date().toISOString(),
+            type: 'decision_point_needed',
+            mode: this.currentMode,
+            stage: this.currentStage,
+            payload: {
+              decision_type: 'continue_run',
+              title: 'Active Run Detected',
+              description: `${statusText} Choose an action to continue.`,
+              options: ['resume', 'pause', 'abort', 'propose_fix'],
+              active_run: analysisContext.activeRun,
+            },
+            evidence_ids: [],
+            parent_event_id: null,
+          });
+          
+          await this.emitEvent({
+            event_id: this.generateId(),
+            task_id: taskId,
+            timestamp: new Date().toISOString(),
+            type: 'execution_paused',
+            mode: this.currentMode,
+            stage: this.currentStage,
+            payload: {
+              reason: 'awaiting_continue_decision',
+              description: 'Choose how to handle active mission'
+            },
+            evidence_ids: [],
+            parent_event_id: null,
+          });
+          await this.sendEventsToWebview(webview, taskId);
+          break;
+
+        default:
+          console.error(`[Step33] Unknown behavior: ${analysis.behavior}`);
+          // Fallback to MISSION mode
+          const fallbackPlan = generateTemplatePlan(text, 'MISSION');
+          await this.emitEvent({
+            event_id: this.generateId(),
+            task_id: taskId,
+            timestamp: new Date().toISOString(),
+            type: 'plan_created',
+            mode: 'MISSION',
+            stage: this.currentStage,
+            payload: fallbackPlan as unknown as Record<string, unknown>,
+            evidence_ids: [],
+            parent_event_id: null,
+          });
+          await this.sendEventsToWebview(webview, taskId);
       }
 
-      // Send events to webview
-      await this.sendEventsToWebview(webview, taskId);
+      console.log('[Step33] Behavior handling complete');
 
     } catch (error) {
       console.error('Error handling submitPrompt:', error);
       vscode.window.showErrorMessage(`Ordinex: ${error}`);
     }
+  }
+
+  /**
+   * Step 33: Helper to extract last applied diff from events
+   */
+  private getLastAppliedDiff(events: Event[]): { files: string[]; timestamp: string } | undefined {
+    const diffAppliedEvents = events
+      .filter(e => e.type === 'diff_applied')
+      .sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
+    
+    if (diffAppliedEvents.length === 0) return undefined;
+    
+    const lastDiff = diffAppliedEvents[0];
+    return {
+      files: (lastDiff.payload.files_changed as string[]) || [],
+      timestamp: lastDiff.timestamp,
+    };
   }
 
   private async handleGetEvents(message: any, webview: vscode.Webview) {
@@ -445,11 +726,11 @@ class MissionControlViewProvider implements vscode.WebviewViewProvider {
       );
       const planEvent = planEvents[planEvents.length - 1];
 
-      if (!planEvent) {
+      if (!planEvent && !planOverride) {
         throw new Error('No plan found to execute');
       }
 
-      const plan = (planOverride || planEvent.payload) as unknown as StructuredPlan;
+      const plan = (planOverride || planEvent?.payload) as unknown as StructuredPlan;
       if (planOverride) {
         console.log('[handleExecutePlan] Using mission-scoped plan override', {
           missionId,
@@ -2026,6 +2307,231 @@ This demonstrates the diff proposal pipeline without requiring LLM integration.
     } catch (error) {
       console.error('Error handling resolveApproval:', error);
       vscode.window.showErrorMessage(`Failed to resolve approval: ${error}`);
+    }
+  }
+
+  private async handleResolveDecisionPoint(message: any, webview: vscode.Webview) {
+    const { task_id, decision_event_id, action } = message;
+
+    if (!task_id || !decision_event_id || !action) {
+      console.error('Missing required fields in resolveDecisionPoint');
+      return;
+    }
+
+    if (!this.eventStore) {
+      console.error('EventStore not initialized');
+      return;
+    }
+
+    try {
+      const events = this.eventStore.getEventsByTaskId(task_id);
+      const decisionEvent = events.find(
+        (e: Event) => e.type === 'decision_point_needed' && e.event_id === decision_event_id
+      );
+
+      if (!decisionEvent) {
+        console.error('Decision point event not found');
+        return;
+      }
+
+      const payload = decisionEvent.payload || {};
+      const decisionType = payload.decision_type as string | undefined;
+      const decisionContext = payload.context as string | undefined;
+
+      if (decisionType === 'continue_run') {
+        const activeRun = (payload.active_run as any) || detectActiveRun(events);
+        if (!activeRun) {
+          console.error('No active run found for continue_run decision');
+          return;
+        }
+
+        const allowedActions = new Set(['resume', 'pause', 'abort', 'propose_fix']);
+        if (!allowedActions.has(action)) {
+          console.error('Invalid continue_run action:', action);
+          return;
+        }
+
+        const eventBus = new EventBus(this.eventStore);
+        eventBus.subscribe(async () => {
+          await this.sendEventsToWebview(webview, task_id);
+        });
+
+        await processContinueRunResponse(
+          action as 'resume' | 'pause' | 'abort' | 'propose_fix',
+          activeRun,
+          eventBus,
+          task_id
+        );
+
+        await this.sendEventsToWebview(webview, task_id);
+        return;
+      }
+
+      if (decisionContext === 'command_execution') {
+        const pendingContext = this.pendingCommandContexts.get(task_id);
+        if (!pendingContext) {
+          console.error('No pending command context found for task');
+          return;
+        }
+
+        if (action === 'run_commands') {
+          // FIXED: Use VS Code terminal API to run commands visibly
+          console.log('[handleResolveDecisionPoint] Running commands in VS Code terminal');
+          
+          this.pendingCommandContexts.delete(task_id);
+          
+          const commands = pendingContext.commands || [];
+          const workspaceRoot = pendingContext.workspaceRoot;
+          
+          for (const command of commands) {
+            // Emit command_started event
+            await this.emitEvent({
+              event_id: this.generateId(),
+              task_id: task_id,
+              timestamp: new Date().toISOString(),
+              type: 'command_started',
+              mode: this.currentMode,
+              stage: 'command',
+              payload: {
+                command,
+                method: 'vscode_terminal',
+                cwd: workspaceRoot,
+              },
+              evidence_ids: [],
+              parent_event_id: null,
+            });
+            
+            // Create and show VS Code terminal
+            const terminalName = `Ordinex: ${command.split(' ')[0]}`;
+            
+            // Dispose old terminal if exists
+            const existingTerminal = this.activeTerminals.get(task_id);
+            if (existingTerminal) {
+              existingTerminal.dispose();
+            }
+            
+            // Create new terminal
+            const terminal = vscode.window.createTerminal({
+              name: terminalName,
+              cwd: workspaceRoot,
+            });
+            
+            this.activeTerminals.set(task_id, terminal);
+            
+            // Show terminal and send command
+            terminal.show(true); // true = preserve focus
+            terminal.sendText(command);
+            
+            console.log(`[handleResolveDecisionPoint] ✓ Command sent to terminal: ${command}`);
+            
+            // Emit command_running event (since we can't track output from sendText)
+            await this.emitEvent({
+              event_id: this.generateId(),
+              task_id: task_id,
+              timestamp: new Date().toISOString(),
+              type: 'command_progress',
+              mode: this.currentMode,
+              stage: 'command',
+              payload: {
+                command,
+                status: 'running_in_terminal',
+                message: `Command running in VS Code terminal "${terminalName}"`,
+              },
+              evidence_ids: [],
+              parent_event_id: null,
+            });
+          }
+          
+          // Emit completion event
+          await this.emitEvent({
+            event_id: this.generateId(),
+            task_id: task_id,
+            timestamp: new Date().toISOString(),
+            type: 'command_completed',
+            mode: this.currentMode,
+            stage: 'command',
+            payload: {
+              success: true,
+              commands_executed: commands,
+              method: 'vscode_terminal',
+              message: `Command(s) started in VS Code terminal. Check terminal for output.`,
+            },
+            evidence_ids: [],
+            parent_event_id: null,
+          });
+          
+          await this.sendEventsToWebview(webview, task_id);
+          
+          // CRITICAL FIX: Clear currentTaskId so next prompt starts a fresh task
+          // This prevents "Active Run Detected" on follow-up prompts
+          console.log(`[handleResolveDecisionPoint] ✓ Command task completed, clearing currentTaskId`);
+          this.currentTaskId = null;
+          this.currentStage = 'none';
+          
+          vscode.window.showInformationMessage(
+            `Command started in terminal. Check the "${commands.length > 0 ? commands[0].split(' ')[0] : 'Ordinex'}" terminal for output.`
+          );
+          return;
+          
+        } else if (action === 'skip_once') {
+          this.pendingCommandContexts.delete(task_id);
+          
+          await this.emitEvent({
+            event_id: this.generateId(),
+            task_id: task_id,
+            timestamp: new Date().toISOString(),
+            type: 'command_skipped',
+            mode: this.currentMode,
+            stage: 'command',
+            payload: {
+              reason: 'User skipped command execution',
+              commands: pendingContext.commands,
+            },
+            evidence_ids: [],
+            parent_event_id: null,
+          });
+          
+          await this.sendEventsToWebview(webview, task_id);
+          
+          // CRITICAL FIX: Clear currentTaskId so next prompt starts a fresh task
+          console.log(`[handleResolveDecisionPoint] ✓ Command skipped, clearing currentTaskId`);
+          this.currentTaskId = null;
+          this.currentStage = 'none';
+          return;
+          
+        } else if (action === 'disable_commands') {
+          this.pendingCommandContexts.delete(task_id);
+          
+          await this.emitEvent({
+            event_id: this.generateId(),
+            task_id: task_id,
+            timestamp: new Date().toISOString(),
+            type: 'command_skipped',
+            mode: this.currentMode,
+            stage: 'command',
+            payload: {
+              reason: 'User disabled command execution',
+              commands: pendingContext.commands,
+              permanently_disabled: true,
+            },
+            evidence_ids: [],
+            parent_event_id: null,
+          });
+          
+          await this.sendEventsToWebview(webview, task_id);
+          vscode.window.showInformationMessage('Command execution disabled for this workspace.');
+          return;
+          
+        } else {
+          console.error('Unknown command decision action:', action);
+          return;
+        }
+      }
+
+      console.error('Decision point not handled:', { decisionType, decisionContext });
+    } catch (error) {
+      console.error('Error handling resolveDecisionPoint:', error);
+      vscode.window.showErrorMessage(`Failed to resolve decision point: ${error}`);
     }
   }
 

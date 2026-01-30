@@ -42,6 +42,7 @@ const STAGE_PERMISSIONS: Record<Stage, Set<Action>> = {
   edit: new Set(['read_file', 'write_file', 'diff', 'checkpoint']),
   test: new Set(['read_file', 'execute_command']),
   repair: new Set(['read_file', 'write_file', 'diff', 'checkpoint', 'execute_command']),
+  command: new Set(['read_file', 'execute_command']), // Step 34.5: Command execution stage
 };
 
 export interface ModeValidationResult {
