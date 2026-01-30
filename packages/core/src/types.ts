@@ -104,7 +104,37 @@ export type EventType =
   // Step 34.5: Command Execution Phase
   | 'command_proposed'
   | 'command_skipped'
-  | 'command_progress';
+  | 'command_progress'
+  // Step 35: Greenfield Scaffold Flow
+  | 'scaffold_started'
+  | 'scaffold_proposal_created'
+  | 'scaffold_applied'
+  | 'scaffold_completed'
+  // Step 35.2: Scaffold Preflight Safety
+  | 'scaffold_preflight_started'
+  | 'scaffold_preflight_completed'
+  | 'scaffold_target_chosen'
+  | 'scaffold_blocked'
+  // Step 35.4: Scaffold Apply
+  | 'scaffold_apply_started'
+  | 'scaffold_conflict_detected'
+  | 'scaffold_apply_failed'
+  // Step 35.5: Design Pack System
+  | 'design_pack_selected'
+  | 'design_pack_picker_opened'
+  | 'design_pack_overridden'
+  // Step 35.6: Post-Scaffold Next Steps
+  | 'next_steps_shown'
+  | 'next_step_selected'
+  | 'next_step_dismissed'
+  // Step 35.7: Non-Empty Directory + Monorepo Targeting
+  | 'scaffold_preflight_decision_needed'
+  | 'scaffold_preflight_decision_taken'
+  | 'scaffold_write_blocked'
+  // Step 37: Reference-Based Enhancements
+  | 'reference_attached'
+  | 'reference_context_built'
+  | 'reference_used';
 
 export const CANONICAL_EVENT_TYPES: readonly EventType[] = [
   'intent_received',
@@ -195,6 +225,36 @@ export const CANONICAL_EVENT_TYPES: readonly EventType[] = [
   'command_proposed',
   'command_skipped',
   'command_progress',
+  // Step 35: Greenfield Scaffold Flow
+  'scaffold_started',
+  'scaffold_proposal_created',
+  'scaffold_applied',
+  'scaffold_completed',
+  // Step 35.2: Scaffold Preflight Safety
+  'scaffold_preflight_started',
+  'scaffold_preflight_completed',
+  'scaffold_target_chosen',
+  'scaffold_blocked',
+  // Step 35.4: Scaffold Apply
+  'scaffold_apply_started',
+  'scaffold_conflict_detected',
+  'scaffold_apply_failed',
+  // Step 35.5: Design Pack System
+  'design_pack_selected',
+  'design_pack_picker_opened',
+  'design_pack_overridden',
+  // Step 35.6: Post-Scaffold Next Steps
+  'next_steps_shown',
+  'next_step_selected',
+  'next_step_dismissed',
+  // Step 35.7: Non-Empty Directory + Monorepo Targeting
+  'scaffold_preflight_decision_needed',
+  'scaffold_preflight_decision_taken',
+  'scaffold_write_blocked',
+  // Step 37: Reference-Based Enhancements
+  'reference_attached',
+  'reference_context_built',
+  'reference_used',
 ] as const;
 
 export type Mode = 'ANSWER' | 'PLAN' | 'MISSION';
@@ -271,6 +331,20 @@ export interface IntentAnalysis {
   
   /** Whether user override was used */
   user_override?: string;
+  
+  // =========================================================================
+  // Step 37: Reference Modifier Fields (NOT a new behavior)
+  // These are modifiers that SCAFFOLD/QUICK_ACTION/PLAN read downstream
+  // =========================================================================
+  
+  /** Whether user provided image/URL references (Step 37) */
+  has_references?: boolean;
+  
+  /** Detected intent for reference usage (Step 37) */
+  reference_intent?: ReferenceIntent;
+  
+  /** User's selected mode for how references influence output (Step 37) */
+  reference_mode?: StyleSourceMode;
 }
 
 /**
@@ -669,5 +743,277 @@ export function isPrimitiveEventType(type: string): type is PrimitiveEventType {
     'unknown_event'
   ];
   return primitives.includes(type as PrimitiveEventType);
+}
+
+// ============================================================================
+// STEP 35: GREENFIELD SCAFFOLD FLOW TYPES
+// ============================================================================
+
+/**
+ * Flow kind for routing (Step 35.1)
+ * 
+ * Determines whether to use standard PLAN/MISSION flow or SCAFFOLD flow.
+ * This is orthogonal to behavior - a PLAN behavior can route to either flow.
+ */
+export type FlowKind = 'standard' | 'scaffold';
+
+/**
+ * Scaffold reference type (how user specified what they want)
+ */
+export type ScaffoldReferenceType = 'description' | 'screenshot' | 'url';
+
+/**
+ * Scaffold proposal status
+ */
+export type ScaffoldProposalStatus = 'pending' | 'approved' | 'cancelled';
+
+/**
+ * Scaffold completion status
+ */
+export type ScaffoldCompletionStatus = 'cancelled' | 'ready_for_step_35_2';
+
+/**
+ * Scaffold started event payload (V1 minimal)
+ */
+export interface ScaffoldStartedPayload {
+  /** Stable ID for this scaffold attempt */
+  scaffold_id: string;
+  /** Associated run ID */
+  run_id: string;
+  /** Target directory for scaffold (optional in 35.1) */
+  target_directory?: string;
+  /** How user specified what they want */
+  reference_type?: ScaffoldReferenceType;
+  /** Original user prompt */
+  user_prompt: string;
+  /** ISO timestamp */
+  created_at_iso: string;
+}
+
+/**
+ * Scaffold proposal created event payload (V1 minimal)
+ */
+export interface ScaffoldProposalCreatedPayload {
+  /** Stable ID for this scaffold attempt */
+  scaffold_id: string;
+  /** Recipe identifier (placeholder in 35.1) */
+  recipe?: string;
+  /** Design pack identifier (placeholder in 35.1) */
+  design_pack?: string;
+  /** Number of files to create (placeholder in 35.1) */
+  files_count: number;
+  /** Number of directories to create (placeholder in 35.1) */
+  directories_count: number;
+  /** Commands to run after scaffolding (placeholder in 35.1) */
+  commands_to_run: string[];
+  /** Human-readable summary */
+  summary: string;
+  
+  // Step 37: Reference Enhancement Fields
+  /** Reference context (if user provided images/URLs) */
+  reference_context?: ReferenceContext;
+  /** Selected style source mode */
+  reference_mode?: StyleSourceMode;
+}
+
+/**
+ * Scaffold applied event payload (V1 minimal)
+ */
+export interface ScaffoldAppliedPayload {
+  /** Stable ID for this scaffold attempt */
+  scaffold_id: string;
+  /** Status - always 'noop' in 35.1 */
+  status: 'noop';
+  /** Files created (empty in 35.1) */
+  files_created: string[];
+  /** Evidence reference (undefined in 35.1) */
+  evidence_ref?: string;
+}
+
+/**
+ * Scaffold completed event payload (V1 minimal)
+ */
+export interface ScaffoldCompletedPayload {
+  /** Stable ID for this scaffold attempt */
+  scaffold_id: string;
+  /** Completion status */
+  status: ScaffoldCompletionStatus;
+  /** Optional reason for status */
+  reason?: string;
+}
+
+/**
+ * Extended IntentAnalysis with flow_kind for Step 35
+ * 
+ * When flow_kind === 'scaffold', the router should use ScaffoldFlow
+ * instead of standard PLAN/MISSION pipelines.
+ */
+export interface IntentAnalysisWithFlow extends IntentAnalysis {
+  /** Flow kind for routing (Step 35) */
+  flow_kind: FlowKind;
+}
+
+// ============================================================================
+// STEP 35.2: SCAFFOLD PREFLIGHT SAFETY TYPES
+// ============================================================================
+
+/**
+ * Monorepo type detection
+ */
+export type MonorepoType = 'pnpm' | 'turbo' | 'nx' | 'lerna' | 'yarn_workspaces' | 'unknown';
+
+/**
+ * Reason for target directory selection
+ */
+export type TargetChoiceReason = 'default' | 'monorepo_choice' | 'user_selected' | 'workspace_root';
+
+/**
+ * Preflight conflict type
+ */
+export type PreflightConflictType = 'NON_EMPTY_DIR' | 'EXISTING_PACKAGE_JSON' | 'MONOREPO_AMBIGUOUS';
+
+/**
+ * Preflight conflict record
+ */
+export interface PreflightConflict {
+  type: PreflightConflictType;
+  message: string;
+}
+
+/**
+ * Recommended location for scaffold in monorepo
+ */
+export interface RecommendedLocation {
+  label: string;
+  path: string;
+  recommended: boolean;
+}
+
+/**
+ * Scaffold preflight started event payload (V1)
+ */
+export interface ScaffoldPreflightStartedPayload {
+  scaffold_id: string;
+  workspace_root: string;
+  created_at_iso: string;
+}
+
+/**
+ * Scaffold target chosen event payload (V1)
+ */
+export interface ScaffoldTargetChosenPayload {
+  scaffold_id: string;
+  target_directory: string;
+  reason: TargetChoiceReason;
+  app_name?: string;
+}
+
+/**
+ * Scaffold preflight completed event payload (V1)
+ */
+export interface ScaffoldPreflightCompletedPayload {
+  scaffold_id: string;
+  target_directory: string;
+  is_empty_dir: boolean;
+  has_package_json: boolean;
+  detected_monorepo: boolean;
+  monorepo_type?: MonorepoType;
+  recommended_locations?: RecommendedLocation[];
+  conflicts?: PreflightConflict[];
+}
+
+/**
+ * Scaffold blocked event payload (V1)
+ */
+export interface ScaffoldBlockedPayload {
+  scaffold_id: string;
+  target_directory: string;
+  reason: 'non_empty_dir' | 'monorepo_ambiguous' | 'user_cancelled';
+  message: string;
+}
+
+// ============================================================================
+// STEP 37: REFERENCE-BASED ENHANCEMENTS TYPES
+// ============================================================================
+
+/**
+ * Reference attachment (image or URL provided by user)
+ * Max 10 images allowed; URLs are design references, not scraped yet
+ */
+export type ReferenceAttachment =
+  | { type: 'image'; id: string; path: string; mime: string }
+  | { type: 'url'; id: string; url: string };
+
+/**
+ * Reference intent classification
+ * Describes what the user intends to use the reference for
+ */
+export type ReferenceIntent = 'visual_style' | 'layout' | 'branding' | 'unknown';
+
+/**
+ * Reference context bundle - normalized container for all references
+ * Attached to scaffold proposals, plan creation, and quick actions
+ * 
+ * CRITICAL: Do NOT interpret yet — just pass through
+ */
+export interface ReferenceContext {
+  /** Image references (screenshots, design mockups) */
+  images: ReferenceAttachment[];
+  /** URL references (design systems, component libraries) */
+  urls: ReferenceAttachment[];
+  /** Source of references */
+  source: 'user_upload';
+  /** Detected intent for reference usage */
+  intent: ReferenceIntent;
+}
+
+/**
+ * Style source mode for reference usage
+ * Used in scaffold approval UI to let user choose how references influence output
+ */
+export type StyleSourceMode = 'use_reference' | 'ignore_reference' | 'combine_with_design_pack';
+
+/**
+ * reference_attached event payload
+ */
+export interface ReferenceAttachedPayload {
+  ref_ids: string[];
+  types: ('image' | 'url')[];
+}
+
+/**
+ * reference_context_built event payload
+ */
+export interface ReferenceContextBuiltPayload {
+  intent: ReferenceIntent;
+  ref_count: number;
+}
+
+/**
+ * reference_used event payload
+ */
+export interface ReferenceUsedPayload {
+  scope: 'scaffold' | 'quick_action' | 'plan';
+  mode: 'combined' | 'exclusive';
+}
+
+/**
+ * Vision tokens (stub output from VisionAnalyzer)
+ * Placeholder for future Vision API integration
+ */
+export interface VisionTokens {
+  status: 'pending' | 'analyzed';
+  reason?: string;
+  colors?: string[];
+  layout?: string;
+  components?: string[];
+}
+
+/**
+ * Vision analyzer interface (stub for future implementation)
+ * Current implementation returns { status: 'pending', reason: 'vision_not_enabled' }
+ */
+export interface VisionAnalyzer {
+  analyze(refs: ReferenceContext): Promise<VisionTokens>;
 }
 

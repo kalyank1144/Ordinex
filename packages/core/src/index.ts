@@ -455,13 +455,17 @@ export type {
 // Step 33: Mode Behavior Refinement (Pre-execution Intelligence Layer)
 export {
   analyzeIntent,
+  analyzeIntentWithFlow,
   detectActiveRun,
+  detectFlowKind,
+  isGreenfieldRequest,
   isPureQuestion,
   resolveReferences,
   detectScope,
   extractReferencedFiles,
   INTENT_ANALYZER_CONFIG,
   USER_OVERRIDES,
+  GREENFIELD_PATTERNS,
 } from './intentAnalyzer';
 
 export type {
@@ -546,3 +550,18 @@ export {
 export type {
   CommandIntentResult,
 } from './userCommandDetector';
+
+// Step 35: Greenfield Scaffold Flow (Decision-Point-Based Scaffolding)
+export {
+  ScaffoldFlowCoordinator,
+  isScaffoldDecisionPoint,
+  extractScaffoldId,
+  deriveScaffoldFlowState,
+  generatePlaceholderSummary,
+  buildScaffoldDecisionOptions,
+} from './scaffoldFlow';
+
+export type {
+  ScaffoldFlowState,
+  ScaffoldDecisionOptions,
+} from './scaffoldFlow';

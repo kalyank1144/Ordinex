@@ -5,6 +5,12 @@ import { getWebviewContent } from 'webview';
 import { VSCodeWorkspaceWriter } from './vscodeWorkspaceWriter';
 import { VSCodeCheckpointManager } from './vscodeCheckpointManager';
 import { 
+  storeAttachment, 
+  validateAttachment, 
+  AttachmentData, 
+  AttachmentStoreResult 
+} from './attachmentEvidenceStore';
+import { 
   EventStore, 
   Event, 
   Mode, 
@@ -227,6 +233,11 @@ class MissionControlViewProvider implements vscode.WebviewViewProvider {
         await this.handleStartSelectedMission(message, webview);
         break;
 
+      // Step 37: Attachment Upload handler
+      case 'ordinex:uploadAttachment':
+        await this.handleUploadAttachment(message, webview);
+        break;
+
       default:
         console.log('Unknown message type:', message.type);
     }
@@ -234,8 +245,8 @@ class MissionControlViewProvider implements vscode.WebviewViewProvider {
 
   private async handleSubmitPrompt(message: any, webview: vscode.Webview) {
     console.log('=== handleSubmitPrompt START (Step 33) ===');
-    const { text, userSelectedMode, modelId } = message;
-    console.log('Params:', { text, userSelectedMode, modelId });
+    const { text, userSelectedMode, modelId, attachments } = message;
+    console.log('Params:', { text, userSelectedMode, modelId, attachmentCount: attachments?.length || 0 });
     
     if (!text || !userSelectedMode) {
       console.error('Missing required fields in submitPrompt');
@@ -254,8 +265,17 @@ class MissionControlViewProvider implements vscode.WebviewViewProvider {
     const taskId = this.currentTaskId;
     console.log('Using task ID:', taskId);
 
+    // PHASE 4: Extract attachment evidence_ids for storing in intent_received
+    const attachmentEvidenceIds: string[] = (attachments || [])
+      .filter((a: any) => a.evidence_id)
+      .map((a: any) => a.evidence_id);
+    
+    if (attachmentEvidenceIds.length > 0) {
+      console.log(`[Attachments] ${attachmentEvidenceIds.length} attachment evidence IDs:`, attachmentEvidenceIds);
+    }
+
     try {
-      // 1. Emit intent_received event
+      // 1. Emit intent_received event (includes attachments in payload and evidence_ids)
       console.log('About to emit intent_received event...');
       await this.emitEvent({
         event_id: this.generateId(),
@@ -268,8 +288,10 @@ class MissionControlViewProvider implements vscode.WebviewViewProvider {
           prompt: text,
           model_id: modelId || 'sonnet-4.5',
           user_selected_mode: userSelectedMode,
+          // PHASE 4: Store attachment refs in payload for replay/audit
+          attachments: attachments || [],
         },
-        evidence_ids: [],
+        evidence_ids: attachmentEvidenceIds, // PHASE 4: Link to evidence
         parent_event_id: null,
       });
       console.log('✓ intent_received event emitted');
@@ -3199,6 +3221,93 @@ This demonstrates the diff proposal pipeline without requiring LLM integration.
     } catch (error) {
       console.error('Error handling cancelMission:', error);
       vscode.window.showErrorMessage(`Failed to cancel mission: ${error}`);
+    }
+  }
+
+  /**
+   * Step 37: Handle attachment upload from webview
+   * 
+   * Receives base64-encoded attachment data from webview,
+   * validates, stores to evidence directory, and returns evidence_id.
+   */
+  private async handleUploadAttachment(message: any, webview: vscode.Webview) {
+    const { id, name, mimeType, data } = message;
+    const LOG_PREFIX = '[Ordinex:AttachmentUpload]';
+
+    console.log(`${LOG_PREFIX} Upload request received: ${name} (${mimeType})`);
+
+    // Validate required fields
+    if (!id || !name || !mimeType || !data) {
+      console.error(`${LOG_PREFIX} Missing required fields in uploadAttachment`);
+      webview.postMessage({
+        type: 'ordinex:uploadResult',
+        id,
+        success: false,
+        error: 'Missing required fields: id, name, mimeType, or data',
+      });
+      return;
+    }
+
+    try {
+      // Get workspace root
+      const workspaceRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+      if (!workspaceRoot) {
+        throw new Error('No workspace folder open');
+      }
+
+      // Build attachment data object
+      const attachmentData: AttachmentData = {
+        id,
+        name,
+        mimeType,
+        data,
+      };
+
+      // Validate attachment (size, MIME type)
+      const validation = validateAttachment(attachmentData);
+      if (!validation.valid) {
+        console.error(`${LOG_PREFIX} Validation failed: ${validation.error}`);
+        webview.postMessage({
+          type: 'ordinex:uploadResult',
+          id,
+          success: false,
+          error: validation.error,
+        });
+        return;
+      }
+
+      // Store attachment to evidence directory
+      const result: AttachmentStoreResult = await storeAttachment(workspaceRoot, attachmentData);
+
+      if (result.success) {
+        console.log(`${LOG_PREFIX} ✓ Upload successful: ${result.evidenceId} (deduplicated: ${result.deduplicated})`);
+        
+        webview.postMessage({
+          type: 'ordinex:uploadResult',
+          id,
+          success: true,
+          evidenceId: result.evidenceId,
+          evidencePath: result.evidencePath,
+          deduplicated: result.deduplicated,
+        });
+      } else {
+        console.error(`${LOG_PREFIX} ✗ Storage failed: ${result.error}`);
+        webview.postMessage({
+          type: 'ordinex:uploadResult',
+          id,
+          success: false,
+          error: result.error,
+        });
+      }
+
+    } catch (error) {
+      console.error(`${LOG_PREFIX} ✗ Error:`, error);
+      webview.postMessage({
+        type: 'ordinex:uploadResult',
+        id,
+        success: false,
+        error: error instanceof Error ? error.message : 'Unknown error',
+      });
     }
   }
 

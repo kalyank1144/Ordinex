@@ -24,15 +24,26 @@ import {
   Behavior,
   Mode,
   IntentAnalysis,
+  IntentAnalysisWithFlow,
+  FlowKind,
   ContextSource,
   ClarificationRequest,
   ClarificationOption,
   ActiveRunStatus,
   ScopeDetectionResult,
   ReferenceResolution,
+  ReferenceIntent,
+  StyleSourceMode,
 } from './types';
 import { Event } from './types';
 import { detectCommandIntent } from './userCommandDetector';
+import {
+  buildReferenceContext,
+  detectReferenceIntent,
+  hasReferenceInfluenceIntent,
+  DEFAULT_STYLE_SOURCE_MODE,
+  type AttachmentInput,
+} from './referenceContextBuilder';
 
 // ============================================================================
 // CONFIGURATION (Tunable)
@@ -215,6 +226,16 @@ export interface IntentAnalysisContext {
   
   /** Previous task ID (for follow-up detection) */
   previousTaskId?: string;
+  
+  // =========================================================================
+  // Step 37: Reference Enhancement Context
+  // =========================================================================
+  
+  /** User-provided attachments (images, files, etc.) */
+  attachments?: AttachmentInput[];
+  
+  /** User-selected reference mode (from UI picker) */
+  userReferenceMode?: StyleSourceMode;
 }
 
 // ============================================================================
@@ -991,6 +1012,195 @@ export function detectActiveRun(events: Event[]): ActiveRunStatus | null {
 }
 
 // ============================================================================
+// STEP 35: GREENFIELD DETECTION (Flow Kind Routing)
+// ============================================================================
+
+/**
+ * Greenfield detection patterns (Step 35.1)
+ * 
+ * Trigger SCAFFOLD flow when user prompt contains one of these phrases
+ * AND there is no existing active run requiring CONTINUE_RUN.
+ */
+const GREENFIELD_PATTERNS = [
+  // Exact phrases
+  'create a new app',
+  'create a new project',
+  'start a new project',
+  'start a new app',
+  'from scratch',
+  'greenfield',
+  'scaffold',
+  'bootstrap',
+  // Framework-specific
+  'new nextjs app',
+  'new next app',
+  'new vite app',
+  'new expo app',
+  'new react app',
+  'new vue app',
+  'new angular app',
+  'new express app',
+  'new node app',
+  'new typescript project',
+];
+
+/**
+ * Check if prompt indicates a greenfield project request
+ * 
+ * @param prompt - User's input prompt
+ * @returns true if greenfield patterns are detected
+ */
+export function isGreenfieldRequest(prompt: string): boolean {
+  const normalizedPrompt = prompt.toLowerCase();
+  return GREENFIELD_PATTERNS.some(pattern => normalizedPrompt.includes(pattern));
+}
+
+/**
+ * Check if user override forces standard flow
+ * 
+ * /plan and /do overrides should bypass scaffold routing
+ */
+function isStandardFlowOverride(prompt: string): boolean {
+  const firstWord = prompt.trim().split(/\s+/)[0]?.toLowerCase();
+  // /plan forces standard PLAN flow, /do forces standard QUICK_ACTION
+  return firstWord === '/plan' || firstWord === 'plan' ||
+         firstWord === '/do' || firstWord === 'do' ||
+         firstWord === '/edit' || firstWord === 'edit';
+}
+
+/**
+ * Analyze user intent with flow_kind (Step 35.1) and reference modifiers (Step 37)
+ * 
+ * This extends analyzeIntent to also determine if the request should
+ * route to the SCAFFOLD flow vs standard PLAN/MISSION flow, and
+ * detect reference modifiers for design influence.
+ * 
+ * @param prompt - User's input prompt
+ * @param context - Analysis context with state information
+ * @returns IntentAnalysisWithFlow with selected behavior, flow_kind, and reference modifiers
+ */
+export function analyzeIntentWithFlow(
+  prompt: string,
+  context: IntentAnalysisContext = { clarificationAttempts: 0 }
+): IntentAnalysisWithFlow {
+  // First, run standard intent analysis
+  const baseAnalysis = analyzeIntent(prompt, context);
+  
+  // Determine flow_kind
+  let flowKind: FlowKind = 'standard';
+  
+  // Check for greenfield patterns
+  if (isGreenfieldRequest(prompt)) {
+    // Only route to scaffold if:
+    // 1. NOT an active run (CONTINUE_RUN behavior)
+    // 2. NOT a user override forcing standard flow
+    // 3. NOT a pure question (ANSWER behavior)
+    if (
+      baseAnalysis.behavior !== 'CONTINUE_RUN' &&
+      baseAnalysis.behavior !== 'ANSWER' &&
+      !isStandardFlowOverride(prompt)
+    ) {
+      flowKind = 'scaffold';
+    }
+  }
+  
+  // =========================================================================
+  // Step 37: Detect reference modifiers
+  // References are modifiers, NOT a new behavior
+  // =========================================================================
+  const referenceModifiers = analyzeReferenceModifiers(prompt, context);
+  
+  return {
+    ...baseAnalysis,
+    flow_kind: flowKind,
+    // Step 37: Reference modifier fields
+    has_references: referenceModifiers.has_references,
+    reference_intent: referenceModifiers.reference_intent,
+    reference_mode: referenceModifiers.reference_mode,
+  };
+}
+
+// ============================================================================
+// STEP 37: REFERENCE MODIFIER DETECTION
+// ============================================================================
+
+/**
+ * Reference modifier detection result
+ */
+interface ReferenceModifiers {
+  has_references: boolean;
+  reference_intent?: ReferenceIntent;
+  reference_mode: StyleSourceMode;
+}
+
+/**
+ * Analyze reference modifiers from attachments and prompt text
+ * 
+ * This is called by analyzeIntentWithFlow to set the reference modifier fields.
+ * References are modifiers, NOT a new behavior - they influence SCAFFOLD/QUICK_ACTION/PLAN.
+ * 
+ * @param prompt - User's input prompt
+ * @param context - Analysis context with attachments and user preference
+ * @returns Reference modifier fields
+ */
+export function analyzeReferenceModifiers(
+  prompt: string,
+  context: IntentAnalysisContext
+): ReferenceModifiers {
+  // Check if we have attachments
+  const attachments = context.attachments || [];
+  
+  // Build reference context from attachments and prompt
+  const referenceContext = buildReferenceContext(attachments, prompt);
+  
+  // If no references found
+  if (!referenceContext) {
+    return {
+      has_references: false,
+      reference_intent: undefined,
+      reference_mode: 'ignore_reference',
+    };
+  }
+  
+  // Check if prompt has reference influence intent
+  const hasInfluenceIntent = hasReferenceInfluenceIntent(prompt);
+  
+  // Detect reference intent from prompt
+  const intent = detectReferenceIntent(prompt);
+  
+  // Determine reference mode
+  let mode: StyleSourceMode = context.userReferenceMode || DEFAULT_STYLE_SOURCE_MODE;
+  
+  // If user explicitly said "ignore" in prompt, respect that
+  const ignoreKeywords = /ignore (the )?(reference|screenshot|image)/i.test(prompt) ||
+                         /don't use (the )?(reference|screenshot|image)/i.test(prompt);
+  if (ignoreKeywords) {
+    mode = 'ignore_reference';
+  }
+  
+  return {
+    has_references: true,
+    reference_intent: intent,
+    reference_mode: mode,
+  };
+}
+
+/**
+ * Detect flow kind from prompt (lightweight, no full analysis)
+ * 
+ * Use this when you only need to know the flow kind without full analysis.
+ * 
+ * @param prompt - User's input prompt
+ * @returns FlowKind ('scaffold' | 'standard')
+ */
+export function detectFlowKind(prompt: string): FlowKind {
+  if (isStandardFlowOverride(prompt)) {
+    return 'standard';
+  }
+  return isGreenfieldRequest(prompt) ? 'scaffold' : 'standard';
+}
+
+// ============================================================================
 // EXPORTS
 // ============================================================================
 
@@ -1002,4 +1212,5 @@ export {
   checkCompleteness,
   detectScope,
   extractReferencedFiles,
+  GREENFIELD_PATTERNS,
 };

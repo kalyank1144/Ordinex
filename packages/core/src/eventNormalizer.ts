@@ -589,6 +589,147 @@ const NORMALIZATION_MAP: Partial<Record<EventType, NormalizationMapping>> = {
     scope: 'tool',
     ui_hint: 'command_progress_card'
   },
+
+  // ========== STEP 35: Greenfield Scaffold Flow ==========
+  
+  scaffold_started: {
+    type: 'run_started',
+    kind: 'scaffold',
+    scope: 'run',
+    ui_hint: 'scaffold_card'
+  },
+  scaffold_proposal_created: {
+    type: 'artifact_proposed',
+    kind: 'scaffold_proposal',
+    scope: 'run',
+    ui_hint: 'scaffold_card'
+  },
+  scaffold_applied: {
+    type: 'artifact_applied',
+    kind: 'scaffold',
+    scope: 'run',
+    ui_hint: 'scaffold_card'
+  },
+  scaffold_completed: {
+    type: 'run_completed',
+    kind: 'scaffold',
+    scope: 'run',
+    ui_hint: 'scaffold_card'
+  },
+
+  // ========== STEP 35.2: Scaffold Preflight Safety ==========
+  
+  scaffold_preflight_started: {
+    type: 'step_started',
+    kind: 'scaffold_preflight',
+    scope: 'run',
+    ui_hint: 'scaffold_card'
+  },
+  scaffold_preflight_completed: {
+    type: 'step_completed',
+    kind: 'scaffold_preflight',
+    scope: 'run',
+    ui_hint: 'scaffold_card'
+  },
+  scaffold_target_chosen: {
+    type: 'progress_updated',
+    kind: 'scaffold_target',
+    scope: 'run',
+    ui_hint: 'scaffold_card'
+  },
+  scaffold_blocked: {
+    type: 'warning_raised',
+    kind: 'scaffold_blocked',
+    code: 'SCAFFOLD_BLOCKED',
+    scope: 'run',
+    ui_hint: 'scaffold_card'
+  },
+
+  // ========== STEP 35.4: Scaffold Apply ==========
+  
+  scaffold_apply_started: {
+    type: 'step_started',
+    kind: 'scaffold_apply',
+    scope: 'run',
+    ui_hint: 'scaffold_card'
+  },
+  scaffold_conflict_detected: {
+    type: 'decision_point_needed',
+    kind: 'scaffold_conflict',
+    scope: 'run',
+    ui_hint: 'scaffold_card'
+  },
+  scaffold_apply_failed: {
+    type: 'error_raised',
+    kind: 'scaffold_apply',
+    code: 'SCAFFOLD_APPLY_FAILED',
+    scope: 'run',
+    ui_hint: 'scaffold_card'
+  },
+
+  // ========== STEP 35.5: Design Pack System ==========
+  
+  design_pack_selected: {
+    type: 'progress_updated',
+    kind: 'design_pack_selection',
+    scope: 'run',
+    ui_hint: 'scaffold_card'
+  },
+  design_pack_picker_opened: {
+    type: 'decision_point_needed',
+    kind: 'design_pack_picker',
+    scope: 'ui',
+    ui_hint: 'design_pack_picker_card'
+  },
+  design_pack_overridden: {
+    type: 'user_action_taken',
+    kind: 'design_pack_override',
+    scope: 'run',
+    ui_hint: 'scaffold_card'
+  },
+
+  // ========== STEP 35.6: Post-Scaffold Next Steps ==========
+
+  next_steps_shown: {
+    type: 'progress_updated',
+    kind: 'next_steps',
+    scope: 'run',
+    ui_hint: 'next_steps_card'
+  },
+  next_step_selected: {
+    type: 'user_action_taken',
+    kind: 'next_step_selection',
+    scope: 'run',
+    ui_hint: 'next_steps_card'
+  },
+  next_step_dismissed: {
+    type: 'user_action_taken',
+    kind: 'next_step_dismiss',
+    scope: 'run',
+    ui_hint: 'next_steps_card'
+  },
+
+  // ========== STEP 35.7: Non-Empty Directory + Monorepo Targeting ==========
+
+  scaffold_preflight_decision_needed: {
+    type: 'decision_point_needed',
+    kind: 'scaffold_preflight',
+    scope: 'run',
+    ui_hint: 'preflight_decision_card'
+  },
+  scaffold_preflight_decision_taken: {
+    type: 'user_action_taken',
+    kind: 'scaffold_preflight_decision',
+    scope: 'run',
+    ui_hint: 'preflight_decision_card'
+  },
+  scaffold_write_blocked: {
+    type: 'error_raised',
+    kind: 'scaffold_write_safety',
+    code: 'SCAFFOLD_WRITE_BLOCKED',
+    scope: 'run',
+    ui_hint: 'scaffold_error_card'
+  },
 };
 
 // ============================================================================
