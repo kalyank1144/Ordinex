@@ -720,6 +720,102 @@ export const EVENT_CARD_MAP: Record<EventType, EventCardConfig> = {
       const reasons = (e.payload.reasons as string[]) || [];
       return reasons.length > 0 ? reasons[0] : 'Plan exceeds thresholds';
     }
+  },
+
+  // ========== Step 34: Auto-Verify + Repair ==========
+  verify_started: {
+    icon: '🔍',
+    title: 'Verify Started',
+    color: 'var(--vscode-charts-blue)',
+    getSummary: (e) => {
+      const commands = (e.payload.commands as string[]) || [];
+      return commands.length > 0 ? `Running ${commands.length} verification command(s)` : 'Starting verification';
+    }
+  },
+  verify_completed: {
+    icon: '✅',
+    title: 'Verify Completed',
+    color: 'var(--vscode-charts-green)',
+    getSummary: (e) => {
+      const success = e.payload.success as boolean;
+      return success ? 'Verification passed' : 'Verification failed';
+    }
+  },
+  verify_proposed: {
+    icon: '🔍',
+    title: 'Verify Proposed',
+    color: 'var(--vscode-charts-yellow)',
+    getSummary: (e) => {
+      const commands = (e.payload.commands as string[]) || [];
+      return `Proposed ${commands.length} verification command(s)`;
+    }
+  },
+  verify_skipped: {
+    icon: '⏭️',
+    title: 'Verify Skipped',
+    color: 'var(--vscode-descriptionForeground)',
+    getSummary: (e) => {
+      const reason = e.payload.reason as string || 'No verification needed';
+      return reason;
+    }
+  },
+  command_started: {
+    icon: '▶️',
+    title: 'Command Started',
+    color: 'var(--vscode-charts-blue)',
+    getSummary: (e) => {
+      const command = e.payload.command as string || '';
+      const index = e.payload.index as number;
+      const total = e.payload.total as number;
+      if (index && total) {
+        return `[${index}/${total}] ${command.substring(0, 50)}${command.length > 50 ? '...' : ''}`;
+      }
+      return command.substring(0, 60) || 'Executing command';
+    }
+  },
+  command_completed: {
+    icon: '✅',
+    title: 'Command Completed',
+    color: 'var(--vscode-charts-green)',
+    getSummary: (e) => {
+      const command = e.payload.command as string || '';
+      const exitCode = e.payload.exit_code as number;
+      const duration = e.payload.duration_ms as number;
+      const success = exitCode === 0;
+      const cmdShort = command.substring(0, 30);
+      return `${success ? '✓' : '✗'} ${cmdShort}${duration ? ` (${Math.round(duration/1000)}s)` : ''} → exit ${exitCode}`;
+    }
+  },
+
+  // ========== Step 34.5: Command Execution Phase ==========
+  command_proposed: {
+    icon: '📋',
+    title: 'Command Proposed',
+    color: 'var(--vscode-charts-yellow)',
+    getSummary: (e) => {
+      const commands = (e.payload.commands as any[]) || [];
+      const context = e.payload.context as string || '';
+      return `${commands.length} command(s) proposed${context ? ` (${context})` : ''}`;
+    }
+  },
+  command_skipped: {
+    icon: '⏭️',
+    title: 'Command Skipped',
+    color: 'var(--vscode-descriptionForeground)',
+    getSummary: (e) => {
+      const reason = e.payload.reason as string || 'Command execution skipped';
+      return reason;
+    }
+  },
+  command_progress: {
+    icon: '⏳',
+    title: 'Command Progress',
+    color: 'var(--vscode-descriptionForeground)',
+    getSummary: (e) => {
+      const command = e.payload.command as string || '';
+      const outputLength = e.payload.output_length as number || 0;
+      return `${command.substring(0, 30)}... (${outputLength} bytes)`;
+    }
   }
 };
 
@@ -732,6 +828,7 @@ export const STAGE_CONFIG: Record<Stage, { title: string; icon: string; color: s
   edit: { title: 'Editing', icon: '✏️', color: 'var(--vscode-charts-yellow)' },
   test: { title: 'Testing', icon: '🧪', color: 'var(--vscode-charts-green)' },
   repair: { title: 'Repair', icon: '🔧', color: 'var(--vscode-charts-orange)' },
+  command: { title: 'Command', icon: '▶️', color: 'var(--vscode-charts-blue)' },
   none: { title: 'Initializing', icon: '⚡', color: 'var(--vscode-descriptionForeground)' }
 };
 
@@ -817,6 +914,11 @@ export function renderEventCard(event: Event, taskId?: string): string {
         </div>
       </div>
     `;
+  }
+
+  // Decision point card (generic decision actions)
+  if (event.type === 'decision_point_needed' && taskId) {
+    return renderDecisionPointCard(event, taskId);
   }
   
   // PLAN mode specialized renderer
@@ -907,6 +1009,67 @@ export function renderEventCard(event: Event, taskId?: string): string {
       </div>
       <div class="event-summary">${escapeHtml(summary)}</div>
       ${hasEvidence ? `<div class="event-evidence">📎 ${event.evidence_ids.length} evidence item(s)</div>` : ''}
+    </div>
+  `;
+}
+
+function renderDecisionPointCard(event: Event, taskId: string): string {
+  const title = (event.payload.title as string) || 'Decision Needed';
+  const description = (event.payload.description as string) || (event.payload.reason as string) || 'Choose an action to continue.';
+  const rawOptions = event.payload.options as any[] | undefined;
+  const decisionId = event.event_id;
+
+  const options = (rawOptions || []).map((option) => {
+    if (typeof option === 'string') {
+      return { label: option, action: option, description: '' };
+    }
+    return {
+      label: (option.label as string) || (option.action as string) || 'Choose',
+      action: (option.action as string) || (option.label as string) || '',
+      description: (option.description as string) || ''
+    };
+  });
+
+  const actionsHtml = options.length > 0
+    ? options.map((option) => {
+        return `
+          <button class="approval-btn approve" onclick="handleDecisionPoint('${escapeJsString(taskId)}', '${escapeJsString(decisionId)}', '${escapeJsString(option.action || '')}')">
+            ${escapeHtml(option.label)}
+          </button>
+        `;
+      }).join('')
+    : `
+      <button class="approval-btn approve" onclick="handleDecisionPoint('${escapeJsString(taskId)}', '${escapeJsString(decisionId)}', 'continue')">
+        Continue
+      </button>
+    `;
+
+  const descriptionsHtml = options.some((o) => o.description)
+    ? `
+      <div class="approval-details">
+        ${options.map((o) => o.description ? `<div class="detail-row"><span class="detail-label">${escapeHtml(o.label)}:</span><span class="detail-value">${escapeHtml(o.description)}</span></div>` : '').join('')}
+      </div>
+    `
+    : '';
+
+  return `
+    <div class="approval-card" data-decision-id="${escapeHtml(decisionId)}">
+      <div class="approval-card-header">
+        <div class="approval-card-header-left">
+          <span class="approval-icon">🤔</span>
+          <div class="approval-card-title">
+            <div class="approval-type-label">${escapeHtml(title)}</div>
+            <div class="approval-id">ID: ${escapeHtml(decisionId.substring(0, 8))}</div>
+          </div>
+        </div>
+      </div>
+      <div class="approval-card-body">
+        <div class="approval-summary">${escapeHtml(description)}</div>
+        ${descriptionsHtml}
+      </div>
+      <div class="approval-card-actions">
+        ${actionsHtml}
+      </div>
     </div>
   `;
 }
@@ -1043,6 +1206,10 @@ function renderExecutePlanButton(taskId: string): string {
 /**
  * Utility functions
  */
+
+function escapeJsString(value: string): string {
+  return String(value).replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+}
 function formatTimestamp(isoString: string): string {
   const date = new Date(isoString);
   return date.toLocaleTimeString('en-US', { 

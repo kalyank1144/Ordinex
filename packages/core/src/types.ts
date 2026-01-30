@@ -93,7 +93,18 @@ export type EventType =
   | 'edit_chunk_started'
   | 'edit_chunk_completed'
   | 'edit_chunk_failed'
-  | 'edit_step_paused';
+  | 'edit_step_paused'
+  // Step 34: Auto-Verify + Repair
+  | 'verify_started'
+  | 'verify_completed'
+  | 'verify_proposed'
+  | 'verify_skipped'
+  | 'command_started'
+  | 'command_completed'
+  // Step 34.5: Command Execution Phase
+  | 'command_proposed'
+  | 'command_skipped'
+  | 'command_progress';
 
 export const CANONICAL_EVENT_TYPES: readonly EventType[] = [
   'intent_received',
@@ -173,11 +184,142 @@ export const CANONICAL_EVENT_TYPES: readonly EventType[] = [
   'edit_chunk_completed',
   'edit_chunk_failed',
   'edit_step_paused',
+  // Step 34: Auto-Verify + Repair
+  'verify_started',
+  'verify_completed',
+  'verify_proposed',
+  'verify_skipped',
+  'command_started',
+  'command_completed',
+  // Step 34.5: Command Execution Phase
+  'command_proposed',
+  'command_skipped',
+  'command_progress',
 ] as const;
 
 export type Mode = 'ANSWER' | 'PLAN' | 'MISSION';
 
-export type Stage = 'plan' | 'retrieve' | 'edit' | 'test' | 'repair' | 'none';
+/**
+ * Step 33: Behavior Types (Pre-execution intelligence layer)
+ * 
+ * Behavior is selected FIRST, Mode is a downstream consequence.
+ * This prevents forcing all interactions into PLAN/MISSION while preserving safety.
+ */
+export type Behavior = 'ANSWER' | 'CLARIFY' | 'QUICK_ACTION' | 'PLAN' | 'CONTINUE_RUN';
+
+/**
+ * Context source type for intent analysis
+ */
+export type ContextSourceType = 'fresh' | 'follow_up' | 'explicit_reference';
+
+/**
+ * Context source tracking
+ */
+export interface ContextSource {
+  type: ContextSourceType;
+  files?: string[];
+  previous_task_id?: string;
+}
+
+/**
+ * Clarification option for UI action buttons
+ */
+export interface ClarificationOption {
+  label: string;
+  action: 'provide_file' | 'provide_scope' | 'confirm_intent' | 'cancel';
+  value?: string;
+}
+
+/**
+ * Clarification request (when CLARIFY behavior is selected)
+ */
+export interface ClarificationRequest {
+  question: string;
+  options: ClarificationOption[];
+}
+
+/**
+ * Intent Analysis Result (Core of Step 33)
+ * 
+ * This is the output contract of the Intent Analyzer.
+ * Behavior is primary; mode is derived downstream.
+ */
+export interface IntentAnalysis {
+  /** Selected behavior (primary decision) */
+  behavior: Behavior;
+  
+  /** Context source information */
+  context_source: ContextSource;
+  
+  /** Clarification request (only if behavior === 'CLARIFY') */
+  clarification?: ClarificationRequest;
+  
+  /** Confidence score 0-1 */
+  confidence: number;
+  
+  /** Human-readable reasoning */
+  reasoning: string;
+  
+  /** Derived mode (downstream of behavior) */
+  derived_mode: Mode;
+  
+  /** Detected scope (for QUICK_ACTION vs PLAN decision) */
+  detected_scope?: 'trivial' | 'small' | 'medium' | 'large';
+  
+  /** Files referenced or detected */
+  referenced_files?: string[];
+  
+  /** Whether user override was used */
+  user_override?: string;
+}
+
+/**
+ * Active run status (for CONTINUE_RUN behavior)
+ */
+export interface ActiveRunStatus {
+  task_id: string;
+  mission_id?: string;
+  stage: string;
+  status: 'running' | 'paused' | 'awaiting_approval';
+  started_at: string;
+  last_event_at: string;
+}
+
+/**
+ * Continue run options
+ */
+export interface ContinueRunOptions {
+  resume: boolean;
+  pause: boolean;
+  abort: boolean;
+  propose_fix: boolean;
+}
+
+/**
+ * Scope detection result
+ */
+export interface ScopeDetectionResult {
+  scope: 'trivial' | 'small' | 'medium' | 'large';
+  confidence: number;
+  reasons: string[];
+  metrics: {
+    estimated_files: number;
+    complexity_score: number;
+    has_dependencies: boolean;
+  };
+}
+
+/**
+ * Reference resolution result
+ */
+export interface ReferenceResolution {
+  resolved: boolean;
+  source?: 'last_applied_diff' | 'last_open_editor' | 'last_artifact_proposed';
+  files?: string[];
+  context?: string;
+}
+
+export type Stage = 'plan' | 'retrieve' | 'edit' | 'test' | 'repair' | 'command' | 'none';
 
 /**
  * Mode Classification V2 - Reason tags for transparency
@@ -341,6 +483,47 @@ export interface PlanMeta {
   
   /** LLM's confidence in plan scope accuracy */
   confidence: 'low' | 'medium' | 'high';
+}
+
+// ============================================================================
+// STEP 34.5: COMMAND EXECUTION PHASE TYPES
+// ============================================================================
+
+/**
+ * Command kind classification (finite vs long-running)
+ */
+export type CommandKind = 'finite' | 'long_running';
+
+/**
+ * Execution context for command phase
+ */
+export type CommandExecutionContext = 'verify' | 'user_run';
+
+/**
+ * Command phase result
+ */
+export interface CommandPhaseResult {
+  status: 'success' | 'failure' | 'skipped' | 'awaiting_approval';
+  failedCommand?: string;
+  exitCode?: number;
+  evidenceRefs: string[];
+  executedCommands: string[];
+  durationMs: number;
+  skipReason?: string;
+}
+
+/**
+ * Single command execution result
+ */
+export interface SingleCommandResult {
+  command: string;
+  kind: CommandKind;
+  exitCode: number;
+  stdout: string;
+  stderr: string;
+  truncated: boolean;
+  durationMs: number;
+  evidenceId: string;
 }
 
 // ============================================================================

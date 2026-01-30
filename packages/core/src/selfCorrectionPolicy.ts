@@ -1,8 +1,14 @@
 /**
- * Self-Correction Policy - Step 28
+ * Self-Correction Policy - Step 28 + Step 32 Universal Recovery
  * 
  * Configurable policy for bounded self-correction loops.
  * Controls iteration limits, timeout behaviors, and stop conditions.
+ * 
+ * STEP 32 EXTENSION: Universal recovery policy for ALL executors
+ * - RecoveryPolicy: Unified bounded retry/recovery configuration
+ * - DecisionPoint: Standardized decision structure for UI
+ * - getRecoveryPhase: Recovery ladder (retry → split → regenerate → pause)
+ * - createDecisionPoint: Generate decision points from errors
  * 
  * V1 SAFE VERSION:
  * - REMOVED: allowAutoRetryOnKnownTransient (do not implement)
@@ -10,8 +16,419 @@
  * - Prefer pause over guessing
  */
 
+import { 
+  ErrorDescriptor, 
+  ErrorCategory, 
+  ErrorCode, 
+  SuggestedAction 
+} from './failureClassifier';
+
 // ============================================================================
-// POLICY TYPES
+// UNIVERSAL RECOVERY POLICY (Step 32)
+// ============================================================================
+
+/**
+ * Universal recovery policy - used by ALL executors
+ * Wraps SelfCorrectionPolicy and adds general recovery configuration
+ */
+export interface RecoveryPolicy {
+  /** Maximum retries per attempt before escalating (default: 2) */
+  maxRetriesPerAttempt: number;
+  
+  /** Maximum recovery phases per step: retry → split → regenerate → pause (default: 3) */
+  maxRecoveryPhasesPerStep: number;
+  
+  /** Maximum patch regeneration attempts on APPLY_CONFLICT (default: 1) */
+  maxPatchRegenerateAttempts: number;
+  
+  /** Backoff configuration for transient errors */
+  backoffForTransient: {
+    enabled: boolean;
+    baseDelayMs: number;
+    maxDelayMs: number;
+  };
+  
+  /** Idempotency rules - NEVER violate these */
+  idempotencyRules: {
+    /** Never retry after a tool has executed with side effects */
+    neverRetryAfterToolSideEffect: boolean;
+    /** Never apply partial/truncated output */
+    neverApplyPartialOutput: boolean;
+  };
+}
+
+/**
+ * Default universal recovery policy
+ */
+export const DEFAULT_RECOVERY_POLICY: RecoveryPolicy = {
+  maxRetriesPerAttempt: 2,
+  maxRecoveryPhasesPerStep: 3,
+  maxPatchRegenerateAttempts: 1, // 1 automatic attempt, then pause
+  backoffForTransient: {
+    enabled: true,
+    baseDelayMs: 2000,
+    maxDelayMs: 30000,
+  },
+  idempotencyRules: {
+    neverRetryAfterToolSideEffect: true,
+    neverApplyPartialOutput: true,
+  },
+};
+
+/**
+ * Recovery phase in the recovery ladder (in order)
+ */
+export type RecoveryPhase =
+  | 'RETRY_SAME'           // A) Retry as-is (transient network, before side effect)
+  | 'RETRY_SPLIT'          // B) Split by file (truncation)
+  | 'REGENERATE_PATCH'     // C) Regenerate with fresh context (stale/conflict)
+  | 'DECISION_POINT';      // D) Pause and ask user
+
+/**
+ * Recovery state for tracking progress through recovery phases
+ */
+export interface RecoveryState {
+  /** Number of retries attempted in current phase */
+  retryCount: number;
+  
+  /** Whether split-by-file has been attempted */
+  splitAttempted: boolean;
+  
+  /** Whether patch regeneration has been attempted */
+  regenerateAttempted: boolean;
+  
+  /** Whether a tool has executed with side effects */
+  toolHadSideEffect: boolean;
+}
+
+/**
+ * Create initial recovery state
+ */
+export function createRecoveryState(): RecoveryState {
+  return {
+    retryCount: 0,
+    splitAttempted: false,
+    regenerateAttempted: false,
+    toolHadSideEffect: false,
+  };
+}
+
+/**
+ * Get the appropriate recovery phase based on error and state
+ * 
+ * Recovery ladder (in order):
+ * 1. RETRY_SAME - For transient network/rate limits, before any side effect
+ * 2. RETRY_SPLIT - For truncation, split by file and retry
+ * 3. REGENERATE_PATCH - For apply conflicts, regenerate with fresh context
+ * 4. DECISION_POINT - When recovery fails, pause for user decision
+ */
+export function getRecoveryPhase(
+  error: ErrorDescriptor,
+  state: RecoveryState,
+  policy: RecoveryPolicy
+): RecoveryPhase {
+  // Rule 1: NEVER retry after tool side effect
+  if (state.toolHadSideEffect && policy.idempotencyRules.neverRetryAfterToolSideEffect) {
+    return 'DECISION_POINT';
+  }
+
+  // Rule 2: NEVER apply partial output
+  if (error.category === 'LLM_TRUNCATION' && policy.idempotencyRules.neverApplyPartialOutput) {
+    // Can try splitting
+    if (!state.splitAttempted) {
+      return 'RETRY_SPLIT';
+    }
+    return 'DECISION_POINT';
+  }
+
+  // Recovery ladder based on error category
+  switch (error.category) {
+    // Transient errors: retry with backoff (bounded)
+    case 'NETWORK_TRANSIENT':
+    case 'RATE_LIMIT':
+      if (state.retryCount < policy.maxRetriesPerAttempt) {
+        return 'RETRY_SAME';
+      }
+      return 'DECISION_POINT';
+
+    // LLM output errors: retry or split
+    case 'LLM_TRUNCATION':
+      if (!state.splitAttempted) {
+        return 'RETRY_SPLIT';
+      }
+      return 'DECISION_POINT';
+
+    case 'LLM_OUTPUT_INVALID':
+      if (state.retryCount < policy.maxRetriesPerAttempt) {
+        return 'RETRY_SAME';
+      }
+      return 'DECISION_POINT';
+
+    // Apply conflicts: regenerate with fresh context (bounded)
+    case 'APPLY_CONFLICT':
+      if (!state.regenerateAttempted && policy.maxPatchRegenerateAttempts > 0) {
+        return 'REGENERATE_PATCH';
+      }
+      return 'DECISION_POINT';
+
+    // Verification failures: need user decision (code fix required)
+    case 'VERIFY_FAILURE':
+      return 'DECISION_POINT';
+
+    // Workspace/permission/tool errors: need user decision
+    case 'WORKSPACE_STATE':
+    case 'PERMISSION':
+    case 'TOOL_FAILURE':
+    case 'USER_INPUT':
+    case 'INTERNAL_BUG':
+    default:
+      return 'DECISION_POINT';
+  }
+}
+
+/**
+ * Calculate backoff delay for transient errors
+ */
+export function calculateBackoffDelay(
+  retryCount: number,
+  policy: RecoveryPolicy
+): number {
+  if (!policy.backoffForTransient.enabled) {
+    return 0;
+  }
+  
+  // Exponential backoff with jitter
+  const baseDelay = policy.backoffForTransient.baseDelayMs;
+  const maxDelay = policy.backoffForTransient.maxDelayMs;
+  
+  const exponentialDelay = baseDelay * Math.pow(2, retryCount);
+  const jitter = Math.random() * 1000;
+  
+  return Math.min(exponentialDelay + jitter, maxDelay);
+}
+
+// ============================================================================
+// STANDARDIZED DECISION POINTS (Step 32)
+// ============================================================================
+
+/**
+ * Action type for decision options - maps to deterministic behavior
+ */
+export type DecisionActionType =
+  | { type: 'RETRY_SAME' }
+  | { type: 'RETRY_SPLIT' }
+  | { type: 'REGENERATE_PATCH' }
+  | { type: 'SKIP_FILE'; file: string }
+  | { type: 'ABORT_STEP' }
+  | { type: 'PROVIDE_INFO'; prompt: string };
+
+/**
+ * Standardized decision option for user
+ */
+export interface StandardDecisionOption {
+  /** Unique identifier */
+  id: string;
+  
+  /** Button label */
+  label: string;
+  
+  /** Optional description */
+  description?: string;
+  
+  /** The deterministic action this option triggers */
+  action: DecisionActionType;
+  
+  /** Whether this action is safe (no side effects) */
+  safe: boolean;
+  
+  /** Whether this is the default/recommended option */
+  isDefault?: boolean;
+}
+
+/**
+ * Standardized decision point - emitted when recovery can't proceed
+ */
+export interface DecisionPoint {
+  /** Unique identifier for this decision point */
+  id: string;
+  
+  /** Human-readable title (e.g., "Apply Failed") */
+  title: string;
+  
+  /** One-paragraph summary of the situation */
+  summary: string;
+  
+  /** Available options (buttons) */
+  options: StandardDecisionOption[];
+  
+  /** Context for UI rendering and state */
+  context: {
+    /** Immutable run identifier */
+    run_id: string;
+    
+    /** Step where error occurred */
+    step_id: string;
+    
+    /** Attempt number within step */
+    attempt_id: string;
+    
+    /** Error code for programmatic handling */
+    error_code: ErrorCode;
+    
+    /** Error category for styling/grouping */
+    error_category: ErrorCategory;
+    
+    /** Affected files if known */
+    affected_files?: string[];
+  };
+}
+
+/**
+ * Generate title for decision point based on error
+ */
+function getDecisionPointTitle(error: ErrorDescriptor): string {
+  const titles: Record<ErrorCategory, string> = {
+    'USER_INPUT': 'Additional Information Needed',
+    'WORKSPACE_STATE': 'File or Directory Issue',
+    'LLM_TRUNCATION': 'Output Truncated',
+    'LLM_OUTPUT_INVALID': 'Invalid Response',
+    'TOOL_FAILURE': 'Tool Execution Failed',
+    'APPLY_CONFLICT': 'Changes Could Not Be Applied',
+    'VERIFY_FAILURE': 'Verification Failed',
+    'NETWORK_TRANSIENT': 'Network Issue',
+    'RATE_LIMIT': 'Rate Limited',
+    'PERMISSION': 'Permission Denied',
+    'INTERNAL_BUG': 'Unexpected Error',
+  };
+  
+  return titles[error.category] || 'Action Required';
+}
+
+/**
+ * Generate options for decision point based on error
+ */
+function getDecisionPointOptions(
+  error: ErrorDescriptor,
+  context: { file?: string }
+): StandardDecisionOption[] {
+  const options: StandardDecisionOption[] = [];
+  
+  // Add context-specific options based on error category
+  switch (error.category) {
+    case 'NETWORK_TRANSIENT':
+    case 'RATE_LIMIT':
+      options.push({
+        id: 'retry',
+        label: 'Retry Now',
+        description: 'Try the operation again',
+        action: { type: 'RETRY_SAME' },
+        safe: true,
+        isDefault: true,
+      });
+      break;
+      
+    case 'LLM_TRUNCATION':
+      options.push({
+        id: 'split',
+        label: 'Split and Retry',
+        description: 'Split into smaller operations and retry',
+        action: { type: 'RETRY_SPLIT' },
+        safe: true,
+        isDefault: true,
+      });
+      break;
+      
+    case 'APPLY_CONFLICT':
+      options.push({
+        id: 'regenerate',
+        label: 'Regenerate Changes',
+        description: 'Get fresh changes with current file content',
+        action: { type: 'REGENERATE_PATCH' },
+        safe: true,
+        isDefault: true,
+      });
+      if (context.file) {
+        options.push({
+          id: 'skip_file',
+          label: `Skip ${context.file}`,
+          description: 'Continue without changing this file',
+          action: { type: 'SKIP_FILE', file: context.file },
+          safe: true,
+        });
+      }
+      break;
+      
+    case 'WORKSPACE_STATE':
+      if (error.code === 'FILE_NOT_FOUND') {
+        options.push({
+          id: 'provide_path',
+          label: 'Specify Correct Path',
+          description: 'Provide the correct file path',
+          action: { type: 'PROVIDE_INFO', prompt: 'Enter the correct file path:' },
+          safe: true,
+          isDefault: true,
+        });
+      }
+      break;
+      
+    case 'LLM_OUTPUT_INVALID':
+      options.push({
+        id: 'retry',
+        label: 'Retry',
+        description: 'Try again',
+        action: { type: 'RETRY_SAME' },
+        safe: true,
+        isDefault: true,
+      });
+      break;
+  }
+  
+  // Always add abort option
+  options.push({
+    id: 'abort',
+    label: 'Stop Step',
+    description: 'Abort this step and pause the mission',
+    action: { type: 'ABORT_STEP' },
+    safe: true,
+    isDefault: options.length === 0,
+  });
+  
+  return options;
+}
+
+/**
+ * Create a standardized decision point from an error
+ */
+export function createDecisionPoint(
+  error: ErrorDescriptor,
+  context: {
+    run_id: string;
+    step_id: string;
+    attempt_id: string;
+    file?: string;
+    affected_files?: string[];
+  }
+): DecisionPoint {
+  const id = `decision_${context.step_id}_${context.attempt_id}_${Date.now()}`;
+  
+  return {
+    id,
+    title: getDecisionPointTitle(error),
+    summary: error.user_message,
+    options: getDecisionPointOptions(error, { file: context.file }),
+    context: {
+      run_id: context.run_id,
+      step_id: context.step_id,
+      attempt_id: context.attempt_id,
+      error_code: error.code,
+      error_category: error.category,
+      affected_files: context.affected_files || (context.file ? [context.file] : undefined),
+    },
+  };
+}
+
+// ============================================================================
+// SELF-CORRECTION POLICY (Step 28 - Preserved)
 // ============================================================================
 
 /**
@@ -235,11 +652,12 @@ export function checkStopConditions(
 }
 
 // ============================================================================
-// DECISION POINT OPTIONS
+// LEGACY DECISION OPTIONS (Step 28 - Preserved for backward compatibility)
 // ============================================================================
 
 /**
- * Decision point option for user
+ * Decision point option for user (legacy format)
+ * @deprecated Use StandardDecisionOption instead
  */
 export interface DecisionOption {
   id: string;
@@ -250,7 +668,8 @@ export interface DecisionOption {
 }
 
 /**
- * Generate decision options based on stop reason
+ * Generate decision options based on stop reason (legacy format)
+ * @deprecated Use createDecisionPoint instead
  */
 export function generateDecisionOptions(
   stopReason: StopReason,

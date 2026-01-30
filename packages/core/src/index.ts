@@ -451,3 +451,98 @@ export type {
   FileOperationClass,
   FileOperationIssue,
 } from './fileOperationClassifier';
+
+// Step 33: Mode Behavior Refinement (Pre-execution Intelligence Layer)
+export {
+  analyzeIntent,
+  detectActiveRun,
+  isPureQuestion,
+  resolveReferences,
+  detectScope,
+  extractReferencedFiles,
+  INTENT_ANALYZER_CONFIG,
+  USER_OVERRIDES,
+} from './intentAnalyzer';
+
+export type {
+  IntentAnalysisContext,
+} from './intentAnalyzer';
+
+export {
+  executeBehavior,
+  processClarificationResponse,
+  processContinueRunResponse,
+  behaviorToMode,
+  behaviorRequiresResponse,
+  behaviorModifiesState,
+} from './behaviorHandlers';
+
+export type {
+  BehaviorHandlerResult,
+  HandlerContext,
+} from './behaviorHandlers';
+
+// Step 34: Auto-Verify + Repair (Phase-Based, Enterprise-Safe)
+export {
+  DEFAULT_VERIFY_POLICY,
+  isCommandSafe,
+} from './verifyPolicy';
+
+export type {
+  VerifyMode,
+  VerifyPolicyConfig,
+  DiscoveredCommand,
+  VerifyStatus,
+  VerifyPhaseResult,
+  CommandExecutionResult,
+} from './verifyPolicy';
+
+export {
+  discoverVerifyCommands,
+  filterSafeCommands,
+  getDiscoverySummary,
+  createNoCommandsDecisionOptions,
+  createNoSafeCommandsDecisionOptions,
+} from './commandDiscovery';
+
+export {
+  runVerifyPhase,
+  shouldRunVerify,
+  clearVerifyBatchTracking,
+} from './verifyPhase';
+
+export type {
+  VerifyPhaseContext,
+} from './verifyPhase';
+
+// Step 34.5: Command Execution Phase (Shared, Reusable, Replay-Safe)
+export {
+  DEFAULT_COMMAND_POLICY,
+  classifyCommandKind,
+  isCommandSafe as isCommandSafeForExecution,
+  resolveCommandPolicy,
+  serializeCommandPolicy,
+  deserializeCommandPolicy,
+} from './commandPolicy';
+
+export type {
+  CommandMode,
+  CommandPolicyConfig,
+} from './commandPolicy';
+
+export {
+  runCommandPhase,
+} from './commandPhase';
+
+export type {
+  CommandPhaseContext,
+} from './commandPhase';
+
+export {
+  detectCommandIntent,
+  matchesCommandPattern,
+} from './userCommandDetector';
+
+export type {
+  CommandIntentResult,
+} from './userCommandDetector';

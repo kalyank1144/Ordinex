@@ -2862,6 +2862,11 @@ export function getWebviewContent(): string {
           \`;
         }
 
+        // Special handling for decision_point_needed - render action buttons
+        if (event.type === 'decision_point_needed') {
+          return renderDecisionPointCard(event);
+        }
+
         // Special handling for plan_large_detected - render explanation card
         if (event.type === 'plan_large_detected') {
           return renderLargePlanDetectedCard(event);
@@ -2919,6 +2924,68 @@ export function getWebviewContent(): string {
             </div>
             <div class="event-summary">\${escapeHtml(summary)}</div>
             \${hasEvidence ? \`<div class="event-evidence">📎 \${event.evidence_ids.length} evidence item(s)</div>\` : ''}
+          </div>
+        \`;
+      }
+
+      function renderDecisionPointCard(event) {
+        const title = event.payload.title || 'Decision Needed';
+        const description = event.payload.description || event.payload.reason || 'Choose an action to continue.';
+        const rawOptions = event.payload.options || [];
+        const decisionId = event.event_id;
+        const taskId = event.task_id;
+
+        const options = rawOptions.map(option => {
+          if (typeof option === 'string') {
+            return { label: option, action: option, description: '' };
+          }
+          return {
+            label: option.label || option.action || 'Choose',
+            action: option.action || option.label || '',
+            description: option.description || ''
+          };
+        });
+
+        const actionsHtml = options.length > 0
+          ? options.map(option => {
+              return \`
+                <button class="approval-btn approve" onclick="handleDecisionPoint('\${escapeJsString(taskId)}', '\${escapeJsString(decisionId)}', '\${escapeJsString(option.action || '')}')">
+                  \${escapeHtml(option.label)}
+                </button>
+              \`;
+            }).join('')
+          : \`
+            <button class="approval-btn approve" onclick="handleDecisionPoint('\${escapeJsString(taskId)}', '\${escapeJsString(decisionId)}', 'continue')">
+              Continue
+            </button>
+          \`;
+
+        const descriptionsHtml = options.some(o => o.description)
+          ? \`
+            <div class="approval-details">
+              \${options.map(o => o.description ? \`<div class="detail-row"><span class="detail-label">\${escapeHtml(o.label)}:</span><span class="detail-value">\${escapeHtml(o.description)}</span></div>\` : '').join('')}
+            </div>
+          \`
+          : '';
+
+        return \`
+          <div class="approval-card" data-decision-id="\${escapeHtml(decisionId)}">
+            <div class="approval-card-header">
+              <div class="approval-card-header-left">
+                <span class="approval-icon">🤔</span>
+                <div class="approval-card-title">
+                  <div class="approval-type-label">\${escapeHtml(title)}</div>
+                  <div class="approval-id">ID: \${escapeHtml(String(decisionId).substring(0, 8))}</div>
+                </div>
+              </div>
+            </div>
+            <div class="approval-card-body">
+              <div class="approval-summary">\${escapeHtml(description)}</div>
+              \${descriptionsHtml}
+            </div>
+            <div class="approval-card-actions">
+              \${actionsHtml}
+            </div>
           </div>
         \`;
       }
@@ -3400,6 +3467,56 @@ export function getWebviewContent(): string {
             color: 'var(--vscode-charts-yellow)',
             getSummary: (e) => \`\${(e.payload.options || []).length} option(s) available\`
           },
+          // Command Execution Events (Step 34.5)
+          command_proposed: {
+            icon: '💻',
+            title: 'Command Proposed',
+            color: 'var(--vscode-charts-blue)',
+            getSummary: (e) => {
+              const cmds = e.payload.commands || [];
+              if (cmds.length === 0) return 'No commands proposed';
+              const first = cmds[0]?.command || cmds[0] || '';
+              return cmds.length === 1 ? first : \`\${cmds.length} commands proposed\`;
+            }
+          },
+          command_started: {
+            icon: '▶️',
+            title: 'Command Started',
+            color: 'var(--vscode-charts-green)',
+            getSummary: (e) => {
+              const cmd = e.payload.command || '';
+              return cmd.length > 50 ? cmd.substring(0, 50) + '...' : cmd || 'Running command';
+            }
+          },
+          command_progress: {
+            icon: '📄',
+            title: 'Command Output',
+            color: 'var(--vscode-charts-blue)',
+            getSummary: (e) => {
+              const output = e.payload.output || e.payload.stdout || e.payload.stderr || '';
+              const lines = output.split('\\n').filter(l => l.trim()).length;
+              return \`\${lines} line(s) of output\`;
+            }
+          },
+          command_completed: {
+            icon: '✅',
+            title: 'Command Completed',
+            color: 'var(--vscode-charts-green)',
+            getSummary: (e) => {
+              const exitCode = e.payload.exit_code;
+              const success = exitCode === 0 || e.payload.success;
+              return success ? 'Completed successfully' : \`Exit code: \${exitCode}\`;
+            }
+          },
+          command_failed: {
+            icon: '❌',
+            title: 'Command Failed',
+            color: 'var(--vscode-charts-red)',
+            getSummary: (e) => {
+              const error = e.payload.error || e.payload.stderr || '';
+              return error.length > 50 ? error.substring(0, 50) + '...' : error || 'Command failed';
+            }
+          },
           // Step 29: Systems Tab Events
           run_scope_initialized: {
             icon: '📋',
@@ -3425,6 +3542,13 @@ export function getWebviewContent(): string {
           .replace(/>/g, '&gt;')
           .replace(/"/g, '&quot;')
           .replace(/'/g, '&#039;');
+      }
+
+      function escapeJsString(value) {
+        const backslash = String.fromCharCode(92);
+        return String(value)
+          .split(backslash).join(backslash + backslash)
+          .split("'").join(backslash + "'");
       }
 
       // ===== SYSTEMS VIEW MODEL REDUCER (Inline for webview) =====
@@ -4236,6 +4360,40 @@ export function getWebviewContent(): string {
             renderMission();
             renderLogs();
           }
+        }
+      };
+
+      // ===== DECISION POINT HANDLER =====
+      window.handleDecisionPoint = function(taskId, decisionEventId, action) {
+        console.log(\`handleDecisionPoint: \${decisionEventId}, \${action}\`);
+
+        if (typeof vscode !== 'undefined') {
+          vscode.postMessage({
+            type: 'ordinex:resolveDecisionPoint',
+            task_id: taskId,
+            decision_event_id: decisionEventId,
+            action: action
+          });
+        } else {
+          // Demo mode: simulate a resolved decision
+          const event = {
+            event_id: generateId(),
+            task_id: taskId,
+            timestamp: new Date().toISOString(),
+            type: 'clarification_received',
+            mode: state.currentMode,
+            stage: state.currentStage,
+            payload: {
+              decision_event_id: decisionEventId,
+              action: action,
+              decided_at: new Date().toISOString()
+            },
+            evidence_ids: [],
+            parent_event_id: null
+          };
+          state.events.push(event);
+          renderMission();
+          renderLogs();
         }
       };
 

@@ -2,16 +2,97 @@
  * EventBus: Persist before fan-out event distribution
  * Based on 05_TECHNICAL_IMPLEMENTATION_SPEC.md
  * 
+ * STEP 32 EXTENSION: Correlation ID support for error recovery tracking
+ * - run_id: Immutable identifier for a single execution run
+ * - step_id: Current step within the run
+ * - attempt_id: Retry attempt within a step
+ * - file_id: Optional per-file chunk identifier
+ * 
  * Requirements:
  * - Publish execution events
  * - Persist events immediately
  * - Notify subscribers (UI, logger, persistence)
  * - Append-only, ordered
  * - Synchronous persistence before fan-out
+ * - Correlation IDs for deterministic replay/audit
  */
 
 import { Event, EventType, Mode, Stage, PrimitiveEventType, isPrimitiveEventType } from './types';
 import { EventStore } from './eventStore';
+
+// ============================================================================
+// CORRELATION IDS (Step 32)
+// ============================================================================
+
+/**
+ * Event correlation identifiers for tracking and replay
+ * 
+ * IMPORTANT DISTINCTIONS:
+ * - task_id: User's thread/conversation/mission set (long-lived)
+ * - run_id: Single execution instance (immutable event stream)
+ * - step_id: Current step within the run
+ * - attempt_id: Retry attempt within a step
+ * - file_id: Optional per-file edit chunk
+ */
+export interface EventCorrelation {
+  /** Immutable run identifier - one run = one event stream */
+  run_id: string;
+  
+  /** Current step identifier */
+  step_id?: string;
+  
+  /** Retry attempt within step */
+  attempt_id?: string;
+  
+  /** Per-file chunk identifier for edit operations */
+  file_id?: string;
+}
+
+/**
+ * Generate a unique run ID for a new execution
+ * Format: run_<timestamp>_<random>
+ * 
+ * RULE: run_id is created ONCE at mission start and NEVER changes during execution.
+ * This ensures all events in a run can be correlated for replay/audit.
+ */
+export function generateRunId(): string {
+  const timestamp = Date.now().toString(36);
+  const random = Math.random().toString(36).substring(2, 10);
+  return `run_${timestamp}_${random}`;
+}
+
+/**
+ * Generate a step ID for a new step within a run
+ * Format: step_<run_id_suffix>_<index>
+ */
+export function generateStepId(runId: string, stepIndex: number): string {
+  const runSuffix = runId.split('_').pop() || runId;
+  return `step_${runSuffix}_${stepIndex}`;
+}
+
+/**
+ * Generate an attempt ID for a retry within a step
+ * Format: attempt_<step_id_suffix>_<index>
+ */
+export function generateAttemptId(stepId: string, attemptIndex: number): string {
+  const stepSuffix = stepId.split('_').pop() || stepId;
+  return `attempt_${stepSuffix}_${attemptIndex}`;
+}
+
+/**
+ * Generate a file ID for per-file edit tracking
+ * Format: file_<sha256_first8>_<path_hash>
+ */
+export function generateFileId(filePath: string): string {
+  // Simple hash for path
+  let hash = 0;
+  for (let i = 0; i < filePath.length; i++) {
+    const char = filePath.charCodeAt(i);
+    hash = ((hash << 5) - hash) + char;
+    hash = hash & hash; // Convert to 32bit integer
+  }
+  return `file_${Math.abs(hash).toString(36)}`;
+}
 
 export type EventSubscriber = (event: Event) => void | Promise<void>;
 

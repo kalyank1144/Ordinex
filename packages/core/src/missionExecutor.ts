@@ -826,7 +826,42 @@ export class MissionExecutor {
       };
 
       // Check for empty diff
+      // IMPORTANT: If all files explicitly returned "no_changes", that's a VALID success case
+      // This happens for analysis/examine steps where LLM determines no edits are actually needed
       if (parsedDiff.files.length === 0) {
+        // Check if this was a "no changes needed" case (success=true from truncation executor)
+        // vs an actual failure to produce changes
+        if (truncationResult.success && truncationResult.wasSplit) {
+          // All files returned no_changes - this is valid for examine/analyze steps
+          console.log(`[MissionExecutor] All files returned no_changes - treating as successful examination step`);
+          console.log(`[MissionExecutor] Notes: ${llmOutput.notes || 'No changes needed for this step'}`);
+          
+          // Emit a step_note event to inform user (not a failure)
+          await this.emitEvent({
+            event_id: randomUUID(),
+            task_id: this.taskId,
+            timestamp: new Date().toISOString(),
+            type: 'tool_end',
+            mode: this.mode,
+            stage: 'edit',
+            payload: {
+              tool: 'examine_files',
+              success: true,
+              result: 'No changes required',
+              notes: llmOutput.notes || 'Files examined - no modifications needed for this step',
+            },
+            evidence_ids: [],
+            parent_event_id: null,
+          });
+
+          // Return success - the step accomplished its goal (examination/analysis)
+          return {
+            success: true,
+            stage: 'edit',
+          };
+        }
+        
+        // Actual empty diff failure - LLM was supposed to produce changes but didn't
         await this.emitEvent({
           event_id: randomUUID(),
           task_id: this.taskId,
