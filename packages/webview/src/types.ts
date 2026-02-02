@@ -158,7 +158,32 @@ export type EventType =
   // Step 34.5: Command Execution Phase
   | 'command_proposed'
   | 'command_skipped'
-  | 'command_progress';
+  | 'command_progress'
+  // Step 37: Reference/Attachment Events
+  | 'reference_attached'
+  | 'reference_context_built'
+  | 'reference_used'
+  // Step 38: Vision Analysis Events
+  | 'vision_analysis_started'
+  | 'vision_analysis_completed'
+  | 'reference_tokens_extracted'
+  | 'reference_tokens_used'
+  // Step 35: Scaffold Flow Events
+  | 'scaffold_started'
+  | 'scaffold_proposal_created'
+  | 'scaffold_decision_resolved'
+  | 'scaffold_apply_started'
+  | 'scaffold_applied'
+  | 'scaffold_cancelled'
+  | 'scaffold_completed'
+  // Step 35: Post-Scaffold Orchestration Events
+  | 'scaffold_progress'
+  | 'design_pack_applied'
+  | 'scaffold_final_complete'
+  // Step 35.6: Next Steps
+  | 'next_steps_shown'
+  | 'next_step_selected'
+  | 'next_step_dismissed';
 
 export interface Event {
   event_id: string;

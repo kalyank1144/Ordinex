@@ -37,6 +37,7 @@ import {
 } from './types';
 import { Event } from './types';
 import { detectCommandIntent } from './userCommandDetector';
+import { detectGreenfieldIntent } from './intent/greenfieldDetector';
 import {
   buildReferenceContext,
   detectReferenceIntent,
@@ -750,9 +751,12 @@ function detectScope(
     };
   }
   
-  // Check for greenfield patterns → large
-  if (ACTION_PATTERNS.greenFieldPhrases.some(p => normalizedPrompt.includes(p))) {
-    reasons.push('greenfield project detected');
+  // CRITICAL FIX: Use centralized greenfield detector (handles -ing forms like "Creating")
+  // This fixes the bug where "Creating a new fitness app" wasn't detected as greenfield
+  // because the old phrase matching required exact "create a new" not "creating a new"
+  const greenfieldResult = detectGreenfieldIntent(prompt);
+  if (greenfieldResult.isMatch && greenfieldResult.confidence >= 0.65) {
+    reasons.push(`greenfield project detected: ${greenfieldResult.reason}`);
     return {
       scope: 'large',
       confidence: 0.95,
@@ -1022,35 +1026,73 @@ export function detectActiveRun(events: Event[]): ActiveRunStatus | null {
  * AND there is no existing active run requiring CONTINUE_RUN.
  */
 const GREENFIELD_PATTERNS = [
-  // Exact phrases
+  // Generic new app/project patterns (flexible matching)
+  'create new app',       // "create new fitness app"
   'create a new app',
+  'create new project',
   'create a new project',
+  'create new application',
+  'create a new application',
+  'start new project',
   'start a new project',
+  'start new app',
   'start a new app',
+  'build new app',
+  'build a new app',
+  'build new project',
+  'build a new project',
+  // Strong indicators
   'from scratch',
   'greenfield',
   'scaffold',
   'bootstrap',
+  'empty folder',
+  'empty directory',
+  'blank project',
   // Framework-specific
   'new nextjs app',
+  'new next.js app',
   'new next app',
   'new vite app',
   'new expo app',
   'new react app',
+  'new react native app',
   'new vue app',
   'new angular app',
   'new express app',
   'new node app',
   'new typescript project',
+  'new ts project',
+  // App type patterns (catch "new X app" where X is any word)
+  'new fitness app',
+  'new todo app',
+  'new dashboard app',
+  'new ecommerce app',
+  'new blog app',
+  'new chat app',
+  'new social app',
+  'new mobile app',
+  'new web app',
 ];
 
 /**
  * Check if prompt indicates a greenfield project request
  * 
+ * UPDATED: Uses the centralized greenfieldDetector for consistency
+ * 
  * @param prompt - User's input prompt
  * @returns true if greenfield patterns are detected
  */
 export function isGreenfieldRequest(prompt: string): boolean {
+  // Use the centralized greenfield detector (single source of truth)
+  const detection = detectGreenfieldIntent(prompt);
+  
+  // If high confidence, definitely greenfield
+  if (detection.isMatch && detection.confidence >= 0.65) {
+    return true;
+  }
+  
+  // Fallback: check legacy GREENFIELD_PATTERNS for backward compatibility
   const normalizedPrompt = prompt.toLowerCase();
   return GREENFIELD_PATTERNS.some(pattern => normalizedPrompt.includes(pattern));
 }
