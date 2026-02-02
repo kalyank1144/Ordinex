@@ -134,6 +134,8 @@ export type EventType =
   | 'next_steps_shown'
   | 'next_step_selected'
   | 'next_step_dismissed'
+  | 'next_step_error'
+  | 'next_step_routed'
   // Post-Scaffold Orchestration (after terminal command completes)
   | 'scaffold_progress'
   | 'design_pack_applied'
@@ -270,6 +272,8 @@ export const CANONICAL_EVENT_TYPES: readonly EventType[] = [
   'next_steps_shown',
   'next_step_selected',
   'next_step_dismissed',
+  'next_step_error',
+  'next_step_routed',
   // Post-Scaffold Orchestration (after terminal command completes)
   'scaffold_progress',
   'design_pack_applied',

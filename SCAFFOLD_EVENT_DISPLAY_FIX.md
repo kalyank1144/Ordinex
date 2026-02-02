@@ -138,3 +138,49 @@ User clicks Proceed
 ```
 
 All events now render properly instead of showing "Unknown event type".
+
+---
+
+## Additional Fix: Hydration Timing Issue (Feb 2026)
+
+### Problem
+Even with the ScaffoldCard render methods in place, scaffold events were still showing as "Unknown event type". The `<scaffold-card>` elements were being created in the DOM but not hydrated properly.
+
+### Root Cause
+The `hydrateScaffoldCards()` function in `packages/webview/src/index.ts` was silently failing when:
+1. The `scaffold-card` custom element wasn't defined yet when hydration ran
+2. The function returned early without setting event data
+
+### Fix Applied
+Updated `hydrateScaffoldCards()` to:
+1. Add console logging for debugging
+2. Wait for custom element definition with a retry mechanism (100ms delay)
+3. Properly log which events are being hydrated
+
+```javascript
+function hydrateScaffoldCards() {
+  const cards = missionTab.querySelectorAll('scaffold-card[data-event]');
+  console.log('[hydrateScaffoldCards] Found cards:', cards.length);
+  
+  // If custom element not defined yet, retry after delay
+  if (!customElements.get('scaffold-card') && cards.length > 0) {
+    setTimeout(hydrateScaffoldCards, 100);
+    return;
+  }
+  
+  cards.forEach((card) => {
+    const eventData = JSON.parse(decodeURIComponent(eventJson));
+    console.log('[hydrateScaffoldCards] Setting event data for type:', eventData.type);
+    card.event = eventData;
+    card.removeAttribute('data-event');
+  });
+}
+```
+
+### Files Changed
+- `packages/webview/src/index.ts` - Updated `hydrateScaffoldCards()` function
+
+### Testing
+After reload, check browser console for:
+- `[hydrateScaffoldCards] Found cards: N`
+- `[hydrateScaffoldCards] Setting event data for type: scaffold_progress`

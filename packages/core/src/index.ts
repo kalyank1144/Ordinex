@@ -652,10 +652,12 @@ export type {
 
 // Step 35.6: Next Steps Suggestions
 export {
-  generateNextSteps,
+  getNextStepsForRecipe,
   getNextStepById,
   shouldAlwaysPrompt,
   buildNextStepSelectedPayload,
+  buildNextStepsShownPayload,
+  detectDevServerCommand,
 } from './scaffold/nextSteps';
 
 export type {

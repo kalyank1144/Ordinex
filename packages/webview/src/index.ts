@@ -2439,14 +2439,27 @@ export function getWebviewContent(): string {
 
       function hydrateScaffoldCards() {
         const cards = missionTab.querySelectorAll('scaffold-card[data-event]');
+        console.log('[hydrateScaffoldCards] Found cards:', cards.length);
+        console.log('[hydrateScaffoldCards] customElements.get scaffold-card:', !!customElements.get('scaffold-card'));
+        
+        // If custom element not defined yet, try to wait for it
+        if (!customElements.get('scaffold-card') && cards.length > 0) {
+          console.log('[hydrateScaffoldCards] Waiting for custom element definition...');
+          // Retry after a short delay
+          setTimeout(hydrateScaffoldCards, 100);
+          return;
+        }
+        
         cards.forEach((card) => {
           try {
-            if (!customElements.get('scaffold-card')) {
+            const eventJson = card.getAttribute('data-event');
+            if (!eventJson) {
+              console.log('[hydrateScaffoldCards] No event data on card');
               return;
             }
-            const eventJson = card.getAttribute('data-event');
-            if (!eventJson) return;
-            card.event = JSON.parse(decodeURIComponent(eventJson));
+            const eventData = JSON.parse(decodeURIComponent(eventJson));
+            console.log('[hydrateScaffoldCards] Setting event data for type:', eventData.type);
+            card.event = eventData;
             card.removeAttribute('data-event');
           } catch (error) {
             console.error('[ScaffoldCard] Failed to parse event data:', error);

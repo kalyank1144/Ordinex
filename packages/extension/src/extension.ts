@@ -3400,7 +3400,7 @@ This demonstrates the diff proposal pipeline without requiring LLM integration.
 
       // Handle based on pipeline
       if (result.pipeline === 'command') {
-        const cmdPayload = result.payload as CommandRoutePayload;
+        const cmdPayload = result.payload as unknown as CommandRoutePayload;
 
         if (result.needs_approval) {
           // Emit decision point for command approval
