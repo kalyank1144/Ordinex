@@ -85,11 +85,45 @@ export class ScaffoldCard extends HTMLElement {
       case 'scaffold_proposal_created':
         body = this.renderProposal(event, payload);
         break;
+      case 'scaffold_decision_requested':
+        body = this.renderProposalWithActions(event, payload);
+        break;
       case 'scaffold_blocked':
         body = this.renderBlocked(payload);
         break;
       case 'scaffold_completed':
         body = this.renderCompleted(payload);
+        break;
+      case 'scaffold_style_selection_requested':
+        body = this.renderStylePicker(event, payload);
+        break;
+      case 'scaffold_style_selected':
+        body = this.renderStyleSelected(payload);
+        break;
+      case 'scaffold_decision_resolved':
+        body = this.renderDecisionResolved(payload);
+        break;
+      case 'scaffold_apply_started':
+        body = this.renderApplyStarted(payload);
+        break;
+      case 'scaffold_applied':
+        body = this.renderApplied(payload);
+        break;
+      case 'scaffold_cancelled':
+        body = this.renderCancelled(payload);
+        break;
+      // Post-scaffold orchestration events
+      case 'scaffold_progress':
+        body = this.renderProgress(payload);
+        break;
+      case 'design_pack_applied':
+        body = this.renderDesignPackApplied(payload);
+        break;
+      case 'next_steps_shown':
+        body = this.renderNextStepsShown(payload);
+        break;
+      case 'scaffold_final_complete':
+        body = this.renderFinalComplete(payload);
         break;
       default:
         body = `<div class="scaffold-card">Unknown scaffold event: ${this.escapeHtml(String(event.type))}</div>`;
@@ -207,6 +241,103 @@ export class ScaffoldCard extends HTMLElement {
             📌 Recipe and design pack selection coming in Step 35.5
           </div>
         ` : ''}
+        <div class="timestamp">${this.formatTimestamp(event.timestamp || '')}</div>
+      </div>
+    `;
+  }
+
+  private renderProposalWithActions(event: ScaffoldEvent, payload: Record<string, any>): string {
+    // Get the proposal content (reuse existing method logic)
+    const summary = payload.summary || 'Project scaffold proposal';
+    const recipe = payload.recipe || 'TBD';
+    const designPack = payload.design_pack || payload.design_pack_name || 'TBD';
+    const designPackId = payload.design_pack_id || '';
+    const tokensSummary = payload.design_tokens_summary || '';
+    const filesCount = payload.files_count || 0;
+    const dirsCount = payload.directories_count || 0;
+    
+    const referenceContext = payload.reference_context || null;
+    const styleSourceMode = payload.style_source_mode || 'combine_with_design_pack';
+    const hasReferences = referenceContext && 
+      ((referenceContext.images || []).length > 0 || (referenceContext.urls || []).length > 0);
+
+    const isTBD = (val: string | number) => !val || val === 'TBD' || val === 0;
+    const hasDesignPack = !isTBD(designPack) && designPackId;
+    
+    // Get action options from payload
+    const options = payload.options || [];
+    const proceedOption = options.find((o: any) => o.action === 'proceed') || { label: 'Proceed', disabled: false };
+    const cancelOption = options.find((o: any) => o.action === 'cancel') || { label: 'Cancel', disabled: false };
+    const changeStyleOption = options.find((o: any) => o.action === 'change_style');
+
+    return `
+      <div class="scaffold-card proposal">
+        <div class="header">
+          <span class="icon">📋</span>
+          <h3>Scaffold Proposal</h3>
+          <span class="badge proposal">Ready to Create</span>
+        </div>
+        <div class="summary-section">
+          <div class="prompt-label">Summary</div>
+          <div class="summary-text">${this.escapeHtml(String(summary))}</div>
+        </div>
+        
+        ${hasReferences ? this.renderReferenceSection(referenceContext, styleSourceMode) : ''}
+        
+        ${hasDesignPack ? `
+          <div class="design-pack-preview">
+            <div class="preview-header">
+              <span class="preview-label">Design Style</span>
+              ${changeStyleOption && !changeStyleOption.disabled ? `
+                <button class="change-style-btn" data-action="change_style">
+                  🎨 ${this.escapeHtml(changeStyleOption.label || 'Change Style')}
+                </button>
+              ` : ''}
+            </div>
+            <div class="preview-content">
+              <div class="preview-image-container">
+                <div class="preview-placeholder" data-pack-id="${this.escapeHtml(designPackId)}">
+                  <span class="pack-initial">${this.escapeHtml(designPack.charAt(0).toUpperCase())}</span>
+                </div>
+              </div>
+              <div class="preview-details">
+                <div class="pack-name">${this.escapeHtml(String(designPack))}</div>
+                ${tokensSummary ? `<div class="tokens-summary">${this.escapeHtml(tokensSummary)}</div>` : ''}
+              </div>
+            </div>
+          </div>
+        ` : ''}
+        
+        <div class="proposal-grid">
+          <div class="detail-item">
+            <div class="detail-label">Recipe</div>
+            <div class="detail-value ${isTBD(recipe) ? 'tbd' : ''}">${this.escapeHtml(String(recipe))}</div>
+          </div>
+          ${!hasDesignPack ? `
+            <div class="detail-item">
+              <div class="detail-label">Design Pack</div>
+              <div class="detail-value tbd">TBD</div>
+            </div>
+          ` : ''}
+          <div class="detail-item">
+            <div class="detail-label">Files to Create</div>
+            <div class="detail-value ${filesCount === 0 ? 'tbd' : ''}">${filesCount > 0 ? filesCount : 'TBD'}</div>
+          </div>
+          <div class="detail-item">
+            <div class="detail-label">Directories</div>
+            <div class="detail-value ${dirsCount === 0 ? 'tbd' : ''}">${dirsCount > 0 ? dirsCount : 'TBD'}</div>
+          </div>
+        </div>
+        
+        <div class="actions">
+          <button class="btn-primary" data-action="proceed" ${proceedOption.disabled ? 'disabled' : ''}>
+            ✅ ${this.escapeHtml(proceedOption.label || 'Proceed')}
+          </button>
+          <button class="btn-secondary" data-action="cancel" ${cancelOption.disabled ? 'disabled' : ''}>
+            ${this.escapeHtml(cancelOption.label || 'Cancel')}
+          </button>
+        </div>
+        
         <div class="timestamp">${this.formatTimestamp(event.timestamp || '')}</div>
       </div>
     `;
@@ -476,6 +607,373 @@ export class ScaffoldCard extends HTMLElement {
     `;
   }
 
+  // ========== STEP 35.5: Design Pack Picker Methods ==========
+
+  private renderStylePicker(event: ScaffoldEvent, payload: Record<string, any>): string {
+    const currentPackId = payload.current_pack_id || '';
+    const scaffoldId = payload.scaffold_id || '';
+    
+    // Hardcoded design pack options (from getDefaultPacksForPicker)
+    const packs = [
+      { id: 'minimal-light', name: 'Minimal Light', vibe: 'minimal', description: 'Clean, modern design with plenty of whitespace', gradient: 'linear-gradient(135deg, #f8fafc 0%, #e2e8f0 100%)' },
+      { id: 'minimal-dark', name: 'Minimal Dark', vibe: 'minimal', description: 'Sleek dark theme with cool accents', gradient: 'linear-gradient(135deg, #1e293b 0%, #0f172a 100%)' },
+      { id: 'enterprise-blue', name: 'Enterprise Blue', vibe: 'enterprise', description: 'Professional blue theme for business apps', gradient: 'linear-gradient(135deg, #1e40af 0%, #3b82f6 100%)' },
+      { id: 'vibrant-neon', name: 'Vibrant Neon', vibe: 'vibrant', description: 'Dark theme with electric neon colors', gradient: 'linear-gradient(135deg, #a855f7 0%, #22d3ee 100%)' },
+      { id: 'gradient-ocean', name: 'Gradient Ocean', vibe: 'gradient', description: 'Cool blue to cyan ocean tones', gradient: 'linear-gradient(135deg, #0284c7 0%, #06b6d4 100%)' },
+      { id: 'neo-brutalist', name: 'Neo Brutalist', vibe: 'neo', description: 'Bold black borders with punchy yellow accents', gradient: 'linear-gradient(135deg, #000000 0%, #facc15 100%)' },
+    ];
+
+    return `
+      <div class="scaffold-card style-picker">
+        <div class="header">
+          <span class="icon">🎨</span>
+          <h3>Choose Design Style</h3>
+          <span class="badge style-pick">Pick One</span>
+        </div>
+        <div class="picker-instruction">
+          Select a design pack for your new project. This determines colors, typography, and overall visual style.
+        </div>
+        <div class="pack-grid">
+          ${packs.map(pack => `
+            <div class="pack-option ${currentPackId === pack.id ? 'selected' : ''}" 
+                 data-action="select_pack" 
+                 data-pack-id="${this.escapeHtml(pack.id)}">
+              <div class="pack-preview" style="background: ${pack.gradient};">
+                <span class="pack-letter">${this.escapeHtml(pack.name.charAt(0))}</span>
+              </div>
+              <div class="pack-info">
+                <div class="pack-title">${this.escapeHtml(pack.name)}</div>
+                <div class="pack-vibe">${this.escapeHtml(pack.vibe)}</div>
+              </div>
+              ${currentPackId === pack.id ? '<span class="check-mark">✓</span>' : ''}
+            </div>
+          `).join('')}
+        </div>
+        <div class="picker-actions">
+          <button class="btn-secondary" data-action="cancel_picker">← Back</button>
+        </div>
+        <div class="timestamp">${this.formatTimestamp(event.timestamp || '')}</div>
+      </div>
+    `;
+  }
+
+  private renderStyleSelected(payload: Record<string, any>): string {
+    const packId = payload.selected_pack_id || '';
+    const packName = payload.selected_pack_name || packId;
+    
+    return `
+      <div class="scaffold-card style-selected">
+        <div class="header">
+          <span class="icon">✨</span>
+          <h3>Style Updated</h3>
+          <span class="badge style-pick">Selected</span>
+        </div>
+        <div class="selection-confirm">
+          <span class="selection-icon">🎨</span>
+          <span class="selection-text">Design style changed to <strong>${this.escapeHtml(packName)}</strong></span>
+        </div>
+      </div>
+    `;
+  }
+
+  // ========== SCAFFOLD EXECUTION EVENTS ==========
+
+  private renderDecisionResolved(payload: Record<string, any>): string {
+    const decision = payload.decision || 'proceed';
+    const recipe = payload.recipe_id || payload.recipe || '';
+    const designPack = payload.design_pack_id || payload.design_pack || '';
+    const nextCommand = payload.next_command || '';
+
+    const isApproved = decision === 'proceed';
+    
+    return `
+      <div class="scaffold-card ${isApproved ? 'approved' : 'cancelled'}">
+        <div class="header">
+          <span class="icon">${isApproved ? '✅' : '⛔'}</span>
+          <h3>Scaffold Decision</h3>
+          <span class="badge ${isApproved ? 'ready' : 'cancelled'}">${isApproved ? 'Approved' : 'Rejected'}</span>
+        </div>
+        <div class="decision-details">
+          ${isApproved ? `
+            ${recipe ? `<span class="detail-chip">Recipe: ${this.escapeHtml(recipe)}</span>` : ''}
+            ${nextCommand ? `<span class="detail-chip">Next: ${this.escapeHtml(this.truncateText(nextCommand, 40))}</span>` : ''}
+          ` : `
+            <span class="decision-text">User rejected the scaffold proposal</span>
+          `}
+        </div>
+      </div>
+    `;
+  }
+
+  private renderApplyStarted(payload: Record<string, any>): string {
+    const recipe = payload.recipe_id || payload.recipe || 'unknown';
+    const command = payload.command || '';
+    const filesCount = payload.files_count || 0;
+
+    return `
+      <div class="scaffold-card applying">
+        <div class="header">
+          <span class="icon">⚙️</span>
+          <h3>Creating Project</h3>
+          <span class="badge applying">In Progress</span>
+        </div>
+        <div class="apply-status">
+          <div class="status-item">
+            <span class="status-icon">🔄</span>
+            <span class="status-text">Setting up ${this.escapeHtml(recipe)} project...</span>
+          </div>
+        </div>
+        ${command ? `
+          <div class="command-preview">
+            <span class="command-label">Running:</span>
+            <code class="command-text">${this.escapeHtml(command)}</code>
+          </div>
+        ` : ''}
+        ${filesCount > 0 ? `
+          <div class="detail-row">
+            <span class="detail-label">Files to create:</span>
+            <span class="detail-value">${filesCount}</span>
+          </div>
+        ` : ''}
+      </div>
+    `;
+  }
+
+  private renderApplied(payload: Record<string, any>): string {
+    const filesCreated = payload.files_created || 0;
+    const dirsCreated = payload.directories_created || 0;
+    const targetDir = payload.target_directory || '';
+    const recipe = payload.recipe_id || payload.recipe || '';
+    const method = payload.method || '';
+    const command = payload.command || '';
+    const message = payload.message || '';
+
+    // If method is vscode_terminal, the CLI is running interactively
+    // Show a "running in terminal" message instead of "Complete"
+    const isTerminalMethod = method === 'vscode_terminal';
+
+    if (isTerminalMethod) {
+      return `
+        <div class="scaffold-card applying">
+          <div class="header">
+            <span class="icon">🖥️</span>
+            <h3>Scaffold Running in Terminal</h3>
+            <span class="badge applying">Interactive</span>
+          </div>
+          <div class="completion-section terminal-running">
+            <span class="completion-icon">👆</span>
+            <span class="completion-text">
+              ${message || 'Follow the prompts in the terminal to complete project setup.'}
+            </span>
+          </div>
+          ${command ? `
+            <div class="command-preview">
+              <span class="command-label">Command:</span>
+              <code class="command-text">${this.escapeHtml(command)}</code>
+            </div>
+          ` : ''}
+          <div class="terminal-notice">
+            <span class="notice-icon">💡</span>
+            <span class="notice-text">
+              The scaffold CLI is interactive. Check the VS Code terminal panel to complete setup.
+            </span>
+          </div>
+        </div>
+      `;
+    }
+
+    // Direct file creation (files_created > 0) - show completion
+    return `
+      <div class="scaffold-card applied">
+        <div class="header">
+          <span class="icon">🎉</span>
+          <h3>Project Created</h3>
+          <span class="badge ready">Complete</span>
+        </div>
+        <div class="completion-section ready">
+          <span class="completion-icon">✅</span>
+          <span class="completion-text">
+            ${recipe ? `${this.escapeHtml(recipe)} scaffold applied successfully!` : 'Scaffold applied successfully!'}
+          </span>
+        </div>
+        <div class="apply-stats">
+          ${filesCreated > 0 ? `
+            <div class="stat-item">
+              <span class="stat-icon">📄</span>
+              <span class="stat-value">${filesCreated}</span>
+              <span class="stat-label">files created</span>
+            </div>
+          ` : ''}
+          ${dirsCreated > 0 ? `
+            <div class="stat-item">
+              <span class="stat-icon">📁</span>
+              <span class="stat-value">${dirsCreated}</span>
+              <span class="stat-label">directories</span>
+            </div>
+          ` : ''}
+        </div>
+        ${targetDir ? `
+          <div class="detail-row">
+            <span class="detail-label">Location:</span>
+            <span class="detail-value mono">${this.escapeHtml(this.truncatePath(targetDir))}</span>
+          </div>
+        ` : ''}
+      </div>
+    `;
+  }
+
+  private renderCancelled(payload: Record<string, any>): string {
+    const reason = payload.reason || 'User cancelled';
+    
+    return `
+      <div class="scaffold-card cancelled">
+        <div class="header">
+          <span class="icon">⛔</span>
+          <h3>Scaffold Cancelled</h3>
+          <span class="badge cancelled">Cancelled</span>
+        </div>
+        <div class="completion-section cancelled">
+          <span class="completion-icon">🔙</span>
+          <span class="completion-text">${this.escapeHtml(reason)}</span>
+        </div>
+      </div>
+    `;
+  }
+
+  // ========== POST-SCAFFOLD ORCHESTRATION EVENTS ==========
+
+  private renderProgress(payload: Record<string, any>): string {
+    const phase = payload.phase || '';
+    const message = payload.message || 'Creating project...';
+    const progress = payload.progress || 0;
+
+    return `
+      <div class="scaffold-card applying">
+        <div class="header">
+          <span class="icon">⏳</span>
+          <h3>Scaffold Progress</h3>
+          <span class="badge applying">In Progress</span>
+        </div>
+        <div class="progress-section">
+          <div class="progress-message">${this.escapeHtml(message)}</div>
+          ${phase ? `<div class="progress-phase">Phase: ${this.escapeHtml(phase)}</div>` : ''}
+          ${progress > 0 ? `
+            <div class="progress-bar-container">
+              <div class="progress-bar" style="width: ${progress}%"></div>
+            </div>
+          ` : ''}
+        </div>
+      </div>
+    `;
+  }
+
+  private renderDesignPackApplied(payload: Record<string, any>): string {
+    const designPack = payload.design_pack || payload.design_pack_id || 'Custom';
+    const filesModified = payload.files_modified || (payload.modified_files as string[])?.length || 0;
+    const modifiedFiles = payload.modified_files || [];
+
+    return `
+      <div class="scaffold-card applied">
+        <div class="header">
+          <span class="icon">🎨</span>
+          <h3>Design Pack Applied</h3>
+          <span class="badge ready">Styled</span>
+        </div>
+        <div class="design-applied-section">
+          <div class="design-applied-info">
+            <span class="design-icon">✨</span>
+            <span class="design-text">Applied <strong>${this.escapeHtml(designPack)}</strong> styling</span>
+          </div>
+          ${filesModified > 0 ? `
+            <div class="files-modified-count">${filesModified} file(s) styled</div>
+          ` : ''}
+          ${modifiedFiles.length > 0 ? `
+            <div class="modified-files-list">
+              ${modifiedFiles.slice(0, 3).map((f: string) => `
+                <div class="modified-file">📄 ${this.escapeHtml(this.truncatePath(f, 40))}</div>
+              `).join('')}
+              ${modifiedFiles.length > 3 ? `<div class="more-files">+${modifiedFiles.length - 3} more</div>` : ''}
+            </div>
+          ` : ''}
+        </div>
+      </div>
+    `;
+  }
+
+  private renderNextStepsShown(payload: Record<string, any>): string {
+    const steps = payload.steps || [];
+    const projectPath = payload.project_path || '';
+
+    return `
+      <div class="scaffold-card ready">
+        <div class="header">
+          <span class="icon">🚀</span>
+          <h3>Next Steps</h3>
+          <span class="badge ready">${steps.length} Actions</span>
+        </div>
+        <div class="next-steps-section">
+          <div class="next-steps-intro">
+            Your project is ready! Here are recommended next steps:
+          </div>
+          ${steps.length > 0 ? `
+            <div class="next-steps-list">
+              ${steps.slice(0, 4).map((step: any, idx: number) => `
+                <div class="next-step-item">
+                  <span class="step-number">${idx + 1}</span>
+                  <span class="step-title">${this.escapeHtml(step.title || step.label || step)}</span>
+                </div>
+              `).join('')}
+              ${steps.length > 4 ? `<div class="more-steps">+${steps.length - 4} more steps</div>` : ''}
+            </div>
+          ` : ''}
+          ${projectPath ? `
+            <div class="project-path-note">
+              <span class="path-icon">📁</span>
+              <span class="path-text">${this.escapeHtml(this.truncatePath(projectPath, 50))}</span>
+            </div>
+          ` : ''}
+        </div>
+      </div>
+    `;
+  }
+
+  private renderFinalComplete(payload: Record<string, any>): string {
+    const success = payload.success !== false;
+    const projectPath = payload.project_path || '';
+    const designPackApplied = payload.design_pack_applied;
+    const recipe = payload.recipe_id || payload.recipe || '';
+
+    const projectName = projectPath ? projectPath.split('/').pop() : 'project';
+
+    return `
+      <div class="scaffold-card ${success ? 'applied' : 'cancelled'}">
+        <div class="header">
+          <span class="icon">${success ? '✅' : '❌'}</span>
+          <h3>Project Ready</h3>
+          <span class="badge ${success ? 'ready' : 'cancelled'}">${success ? 'Complete' : 'Failed'}</span>
+        </div>
+        <div class="final-complete-section ${success ? 'success' : 'failure'}">
+          <div class="final-icon">${success ? '🎉' : '⚠️'}</div>
+          <div class="final-message">
+            ${success 
+              ? `<strong>${this.escapeHtml(projectName)}</strong> is ready for development!`
+              : 'Project setup encountered an issue'}
+          </div>
+        </div>
+        ${success ? `
+          <div class="final-details">
+            ${recipe ? `<span class="detail-chip">📦 ${this.escapeHtml(recipe)}</span>` : ''}
+            ${designPackApplied ? `<span class="detail-chip">🎨 Design Applied</span>` : ''}
+          </div>
+          <div class="final-hint">
+            <span class="hint-icon">💡</span>
+            <span class="hint-text">Open a terminal and run <code>cd ${this.escapeHtml(projectName)}</code> to get started</span>
+          </div>
+        ` : ''}
+      </div>
+    `;
+  }
+
   private truncatePath(path: string, maxLength: number = 50): string {
     if (!path) return '';
     if (path.length <= maxLength) return path;
@@ -561,6 +1059,40 @@ export class ScaffoldCard extends HTMLElement {
         }));
       });
     });
+
+    // Step 35.5: Bind pack selection actions (design pack picker)
+    const packOptions = this.shadowRoot.querySelectorAll('[data-action="select_pack"]');
+    packOptions.forEach((opt: any) => {
+      opt.addEventListener('click', () => {
+        const packId = opt.getAttribute('data-pack-id');
+        this.dispatchEvent(new CustomEvent('scaffold-action', {
+          detail: {
+            action: 'select_style',
+            scaffoldId: this._event?.payload?.scaffold_id,
+            eventId: this._event?.event_id,
+            selectedPackId: packId
+          },
+          bubbles: true,
+          composed: true
+        }));
+      });
+    });
+
+    // Step 35.5: Bind cancel picker (back button)
+    const cancelPickerBtn = this.shadowRoot.querySelector('[data-action="cancel_picker"]') as HTMLButtonElement | null;
+    if (cancelPickerBtn) {
+      cancelPickerBtn.addEventListener('click', () => {
+        this.dispatchEvent(new CustomEvent('scaffold-action', {
+          detail: {
+            action: 'cancel_style_change',
+            scaffoldId: this._event?.payload?.scaffold_id,
+            eventId: this._event?.event_id
+          },
+          bubbles: true,
+          composed: true
+        }));
+      });
+    }
   }
 
   private styles(): string {
@@ -578,6 +1110,9 @@ export class ScaffoldCard extends HTMLElement {
         .scaffold-card.proposal { border-left: 4px solid #b180d7; }
         .scaffold-card.ready { border-left: 4px solid #89d185; }
         .scaffold-card.cancelled { border-left: 4px solid #cca700; }
+        .scaffold-card.approved { border-left: 4px solid #89d185; }
+        .scaffold-card.applying { border-left: 4px solid #3794ff; }
+        .scaffold-card.applied { border-left: 4px solid #89d185; }
         
         .header { 
           display: flex; 
@@ -604,6 +1139,7 @@ export class ScaffoldCard extends HTMLElement {
         .badge.proposal { background: #b180d7; color: white; }
         .badge.ready { background: #89d185; color: #1e1e1e; }
         .badge.cancelled { background: #cca700; color: #1e1e1e; }
+        .badge.applying { background: #3794ff; color: white; }
         
         .prompt-section, .summary-section { margin-bottom: 16px; }
         .prompt-label { 
@@ -681,8 +1217,31 @@ export class ScaffoldCard extends HTMLElement {
           background: rgba(204, 167, 0, 0.1); 
           border: 1px solid #cca700; 
         }
+        .completion-section.terminal-running {
+          background: rgba(55, 148, 255, 0.1);
+          border: 1px solid #3794ff;
+        }
         .completion-icon { font-size: 16px; }
         .completion-text { color: var(--vscode-foreground); }
+        
+        .terminal-notice {
+          display: flex;
+          align-items: center;
+          gap: 8px;
+          padding: 10px 12px;
+          margin-top: 12px;
+          background: rgba(55, 148, 255, 0.08);
+          border: 1px dashed rgba(55, 148, 255, 0.4);
+          border-radius: 6px;
+          font-size: 12px;
+        }
+        .terminal-notice .notice-icon {
+          font-size: 16px;
+        }
+        .terminal-notice .notice-text {
+          color: var(--vscode-descriptionForeground);
+          font-style: normal;
+        }
         
         .placeholder-notice { 
           font-size: 11px; 
@@ -931,6 +1490,397 @@ export class ScaffoldCard extends HTMLElement {
           border-color: #e879f9;
           color: #e879f9;
         }
+        
+        /* Step 35.5: Design Pack Picker Styles */
+        .scaffold-card.style-picker {
+          border-left: 4px solid #a855f7;
+        }
+        .badge.style-pick {
+          background: #a855f7;
+          color: white;
+        }
+        .picker-instruction {
+          font-size: 13px;
+          color: var(--vscode-descriptionForeground);
+          margin-bottom: 16px;
+          line-height: 1.5;
+        }
+        .pack-grid {
+          display: grid;
+          grid-template-columns: repeat(2, 1fr);
+          gap: 12px;
+          margin-bottom: 16px;
+        }
+        .pack-option {
+          display: flex;
+          align-items: center;
+          gap: 10px;
+          padding: 10px;
+          background: var(--vscode-input-background);
+          border: 2px solid transparent;
+          border-radius: 8px;
+          cursor: pointer;
+          transition: all 0.2s;
+          position: relative;
+        }
+        .pack-option:hover {
+          border-color: var(--vscode-focusBorder);
+          background: var(--vscode-list-hoverBackground);
+        }
+        .pack-option.selected {
+          border-color: #a855f7;
+          background: rgba(168, 85, 247, 0.1);
+        }
+        .pack-preview {
+          width: 48px;
+          height: 36px;
+          border-radius: 6px;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          flex-shrink: 0;
+          box-shadow: 0 2px 6px rgba(0, 0, 0, 0.2);
+        }
+        .pack-letter {
+          font-size: 18px;
+          font-weight: 700;
+          color: white;
+          text-shadow: 0 1px 2px rgba(0, 0, 0, 0.3);
+        }
+        .pack-info {
+          flex: 1;
+          min-width: 0;
+        }
+        .pack-title {
+          font-size: 12px;
+          font-weight: 600;
+          color: var(--vscode-foreground);
+          margin-bottom: 2px;
+        }
+        .pack-vibe {
+          font-size: 10px;
+          color: var(--vscode-descriptionForeground);
+          text-transform: uppercase;
+        }
+        .check-mark {
+          position: absolute;
+          top: 6px;
+          right: 6px;
+          width: 18px;
+          height: 18px;
+          background: #a855f7;
+          border-radius: 50%;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          font-size: 11px;
+          color: white;
+          font-weight: bold;
+        }
+        .picker-actions {
+          display: flex;
+          gap: 8px;
+          margin-top: 12px;
+        }
+        
+        /* Step 35.5: Style Selected Confirmation */
+        .scaffold-card.style-selected {
+          border-left: 4px solid #22c55e;
+        }
+        .selection-confirm {
+          display: flex;
+          align-items: center;
+          gap: 10px;
+          padding: 12px;
+          background: rgba(34, 197, 94, 0.1);
+          border: 1px solid #22c55e;
+          border-radius: 6px;
+        }
+        .selection-icon {
+          font-size: 20px;
+        }
+        .selection-text {
+          font-size: 13px;
+          color: var(--vscode-foreground);
+        }
+        .selection-text strong {
+          color: #22c55e;
+        }
+        
+        /* Scaffold Execution Event Styles */
+        .decision-details {
+          display: flex;
+          flex-wrap: wrap;
+          gap: 8px;
+          padding: 8px 0;
+        }
+        .detail-chip {
+          display: inline-block;
+          padding: 4px 10px;
+          background: var(--vscode-input-background);
+          border-radius: 4px;
+          font-size: 12px;
+          color: var(--vscode-foreground);
+        }
+        .decision-text {
+          font-size: 13px;
+          color: var(--vscode-descriptionForeground);
+          font-style: italic;
+        }
+        
+        .apply-status {
+          margin: 12px 0;
+        }
+        .status-item {
+          display: flex;
+          align-items: center;
+          gap: 8px;
+          font-size: 13px;
+        }
+        .status-icon {
+          font-size: 16px;
+        }
+        .status-text {
+          color: var(--vscode-foreground);
+        }
+        
+        .command-preview {
+          margin: 12px 0;
+          padding: 10px 12px;
+          background: var(--vscode-input-background);
+          border-radius: 6px;
+          border: 1px solid var(--vscode-panel-border);
+        }
+        .command-label {
+          font-size: 11px;
+          color: var(--vscode-descriptionForeground);
+          text-transform: uppercase;
+          margin-right: 8px;
+        }
+        .command-text {
+          font-family: var(--vscode-editor-font-family), monospace;
+          font-size: 12px;
+          color: var(--vscode-textLink-foreground);
+        }
+        
+        .apply-stats {
+          display: flex;
+          gap: 16px;
+          margin: 12px 0;
+        }
+        .stat-item {
+          display: flex;
+          align-items: center;
+          gap: 6px;
+          padding: 8px 12px;
+          background: var(--vscode-input-background);
+          border-radius: 6px;
+        }
+        .stat-icon {
+          font-size: 16px;
+        }
+        .stat-value {
+          font-size: 16px;
+          font-weight: 600;
+          color: var(--vscode-foreground);
+        }
+        .stat-label {
+          font-size: 11px;
+          color: var(--vscode-descriptionForeground);
+        }
+        
+        /* Post-Scaffold Orchestration Styles */
+        .progress-section {
+          padding: 12px;
+          background: var(--vscode-input-background);
+          border-radius: 6px;
+        }
+        .progress-message {
+          font-size: 13px;
+          color: var(--vscode-foreground);
+          margin-bottom: 8px;
+        }
+        .progress-phase {
+          font-size: 11px;
+          color: var(--vscode-descriptionForeground);
+          margin-bottom: 8px;
+        }
+        .progress-bar-container {
+          height: 4px;
+          background: rgba(55, 148, 255, 0.2);
+          border-radius: 2px;
+          overflow: hidden;
+        }
+        .progress-bar {
+          height: 100%;
+          background: #3794ff;
+          border-radius: 2px;
+          transition: width 0.3s ease;
+        }
+        
+        .design-applied-section {
+          padding: 12px;
+          background: rgba(137, 209, 133, 0.1);
+          border-radius: 6px;
+          border: 1px solid rgba(137, 209, 133, 0.3);
+        }
+        .design-applied-info {
+          display: flex;
+          align-items: center;
+          gap: 8px;
+          margin-bottom: 8px;
+        }
+        .design-icon {
+          font-size: 16px;
+        }
+        .design-text {
+          font-size: 13px;
+          color: var(--vscode-foreground);
+        }
+        .design-text strong {
+          color: #89d185;
+        }
+        .files-modified-count {
+          font-size: 11px;
+          color: var(--vscode-descriptionForeground);
+          margin-bottom: 8px;
+        }
+        .modified-files-list {
+          padding: 8px;
+          background: var(--vscode-input-background);
+          border-radius: 4px;
+        }
+        .modified-file {
+          font-size: 11px;
+          color: var(--vscode-foreground);
+          padding: 2px 0;
+          font-family: var(--vscode-editor-font-family), monospace;
+        }
+        .more-files {
+          font-size: 11px;
+          color: var(--vscode-descriptionForeground);
+          font-style: italic;
+          padding: 2px 0;
+        }
+        
+        .next-steps-section {
+          padding: 12px;
+        }
+        .next-steps-intro {
+          font-size: 13px;
+          color: var(--vscode-descriptionForeground);
+          margin-bottom: 12px;
+        }
+        .next-steps-list {
+          display: flex;
+          flex-direction: column;
+          gap: 8px;
+        }
+        .next-step-item {
+          display: flex;
+          align-items: center;
+          gap: 10px;
+          padding: 8px 12px;
+          background: var(--vscode-input-background);
+          border-radius: 6px;
+          border: 1px solid var(--vscode-panel-border);
+        }
+        .step-number {
+          width: 24px;
+          height: 24px;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          background: #89d185;
+          color: #1e1e1e;
+          border-radius: 50%;
+          font-size: 12px;
+          font-weight: 600;
+          flex-shrink: 0;
+        }
+        .step-title {
+          font-size: 13px;
+          color: var(--vscode-foreground);
+        }
+        .more-steps {
+          font-size: 11px;
+          color: var(--vscode-descriptionForeground);
+          font-style: italic;
+          text-align: center;
+          padding: 4px;
+        }
+        .project-path-note {
+          display: flex;
+          align-items: center;
+          gap: 8px;
+          margin-top: 12px;
+          padding: 8px 12px;
+          background: var(--vscode-input-background);
+          border-radius: 4px;
+          font-size: 12px;
+        }
+        .path-icon {
+          font-size: 16px;
+        }
+        .path-text {
+          font-family: var(--vscode-editor-font-family), monospace;
+          color: var(--vscode-descriptionForeground);
+        }
+        
+        .final-complete-section {
+          display: flex;
+          align-items: center;
+          gap: 12px;
+          padding: 16px;
+          border-radius: 6px;
+          margin: 12px 0;
+        }
+        .final-complete-section.success {
+          background: rgba(137, 209, 133, 0.1);
+          border: 1px solid #89d185;
+        }
+        .final-complete-section.failure {
+          background: rgba(204, 167, 0, 0.1);
+          border: 1px solid #cca700;
+        }
+        .final-icon {
+          font-size: 28px;
+        }
+        .final-message {
+          font-size: 14px;
+          color: var(--vscode-foreground);
+        }
+        .final-message strong {
+          color: #89d185;
+        }
+        .final-details {
+          display: flex;
+          gap: 8px;
+          flex-wrap: wrap;
+          margin: 12px 0;
+        }
+        .final-hint {
+          display: flex;
+          align-items: center;
+          gap: 8px;
+          padding: 10px 12px;
+          background: var(--vscode-input-background);
+          border-radius: 6px;
+          font-size: 12px;
+        }
+        .hint-icon {
+          font-size: 16px;
+        }
+        .hint-text {
+          color: var(--vscode-descriptionForeground);
+        }
+        .hint-text code {
+          background: rgba(55, 148, 255, 0.2);
+          padding: 2px 6px;
+          border-radius: 3px;
+          font-family: var(--vscode-editor-font-family), monospace;
+          color: var(--vscode-textLink-foreground);
+        }
       </style>
     `;
   }
@@ -979,9 +1929,20 @@ export function isScaffoldEvent(eventType: string): boolean {
     'scaffold_preflight_completed',
     'scaffold_target_chosen',
     'scaffold_proposal_created',
+    'scaffold_decision_requested',
+    'scaffold_decision_resolved',
+    'scaffold_apply_started',
     'scaffold_applied',
     'scaffold_blocked',
-    'scaffold_completed'
+    'scaffold_completed',
+    'scaffold_cancelled',
+    'scaffold_style_selection_requested',
+    'scaffold_style_selected',
+    // Post-scaffold orchestration events
+    'scaffold_progress',
+    'design_pack_applied',
+    'next_steps_shown',
+    'scaffold_final_complete'
   ].includes(eventType);
 }
 

@@ -13,6 +13,8 @@ import { renderPlanCard } from './PlanCard';
 import { renderApprovalCard } from './ApprovalCard';
 import { getPendingApprovalById } from '../selectors/approvalSelectors';
 import { renderClarificationCard } from './ClarificationCard';
+import { isScaffoldEvent } from './ScaffoldCard';
+import { renderPreflightDecisionCard } from './PreflightDecisionCard';
 
 export interface EventCardConfig {
   icon: string;
@@ -816,6 +818,226 @@ export const EVENT_CARD_MAP: Record<EventType, EventCardConfig> = {
       const outputLength = e.payload.output_length as number || 0;
       return `${command.substring(0, 30)}... (${outputLength} bytes)`;
     }
+  },
+
+  // ========== Step 37: Reference/Attachment Events ==========
+  reference_attached: {
+    icon: '📎',
+    title: 'Reference Attached',
+    color: 'var(--vscode-charts-blue)',
+    getSummary: (e) => {
+      const type = e.payload.type as string || 'unknown';
+      return type === 'image' ? 'Image attached' : `URL: ${e.payload.url || 'attached'}`;
+    }
+  },
+  reference_context_built: {
+    icon: '🖼️',
+    title: 'Reference Context',
+    color: 'var(--vscode-charts-purple)',
+    getSummary: (e) => {
+      const images = e.payload.images_count as number || 0;
+      const urls = e.payload.urls_count as number || 0;
+      return `${images} image(s), ${urls} URL(s)`;
+    }
+  },
+  reference_used: {
+    icon: '✓',
+    title: 'Reference Used',
+    color: 'var(--vscode-charts-green)',
+    getSummary: (e) => {
+      const mode = e.payload.reference_mode as string || 'used';
+      return `Mode: ${mode}`;
+    }
+  },
+
+  // ========== Step 38: Vision Analysis Events ==========
+  vision_analysis_started: {
+    icon: '🔍',
+    title: 'Analyzing References',
+    color: 'var(--vscode-charts-blue)',
+    getSummary: (e) => {
+      const images = e.payload.images_count as number || 0;
+      const urls = e.payload.urls_count as number || 0;
+      return `${images + urls} reference(s)`;
+    }
+  },
+  vision_analysis_completed: {
+    icon: '✓',
+    title: 'Analysis Complete',
+    color: 'var(--vscode-charts-green)',
+    getSummary: (e) => {
+      const status = e.payload.status as string || 'complete';
+      const reason = e.payload.reason as string || '';
+      if (status === 'skipped') return `Skipped: ${reason || 'disabled'}`;
+      if (status === 'error') return `Error: ${reason || 'failed'}`;
+      const duration = e.payload.duration_ms as number;
+      return duration ? `Completed in ${(duration/1000).toFixed(1)}s` : 'Analysis complete';
+    }
+  },
+  reference_tokens_extracted: {
+    icon: '🎨',
+    title: 'Style Tokens Extracted',
+    color: 'var(--vscode-charts-purple)',
+    getSummary: (e) => {
+      const confidence = e.payload.confidence as number || 0;
+      const moods = (e.payload.moods as string[]) || [];
+      const moodStr = moods.slice(0, 2).join(', ');
+      return `${moodStr || 'tokens extracted'} (${Math.round(confidence * 100)}% confidence)`;
+    }
+  },
+  reference_tokens_used: {
+    icon: '🔧',
+    title: 'Tokens Applied',
+    color: 'var(--vscode-charts-green)',
+    getSummary: (e) => {
+      const usedIn = e.payload.used_in as string || 'scaffold';
+      const overrides = e.payload.overrides_applied as boolean;
+      return `${usedIn}${overrides ? ' (with style overrides)' : ''}`;
+    }
+  },
+
+  // ========== Step 35: Scaffold Flow Events ==========
+  scaffold_started: {
+    icon: '🏗️',
+    title: 'Scaffold Started',
+    color: 'var(--vscode-charts-purple)',
+    getSummary: (e) => {
+      const recipe = e.payload.recipe_id as string || 'auto';
+      const prompt = e.payload.prompt as string || '';
+      const truncatedPrompt = prompt.length > 40 ? prompt.substring(0, 40) + '...' : prompt;
+      return `Recipe: ${recipe}${truncatedPrompt ? ` | "${truncatedPrompt}"` : ''}`;
+    }
+  },
+  scaffold_proposal_created: {
+    icon: '📋',
+    title: 'Scaffold Proposal Ready',
+    color: 'var(--vscode-charts-purple)',
+    getSummary: (e) => {
+      const recipe = e.payload.recipe_id as string || 'auto';
+      const designPack = e.payload.design_pack_id as string || 'default';
+      return `${recipe} + ${designPack}`;
+    }
+  },
+  scaffold_decision_resolved: {
+    icon: '✓',
+    title: 'Scaffold Decision',
+    color: 'var(--vscode-charts-green)',
+    getSummary: (e) => {
+      const decision = e.payload.decision as string || 'proceed';
+      return decision === 'proceed' ? 'User approved scaffold' : 
+             decision === 'cancel' ? 'User cancelled scaffold' : 
+             'Style customization requested';
+    }
+  },
+  scaffold_applied: {
+    icon: '✅',
+    title: 'Scaffold Applied',
+    color: 'var(--vscode-charts-green)',
+    getSummary: (e) => {
+      const filesCreated = e.payload.files_created as number || 0;
+      return `${filesCreated} file(s) created`;
+    }
+  },
+  scaffold_cancelled: {
+    icon: '⛔',
+    title: 'Scaffold Cancelled',
+    color: 'var(--vscode-charts-red)',
+    getSummary: (e) => {
+      const reason = e.payload.reason as string || 'User cancelled';
+      return reason;
+    }
+  },
+  scaffold_completed: {
+    icon: '🎉',
+    title: 'Scaffold Completed',
+    color: 'var(--vscode-charts-green)',
+    getSummary: (e) => {
+      const recipe = e.payload.recipe_id as string || 'unknown';
+      const status = e.payload.status as string || 'completed';
+      if (status === 'ready_for_step_35_2') {
+        return `${recipe} scaffold ready for file creation`;
+      }
+      return `${recipe} scaffold completed successfully`;
+    }
+  },
+
+  // ========== Additional Scaffold Events (fallback for ScaffoldCard) ==========
+  scaffold_apply_started: {
+    icon: '⚙️',
+    title: 'Creating Project',
+    color: 'var(--vscode-charts-blue)',
+    getSummary: (e) => {
+      const recipe = e.payload.recipe_id as string || e.payload.recipe as string || 'unknown';
+      const command = e.payload.command as string || '';
+      if (command) {
+        return `Running: ${command.substring(0, 50)}${command.length > 50 ? '...' : ''}`;
+      }
+      return `Setting up ${recipe} project...`;
+    }
+  },
+
+  // ========== Post-Scaffold Orchestration Events ==========
+  scaffold_progress: {
+    icon: '⏳',
+    title: 'Scaffold Progress',
+    color: 'var(--vscode-charts-blue)',
+    getSummary: (e) => {
+      const phase = e.payload.phase as string || '';
+      const message = e.payload.message as string || '';
+      return message || phase || 'Creating project...';
+    }
+  },
+  design_pack_applied: {
+    icon: '🎨',
+    title: 'Design Pack Applied',
+    color: 'var(--vscode-charts-green)',
+    getSummary: (e) => {
+      const designPack = e.payload.design_pack as string || e.payload.design_pack_id as string || 'custom';
+      const filesModified = e.payload.files_modified as number || (e.payload.modified_files as string[])?.length || 0;
+      return `${designPack} applied (${filesModified} file(s) styled)`;
+    }
+  },
+  scaffold_final_complete: {
+    icon: '✅',
+    title: 'Project Ready',
+    color: 'var(--vscode-charts-green)',
+    getSummary: (e) => {
+      const success = e.payload.success as boolean;
+      const projectPath = e.payload.project_path as string || '';
+      if (success) {
+        const shortPath = projectPath ? projectPath.split('/').pop() : 'project';
+        return `${shortPath} ready for development`;
+      }
+      return 'Project setup completed';
+    }
+  },
+  next_steps_shown: {
+    icon: '🚀',
+    title: 'Next Steps',
+    color: 'var(--vscode-charts-purple)',
+    getSummary: (e) => {
+      const steps = (e.payload.steps as any[]) || [];
+      return `${steps.length} recommended action(s) available`;
+    }
+  },
+  next_step_selected: {
+    icon: '▶️',
+    title: 'Action Selected',
+    color: 'var(--vscode-charts-green)',
+    getSummary: (e) => {
+      const stepId = e.payload.step_id as string || '';
+      const title = e.payload.title as string || stepId;
+      return title || 'Next step initiated';
+    }
+  },
+  next_step_dismissed: {
+    icon: '⏭️',
+    title: 'Action Skipped',
+    color: 'var(--vscode-descriptionForeground)',
+    getSummary: (e) => {
+      const stepId = e.payload.step_id as string || '';
+      return stepId ? `Skipped: ${stepId}` : 'Action dismissed';
+    }
   }
 };
 
@@ -841,6 +1063,12 @@ export function renderEventCard(event: Event, taskId?: string): string {
   console.log('[MissionFeed] renderEventCard called for type:', event.type);
   console.log('[MissionFeed] EVENT_CARD_MAP has config:', event.type in EVENT_CARD_MAP);
   console.log('[MissionFeed] Config value:', EVENT_CARD_MAP[event.type]);
+  
+  // SCAFFOLD EVENTS: Render using ScaffoldCard custom element (PRIORITY CHECK)
+  if (isScaffoldEvent(event.type)) {
+    console.log('[MissionFeed] Rendering scaffold event with ScaffoldCard:', event.type);
+    return renderScaffoldEventCard(event);
+  }
   
   // ANSWER mode specialized renderers
   if (event.type === 'context_collected') {
@@ -1200,6 +1428,32 @@ function renderExecutePlanButton(taskId: string): string {
         Click to begin executing the approved plan
       </div>
     </div>
+  `;
+}
+
+/**
+ * Render scaffold event using ScaffoldCard custom element
+ */
+function renderScaffoldEventCard(event: Event): string {
+  // Use the ScaffoldCard custom element with inline script to set event data
+  const eventId = event.event_id || `evt_${Date.now()}`;
+  const eventJson = JSON.stringify(event).replace(/"/g, '&quot;');
+  
+  return `
+    <scaffold-card id="scaffold-${escapeHtml(eventId)}"></scaffold-card>
+    <script>
+      (function() {
+        try {
+          const card = document.getElementById('scaffold-${escapeJsString(eventId)}');
+          if (card) {
+            const eventData = JSON.parse('${eventJson}'.replace(/&quot;/g, '"'));
+            card.event = eventData;
+          }
+        } catch (e) {
+          console.error('[ScaffoldCard] Failed to set event data:', e);
+        }
+      })();
+    </script>
   `;
 }
 

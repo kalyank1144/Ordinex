@@ -92,12 +92,22 @@ import {
   classifyFileOperations,
   // Step 33: Intent Analysis & Behavior Handlers
   analyzeIntent,
+  analyzeIntentWithFlow,
   executeBehavior,
   detectActiveRun,
   IntentAnalysisContext,
   BehaviorHandlerResult,
   processClarificationResponse,
-  processContinueRunResponse
+  processContinueRunResponse,
+  // Step 35: Scaffold Flow
+  ScaffoldFlowCoordinator,
+  isGreenfieldRequest,
+  // Step 35.3-35.4: Recipe Selection & Scaffold Apply
+  selectRecipe,
+  buildRecipePlan,
+  applyScaffoldPlan,
+  RecipeContext,
+  ScaffoldApplyContext,
 } from 'core';
 
 class MissionControlViewProvider implements vscode.WebviewViewProvider {
@@ -308,11 +318,16 @@ class MissionControlViewProvider implements vscode.WebviewViewProvider {
       };
       console.log('[Step33] Analysis context:', analysisContext);
 
-      // 3. STEP 33: Analyze intent (behavior-first)
+      // 3. STEP 33: Analyze intent (behavior-first) with flow_kind detection
       const commandDetection = detectCommandIntent(text);
       console.log('[Step33] Command detection:', commandDetection);
 
-      let analysis = analyzeIntent(text, analysisContext);
+      // Use analyzeIntentWithFlow to get flow_kind for greenfield detection
+      let analysisWithFlow = analyzeIntentWithFlow(text, analysisContext);
+      let analysis = analysisWithFlow; // Same object, but typed to include flow_kind
+      
+      console.log('[Step35] Flow kind:', analysisWithFlow.flow_kind);
+      console.log('[Step35] Is greenfield request:', isGreenfieldRequest(text));
 
       // If a clear command intent is detected, do not block on stale active-run state
       if (analysis.behavior === 'CONTINUE_RUN' && commandDetection.isCommandIntent && commandDetection.confidence >= 0.75) {
@@ -354,7 +369,17 @@ class MissionControlViewProvider implements vscode.WebviewViewProvider {
       this.currentMode = analysis.derived_mode;
       await this.sendEventsToWebview(webview, taskId);
 
-      // 5. STEP 33: Handle behavior-specific logic
+      // 5. STEP 35 FIX: SCAFFOLD CHECK BEFORE BEHAVIOR SWITCH
+      // Greenfield requests MUST route to scaffold flow regardless of behavior classification
+      if (analysisWithFlow.flow_kind === 'scaffold') {
+        console.log('[Step35] 🏗️ SCAFFOLD flow detected - routing DIRECTLY to scaffold handler');
+        console.log('[Step35] Bypassing behavior switch (was:', analysis.behavior, ')');
+        await this.handleScaffoldFlow(text, taskId, modelId || 'sonnet-4.5', webview, attachments || []);
+        console.log('[Step33] Behavior handling complete (scaffold flow)');
+        return; // Exit early - scaffold flow handles everything
+      }
+
+      // 6. STEP 33: Handle behavior-specific logic (non-scaffold)
       console.log(`[Step33] Executing behavior: ${analysis.behavior}`);
       
       switch (analysis.behavior) {
@@ -365,6 +390,9 @@ class MissionControlViewProvider implements vscode.WebviewViewProvider {
 
         case 'PLAN':
           console.log('>>> BEHAVIOR: PLAN <<<');
+          // Note: Scaffold flow is now handled BEFORE the behavior switch
+          // If we reach here, it's a standard PLAN flow
+          console.log('[Step35] Standard PLAN flow');
           await this.handlePlanMode(text, taskId, modelId || 'sonnet-4.5', webview);
           break;
 
@@ -1470,6 +1498,8 @@ This demonstrates the diff proposal pipeline without requiring LLM integration.
   // Store light context for use in selection handling
   private planModeContext: LightContextBundle | null = null;
   private planModeOriginalPrompt: string | null = null;
+  // Step 35: Store active scaffold coordinator for decision handling
+  private activeScaffoldCoordinator: ScaffoldFlowCoordinator | null = null;
 
   /**
    * Handle PLAN mode: Deterministic Ground → Ask → Plan pipeline
@@ -2347,9 +2377,30 @@ This demonstrates the diff proposal pipeline without requiring LLM integration.
 
     try {
       const events = this.eventStore.getEventsByTaskId(task_id);
-      const decisionEvent = events.find(
+      
+      // Look for decision_point_needed OR scaffold_decision_requested events
+      let decisionEvent = events.find(
         (e: Event) => e.type === 'decision_point_needed' && e.event_id === decision_event_id
       );
+      
+      // Also check for scaffold_decision_requested (Step 35)
+      if (!decisionEvent) {
+        decisionEvent = events.find(
+          (e: Event) => e.type === 'scaffold_decision_requested' && e.event_id === decision_event_id
+        );
+      }
+
+      // Extract scaffold context from message if present (sent by ScaffoldCard component)
+      const scaffoldContext = message.scaffold_context;
+      
+      // If no event found by ID but we have scaffold context, find by scaffold_id
+      if (!decisionEvent && scaffoldContext?.scaffold_id) {
+        decisionEvent = events.find(
+          (e: Event) => e.type === 'scaffold_decision_requested' && 
+                        e.payload?.scaffold_id === scaffoldContext.scaffold_id
+        );
+        console.log('[handleResolveDecisionPoint] Found scaffold event by scaffold_id:', !!decisionEvent);
+      }
 
       if (!decisionEvent) {
         console.error('Decision point event not found');
@@ -2357,8 +2408,13 @@ This demonstrates the diff proposal pipeline without requiring LLM integration.
       }
 
       const payload = decisionEvent.payload || {};
-      const decisionType = payload.decision_type as string | undefined;
+      let decisionType = payload.decision_type as string | undefined;
       const decisionContext = payload.context as string | undefined;
+      
+      // Infer decision type from event type if not explicitly set
+      if (!decisionType && decisionEvent.type === 'scaffold_decision_requested') {
+        decisionType = 'scaffold_approval';
+      }
 
       if (decisionType === 'continue_run') {
         const activeRun = (payload.active_run as any) || detectActiveRun(events);
@@ -2550,6 +2606,240 @@ This demonstrates the diff proposal pipeline without requiring LLM integration.
         }
       }
 
+      // STEP 35: Handle scaffold_approval decision type
+      if (decisionType === 'scaffold_approval') {
+        console.log('[handleResolveDecisionPoint] Scaffold approval action:', action);
+        
+        if (!this.activeScaffoldCoordinator) {
+          console.error('No active scaffold coordinator found');
+          vscode.window.showErrorMessage('Scaffold flow not active. Please try again.');
+          return;
+        }
+        
+        try {
+          // Step 35.5: Handle change_style separately - it does NOT complete the flow
+          if (action === 'change_style') {
+            console.log('[handleResolveDecisionPoint] Showing design pack picker...');
+            await this.activeScaffoldCoordinator.handleStyleChange();
+            console.log('[handleResolveDecisionPoint] Style picker shown, awaiting user selection');
+            await this.sendEventsToWebview(webview, task_id);
+            // Do NOT clear currentTaskId - flow continues in awaiting_decision state
+            return;
+          }
+          
+          // Step 35.5: Handle style selection (when user picks a pack from the picker)
+          if (action === 'select_style' && scaffoldContext?.selected_pack_id) {
+            console.log('[handleResolveDecisionPoint] Design pack selected:', scaffoldContext.selected_pack_id);
+            await this.activeScaffoldCoordinator.handleStyleSelect(scaffoldContext.selected_pack_id);
+            console.log('[handleResolveDecisionPoint] Style selected, back to decision state');
+            await this.sendEventsToWebview(webview, task_id);
+            // Do NOT clear currentTaskId - flow continues in awaiting_decision state
+            return;
+          }
+          
+          // Map button actions to scaffold flow actions for finalizing (proceed/cancel only)
+          let scaffoldAction: 'proceed' | 'cancel';
+          
+          switch (action) {
+            case 'proceed':
+              scaffoldAction = 'proceed';
+              break;
+            case 'cancel':
+              scaffoldAction = 'cancel';
+              break;
+            default:
+              console.error('Unknown scaffold action:', action);
+              vscode.window.showErrorMessage(`Unknown action: ${action}`);
+              return;
+          }
+          
+          // Call the coordinator to handle the action (finalizing only)
+          const updatedState = await this.activeScaffoldCoordinator.handleUserAction(scaffoldAction);
+          console.log('[handleResolveDecisionPoint] Scaffold action handled:', updatedState.completionStatus);
+          
+          // Clear the coordinator reference
+          this.activeScaffoldCoordinator = null;
+          
+          // CRITICAL: Clear currentTaskId so next prompt starts fresh
+          console.log('[handleResolveDecisionPoint] Scaffold completed, clearing currentTaskId');
+          this.currentTaskId = null;
+          this.currentStage = 'none';
+          
+          await this.sendEventsToWebview(webview, task_id);
+          
+          if (updatedState.completionStatus === 'ready_for_step_35_2') {
+            // STEP 35.4: Scaffold approved - select recipe and show next steps
+            // NOTE: scaffold_completed was already emitted by ScaffoldFlowCoordinator
+            console.log('[handleResolveDecisionPoint] Scaffold approved, selecting recipe...');
+            
+            try {
+              // Get workspace root
+              const scaffoldWorkspaceRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+              if (!scaffoldWorkspaceRoot) {
+                throw new Error('No workspace folder open');
+              }
+              
+              // Get the original intent to determine recipe
+              const scaffoldEvents = this.eventStore?.getEventsByTaskId(task_id) || [];
+              const scaffoldIntentEvent = scaffoldEvents.find((e: Event) => e.type === 'intent_received');
+              const scaffoldPrompt = (scaffoldIntentEvent?.payload.prompt as string) || 'Create a new project';
+              
+              // Select recipe based on user prompt
+              const recipeSelection = selectRecipe(scaffoldPrompt);
+              console.log(`[handleResolveDecisionPoint] Recipe selected: ${recipeSelection.recipe_id}`);
+              
+              // DON'T emit scaffold_completed again - it was already emitted by ScaffoldFlowCoordinator
+              // Instead, emit a scaffold_decision_resolved event to indicate recipe selection
+              await this.emitEvent({
+                event_id: this.generateId(),
+                task_id: task_id,
+                timestamp: new Date().toISOString(),
+                type: 'scaffold_decision_resolved',
+                mode: this.currentMode,
+                stage: this.currentStage,
+                payload: {
+                  decision: 'proceed',
+                  recipe_id: recipeSelection.recipe_id,
+                  next_steps: recipeSelection.recipe_id === 'nextjs_app_router' 
+                    ? ['npx create-next-app@latest my-app', 'cd my-app', 'npm run dev']
+                    : recipeSelection.recipe_id === 'vite_react'
+                    ? ['npm create vite@latest my-app -- --template react-ts', 'cd my-app', 'npm install', 'npm run dev']
+                    : ['npx create-expo-app my-app', 'cd my-app', 'npx expo start'],
+                },
+                evidence_ids: [],
+                parent_event_id: null,
+              });
+              
+              await this.sendEventsToWebview(webview, task_id);
+              
+              // STEP 35.4 FIX: Automatically run the scaffold command in terminal
+              // Don't just show a message - actually CREATE the project!
+              const recipeNames: Record<string, string> = {
+                'nextjs_app_router': 'Next.js',
+                'vite_react': 'Vite + React',
+                'expo': 'Expo',
+              };
+              
+              // Determine the create command based on recipe
+              const createCmd = recipeSelection.recipe_id === 'nextjs_app_router'
+                ? 'npx create-next-app@latest my-app'
+                : recipeSelection.recipe_id === 'vite_react'
+                ? 'npm create vite@latest my-app -- --template react-ts'
+                : 'npx create-expo-app my-app';
+              
+              // Emit scaffold_apply_started event
+              await this.emitEvent({
+                event_id: this.generateId(),
+                task_id: task_id,
+                timestamp: new Date().toISOString(),
+                type: 'scaffold_apply_started',
+                mode: this.currentMode,
+                stage: this.currentStage,
+                payload: {
+                  recipe_id: recipeSelection.recipe_id,
+                  command: createCmd,
+                  target_directory: scaffoldWorkspaceRoot,
+                },
+                evidence_ids: [],
+                parent_event_id: null,
+              });
+              
+              await this.sendEventsToWebview(webview, task_id);
+              
+              // Create terminal and RUN the scaffold command automatically
+              console.log('[handleResolveDecisionPoint] 🚀 Auto-running scaffold command:', createCmd);
+              
+              const terminal = vscode.window.createTerminal({
+                name: `Scaffold: ${recipeNames[recipeSelection.recipe_id] || 'Project'}`,
+                cwd: scaffoldWorkspaceRoot,
+              });
+              terminal.show(true); // Show terminal with focus
+              terminal.sendText(createCmd);
+
+              // 🚀 START POST-SCAFFOLD ORCHESTRATION
+              // Polls for project completion, applies design pack, emits next_steps_shown
+              const postScaffoldEventBus = new EventBus(this.eventStore!);
+              
+              // Extract scaffold ID from events or generate one
+              const postScaffoldEvents = this.eventStore?.getEventsByTaskId(task_id) || [];
+              const scaffoldDecisionEvent = postScaffoldEvents.find(e => e.type === 'scaffold_decision_requested');
+              const scaffoldIdForPost = (scaffoldDecisionEvent?.payload?.scaffold_id as string) || this.generateId();
+              
+              // Extract design pack ID from scaffold context if available
+              const designPackIdForPost = (scaffoldContext?.design_pack_id as string) || 'minimal-light';
+              
+              // Import startPostScaffoldOrchestration from core
+              const coreModule = await import('core');
+              const startPostScaffoldOrchestration = coreModule.startPostScaffoldOrchestration;
+              
+              if (typeof startPostScaffoldOrchestration === 'function') {
+                const postScaffoldCtx = {
+                  taskId: task_id,
+                  scaffoldId: scaffoldIdForPost,
+                  targetDirectory: scaffoldWorkspaceRoot,
+                  appName: 'my-app', // TODO: Extract from createCmd
+                  recipeId: recipeSelection.recipe_id as any,
+                  designPackId: designPackIdForPost,
+                  eventBus: postScaffoldEventBus,
+                  mode: this.currentMode,
+                };
+                
+                // Subscribe to post-scaffold events for UI updates
+                postScaffoldEventBus.subscribe(async () => {
+                  await this.sendEventsToWebview(webview, task_id);
+                });
+                
+                // Fire and forget - orchestrator handles polling and event emission
+                startPostScaffoldOrchestration(postScaffoldCtx).then((result: any) => {
+                  console.log('[handleResolveDecisionPoint] ✅ Post-scaffold complete:', result);
+                }).catch((error: any) => {
+                  console.error('[handleResolveDecisionPoint] ❌ Post-scaffold error:', error);
+                });
+              } else {
+                console.warn('[handleResolveDecisionPoint] ⚠️ startPostScaffoldOrchestration not available, skipping post-scaffold');
+              }
+              
+              // Emit scaffold_applied event (command started)
+              await this.emitEvent({
+                event_id: this.generateId(),
+                task_id: task_id,
+                timestamp: new Date().toISOString(),
+                type: 'scaffold_applied',
+                mode: this.currentMode,
+                stage: this.currentStage,
+                payload: {
+                  recipe_id: recipeSelection.recipe_id,
+                  command: createCmd,
+                  method: 'vscode_terminal',
+                  message: `Scaffold command running in terminal. Follow the prompts to complete setup.`,
+                },
+                evidence_ids: [],
+                parent_event_id: null,
+              });
+              
+              await this.sendEventsToWebview(webview, task_id);
+              
+              vscode.window.showInformationMessage(
+                `🎉 ${recipeNames[recipeSelection.recipe_id] || 'Project'} scaffold started! Follow the terminal prompts to complete setup.`
+              );
+              
+            } catch (scaffoldApplyError) {
+              console.error('[handleResolveDecisionPoint] Scaffold error:', scaffoldApplyError);
+              vscode.window.showErrorMessage(`Scaffold failed: ${scaffoldApplyError}`);
+            }
+          } else if (updatedState.completionStatus === 'cancelled') {
+            vscode.window.showInformationMessage('Scaffold cancelled.');
+          }
+          
+          return;
+          
+        } catch (scaffoldError) {
+          console.error('[handleResolveDecisionPoint] Scaffold error:', scaffoldError);
+          vscode.window.showErrorMessage(`Scaffold action failed: ${scaffoldError}`);
+          return;
+        }
+      }
+      
       console.error('Decision point not handled:', { decisionType, decisionContext });
     } catch (error) {
       console.error('Error handling resolveDecisionPoint:', error);
@@ -3173,6 +3463,106 @@ This demonstrates the diff proposal pipeline without requiring LLM integration.
       console.error(`${LOG_PREFIX} ❌ Error handling mission sequencing:`, error);
       console.error(`${LOG_PREFIX} Error stack:`, error instanceof Error ? error.stack : 'N/A');
       console.error(`${LOG_PREFIX} ========================================`);
+    }
+  }
+
+  /**
+   * Step 35: Handle Scaffold Flow for greenfield project requests
+   * 
+   * Routes detected greenfield requests to the ScaffoldFlowCoordinator
+   * which handles recipe/design pack selection and project creation.
+   */
+  private async handleScaffoldFlow(
+    userPrompt: string,
+    taskId: string,
+    modelId: string,
+    webview: vscode.Webview,
+    attachments: any[]
+  ): Promise<void> {
+    const LOG_PREFIX = '[Ordinex:ScaffoldFlow]';
+    console.log(`${LOG_PREFIX} === SCAFFOLD FLOW START ===`);
+    console.log(`${LOG_PREFIX} Prompt:`, userPrompt);
+    console.log(`${LOG_PREFIX} Attachments:`, attachments.length);
+
+    try {
+      // Get workspace root
+      const workspaceRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+      if (!workspaceRoot) {
+        vscode.window.showErrorMessage('No workspace folder open');
+        return;
+      }
+
+      // Initialize EventBus
+      if (!this.eventStore) {
+        throw new Error('EventStore not initialized');
+      }
+      const eventBus = new EventBus(this.eventStore);
+
+      // Subscribe to events for UI updates
+      eventBus.subscribe(async (event) => {
+        await this.sendEventsToWebview(webview, taskId);
+      });
+
+      // Create ScaffoldFlowCoordinator
+      const coordinator = new ScaffoldFlowCoordinator(eventBus);
+      this.activeScaffoldCoordinator = coordinator;
+
+      // Convert attachments to AttachmentInput format for reference context
+      const attachmentInputs = attachments.map((a: any) => ({
+        id: a.id || a.evidence_id,
+        name: a.name,
+        mimeType: a.mimeType,
+        type: a.type || 'image',
+        evidence_id: a.evidence_id,
+        data: a.data, // base64 (optional for URL references)
+        url: a.url,   // For URL references
+      }));
+
+      console.log(`${LOG_PREFIX} Starting scaffold flow...`);
+
+      // Start the scaffold flow
+      const state = await coordinator.startScaffoldFlow(
+        taskId,
+        userPrompt,
+        workspaceRoot,
+        attachmentInputs.length > 0 ? attachmentInputs : undefined,
+        undefined // styleSourceMode - will use default from reference context
+      );
+
+      console.log(`${LOG_PREFIX} ✓ Scaffold flow started:`, {
+        scaffoldId: state.scaffoldId,
+        status: state.status,
+        hasReferenceContext: !!state.referenceContext,
+      });
+
+      // Send events to webview
+      await this.sendEventsToWebview(webview, taskId);
+
+      console.log(`${LOG_PREFIX} === SCAFFOLD FLOW INITIALIZED ===`);
+      console.log(`${LOG_PREFIX} Awaiting user decision (Proceed/Cancel)...`);
+
+    } catch (error) {
+      console.error(`${LOG_PREFIX} Error in scaffold flow:`, error);
+
+      // Emit failure_detected event
+      await this.emitEvent({
+        event_id: this.generateId(),
+        task_id: taskId,
+        timestamp: new Date().toISOString(),
+        type: 'failure_detected',
+        mode: this.currentMode,
+        stage: this.currentStage,
+        payload: {
+          error: error instanceof Error ? error.message : 'Unknown error',
+          context: 'scaffold_flow_start',
+        },
+        evidence_ids: [],
+        parent_event_id: null,
+      });
+
+      await this.sendEventsToWebview(webview, taskId);
+
+      vscode.window.showErrorMessage(`Scaffold flow failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
     }
   }
 

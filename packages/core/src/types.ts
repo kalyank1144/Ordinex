@@ -107,9 +107,16 @@ export type EventType =
   | 'command_progress'
   // Step 35: Greenfield Scaffold Flow
   | 'scaffold_started'
+  | 'scaffold_clarification_needed'
+  | 'scaffold_clarification_answered'
   | 'scaffold_proposal_created'
+  | 'scaffold_decision_requested'
+  | 'scaffold_decision_resolved'
   | 'scaffold_applied'
   | 'scaffold_completed'
+  | 'scaffold_style_selection_requested'
+  | 'scaffold_style_selected'
+  | 'scaffold_next_steps_ready'
   // Step 35.2: Scaffold Preflight Safety
   | 'scaffold_preflight_started'
   | 'scaffold_preflight_completed'
@@ -127,6 +134,10 @@ export type EventType =
   | 'next_steps_shown'
   | 'next_step_selected'
   | 'next_step_dismissed'
+  // Post-Scaffold Orchestration (after terminal command completes)
+  | 'scaffold_progress'
+  | 'design_pack_applied'
+  | 'scaffold_final_complete'
   // Step 35.7: Non-Empty Directory + Monorepo Targeting
   | 'scaffold_preflight_decision_needed'
   | 'scaffold_preflight_decision_taken'
@@ -134,7 +145,12 @@ export type EventType =
   // Step 37: Reference-Based Enhancements
   | 'reference_attached'
   | 'reference_context_built'
-  | 'reference_used';
+  | 'reference_used'
+  // Step 38: Vision + URL Reference Token Extraction
+  | 'vision_analysis_started'
+  | 'vision_analysis_completed'
+  | 'reference_tokens_extracted'
+  | 'reference_tokens_used';
 
 export const CANONICAL_EVENT_TYPES: readonly EventType[] = [
   'intent_received',
@@ -227,9 +243,16 @@ export const CANONICAL_EVENT_TYPES: readonly EventType[] = [
   'command_progress',
   // Step 35: Greenfield Scaffold Flow
   'scaffold_started',
+  'scaffold_clarification_needed',
+  'scaffold_clarification_answered',
   'scaffold_proposal_created',
+  'scaffold_decision_requested',
+  'scaffold_decision_resolved',
   'scaffold_applied',
   'scaffold_completed',
+  'scaffold_style_selection_requested',
+  'scaffold_style_selected',
+  'scaffold_next_steps_ready',
   // Step 35.2: Scaffold Preflight Safety
   'scaffold_preflight_started',
   'scaffold_preflight_completed',
@@ -247,6 +270,10 @@ export const CANONICAL_EVENT_TYPES: readonly EventType[] = [
   'next_steps_shown',
   'next_step_selected',
   'next_step_dismissed',
+  // Post-Scaffold Orchestration (after terminal command completes)
+  'scaffold_progress',
+  'design_pack_applied',
+  'scaffold_final_complete',
   // Step 35.7: Non-Empty Directory + Monorepo Targeting
   'scaffold_preflight_decision_needed',
   'scaffold_preflight_decision_taken',
@@ -255,6 +282,11 @@ export const CANONICAL_EVENT_TYPES: readonly EventType[] = [
   'reference_attached',
   'reference_context_built',
   'reference_used',
+  // Step 38: Vision + URL Reference Token Extraction
+  'vision_analysis_started',
+  'vision_analysis_completed',
+  'reference_tokens_extracted',
+  'reference_tokens_used',
 ] as const;
 
 export type Mode = 'ANSWER' | 'PLAN' | 'MISSION';
@@ -998,8 +1030,8 @@ export interface ReferenceUsedPayload {
 }
 
 /**
- * Vision tokens (stub output from VisionAnalyzer)
- * Placeholder for future Vision API integration
+ * Vision tokens (legacy stub - kept for backward compatibility)
+ * @deprecated Use ReferenceTokens instead
  */
 export interface VisionTokens {
   status: 'pending' | 'analyzed';
@@ -1010,10 +1042,223 @@ export interface VisionTokens {
 }
 
 /**
- * Vision analyzer interface (stub for future implementation)
- * Current implementation returns { status: 'pending', reason: 'vision_not_enabled' }
+ * Vision analyzer interface (legacy stub - kept for backward compatibility)
+ * @deprecated Use RealVisionAnalyzer instead
  */
 export interface VisionAnalyzer {
   analyze(refs: ReferenceContext): Promise<VisionTokens>;
 }
+
+// ============================================================================
+// STEP 38: VISION + URL REFERENCE TOKEN EXTRACTION TYPES
+// ============================================================================
+
+/**
+ * Reference Tokens - Structured style/layout hints extracted from user-provided references
+ * 
+ * This is the canonical output of vision analysis. It contains extracted design tokens
+ * that can influence scaffold design pack selection and style overrides.
+ * 
+ * CRITICAL: Never store raw base64 or full OCR text in this structure.
+ * Only derived/summarized tokens are stored.
+ */
+export interface ReferenceTokens {
+  /** Source counts for traceability */
+  source: {
+    images_count: number;
+    urls_count: number;
+  };
+  
+  /** Style tokens extracted from references */
+  style: {
+    /** Color palette extracted from references */
+    palette?: {
+      primary?: string;    // Hex color, e.g., "#3B82F6"
+      secondary?: string;  // Hex color
+      accent?: string;     // Hex color
+      neutrals?: string[]; // Array of neutral colors
+    };
+    /** Mood/vibe descriptors */
+    mood?: string[];         // e.g., ["minimal", "enterprise", "vibrant", "modern"]
+    /** Typography hints */
+    typography?: {
+      heading?: string;    // Font family suggestion, e.g., "Inter"
+      body?: string;       // Font family suggestion
+    };
+    /** Content density */
+    density?: 'compact' | 'default' | 'relaxed';
+    /** Border radius style */
+    radius?: 'none' | 'sm' | 'md' | 'lg' | 'full';
+    /** Shadow intensity */
+    shadows?: 'none' | 'subtle' | 'medium' | 'dramatic';
+  };
+  
+  /** Layout structure hints */
+  layout?: {
+    structure?: string[];   // e.g., ["sidebar", "header", "grid", "cards"]
+    components?: string[];  // e.g., ["nav", "hero", "footer", "form"]
+  };
+  
+  /** UI framework/system hints */
+  uiHints?: {
+    component_system_preference?: 'shadcn' | 'mui' | 'chakra' | 'tailwind-plain';
+  };
+  
+  /** Confidence score 0..1 */
+  confidence: number;
+  
+  /** Warnings about extraction quality */
+  warnings?: string[];
+}
+
+/**
+ * Vision analysis status
+ */
+export type VisionAnalysisStatus = 'complete' | 'skipped' | 'error';
+
+/**
+ * Vision analyze result - output from RealVisionAnalyzer
+ */
+export interface VisionAnalyzeResult {
+  /** Analysis status */
+  status: VisionAnalysisStatus;
+  /** Extracted tokens (only if status === 'complete') */
+  tokens?: ReferenceTokens;
+  /** Evidence reference for tokens file */
+  tokensEvidenceRef?: string;
+  /** Reason for skip/error */
+  reason?: string;
+  /** Whether error is retryable */
+  retryable?: boolean;
+  /** Duration of analysis in milliseconds */
+  durationMs?: number;
+}
+
+/**
+ * Vision mode configuration
+ */
+export type VisionMode = 'off' | 'prompt' | 'on';
+
+/**
+ * Vision provider selection (independent from chat model dropdown)
+ */
+export type VisionProvider = 'anthropic' | 'openai' | 'backend-default';
+
+/**
+ * Vision configuration - workspace settings
+ */
+export interface VisionConfig {
+  /** Vision analysis mode (enterprise-safe: default 'off') */
+  visionMode: VisionMode;
+  /** Vision provider (independent from chat model) */
+  visionProvider: VisionProvider;
+  /** Maximum number of images to analyze (capped at 10) */
+  maxImages: number;
+  /** Maximum dimension for resized images (e.g., 1024) */
+  maxPixels: number;
+  /** Maximum total upload size in MB (e.g., 15) */
+  maxTotalUploadMB: number;
+}
+
+/**
+ * Vision analysis started event payload
+ */
+export interface VisionAnalysisStartedPayload {
+  /** Associated run ID */
+  run_id: string;
+  /** Reference context ID for correlation */
+  reference_context_id: string;
+  /** Number of images to analyze */
+  images_count: number;
+  /** Number of URLs (for context hints) */
+  urls_count: number;
+}
+
+/**
+ * Vision analysis completed event payload
+ */
+export interface VisionAnalysisCompletedPayload {
+  /** Associated run ID */
+  run_id: string;
+  /** Reference context ID for correlation */
+  reference_context_id: string;
+  /** Analysis status */
+  status: VisionAnalysisStatus;
+  /** Reason for skip/error */
+  reason?: string;
+  /** Duration in milliseconds */
+  duration_ms?: number;
+}
+
+/**
+ * Reference tokens extracted event payload
+ * 
+ * IMPORTANT: Never include raw base64 or full JSON here.
+ * Only include summarized/compact info for mission feed display.
+ */
+export interface ReferenceTokensExtractedPayload {
+  /** Associated run ID */
+  run_id: string;
+  /** Reference context ID for correlation */
+  reference_context_id: string;
+  /** Evidence reference path for tokens file */
+  evidence_ref: string;
+  /** Short palette summary for UI display, e.g., "#3B82F6, #10B981" */
+  palette_summary?: string;
+  /** Mood tags for UI display */
+  moods?: string[];
+  /** Confidence score 0..1 */
+  confidence: number;
+}
+
+/**
+ * Reference tokens used event payload
+ * 
+ * Emitted when tokens are actually applied to influence scaffold/plan/quick action.
+ */
+export interface ReferenceTokensUsedPayload {
+  /** Associated run ID */
+  run_id: string;
+  /** Reference context ID for correlation */
+  reference_context_id: string;
+  /** Where tokens were used */
+  used_in: 'scaffold_proposal' | 'quick_action' | 'plan';
+  /** Design pack ID if scaffold context */
+  design_pack_id?: string;
+  /** Reference mode used */
+  mode: 'use_reference' | 'combine' | 'ignore';
+  /** Whether style overrides were applied */
+  overrides_applied: boolean;
+}
+
+/**
+ * Run context for vision analysis (for replay detection)
+ */
+export interface VisionRunContext {
+  /** Run/task ID */
+  runId: string;
+  /** Whether this is a replay/audit run */
+  isReplay: boolean;
+  /** Workspace root path */
+  workspaceRoot: string;
+  /** Reference context ID */
+  referenceContextId: string;
+}
+
+/**
+ * Image data for vision provider
+ */
+export interface VisionImageData {
+  /** MIME type */
+  mime: string;
+  /** Base64-encoded image data */
+  base64: string;
+  /** Original attachment ID */
+  attachmentId: string;
+}
+
+/**
+ * Vision consent decision from user
+ */
+export type VisionConsentDecision = 'analyze_once' | 'enable_always' | 'skip';
 

@@ -43,6 +43,24 @@ import {
   DEFAULT_STYLE_SOURCE_MODE,
   type AttachmentInput,
 } from './referenceContextBuilder';
+// Step 35.3: Recipe selection
+import { selectRecipe } from './scaffold/recipeSelector';
+// Step 35.5: Design pack selection
+import {
+  selectDesignPack,
+  detectDomainHint,
+} from './scaffold/designPackSelector';
+import {
+  formatTokensSummary,
+  getDefaultPacksForPicker,
+  getDesignPackById,
+  DesignPack,
+  DesignPackId,
+} from './scaffold/designPacks';
+// Step 38: Vision imports (wiring available, not active in scaffold flow yet)
+// Vision analyzer can be used here when design pack selection is fully implemented
+// import { createVisionAnalyzer } from './vision/visionAnalyzer';
+// import { buildCompactSummary } from './vision/referenceContextSummary';
 
 // ============================================================================
 // SCAFFOLD FLOW STATE
@@ -74,6 +92,14 @@ export interface ScaffoldFlowState {
   referenceContext?: ReferenceContext;
   /** Selected style source mode */
   styleSourceMode?: StyleSourceMode;
+  
+  // Step 35.5: Design Pack Selection State
+  /** Current design pack ID */
+  currentDesignPackId?: DesignPackId;
+  /** Recipe ID */
+  currentRecipeId?: string;
+  /** Whether style picker is active */
+  stylePickerActive?: boolean;
 }
 
 /**
@@ -169,8 +195,8 @@ export class ScaffoldFlowCoordinator {
     // Emit scaffold_proposal_created with placeholders
     await this.emitScaffoldProposalCreated();
     
-    // Emit decision_point_needed
-    await this.emitDecisionPointNeeded();
+    // Emit scaffold_decision_requested (NOT decision_point_needed)
+    await this.emitScaffoldDecisionRequested();
     
     // Update state to awaiting_decision
     this.state.status = 'awaiting_decision';
@@ -185,7 +211,7 @@ export class ScaffoldFlowCoordinator {
    * @param action - The action taken by user
    * @returns Updated ScaffoldFlowState
    */
-  async handleUserAction(action: 'proceed' | 'cancel' | 'change_style'): Promise<ScaffoldFlowState> {
+  async handleUserAction(action: 'proceed' | 'cancel'): Promise<ScaffoldFlowState> {
     if (!this.state) {
       throw new Error('No active scaffold flow');
     }
@@ -206,11 +232,6 @@ export class ScaffoldFlowCoordinator {
       case 'cancel':
         completionStatus = 'cancelled';
         reason = 'User cancelled scaffold';
-        break;
-      case 'change_style':
-        // In 35.1, change_style is disabled - treat as cancel with message
-        completionStatus = 'cancelled';
-        reason = 'Style customization available in Step 35.4';
         break;
       default:
         completionStatus = 'cancelled';
@@ -240,6 +261,97 @@ export class ScaffoldFlowCoordinator {
    */
   isAwaitingDecision(): boolean {
     return this.state?.status === 'awaiting_decision';
+  }
+  
+  /**
+   * Handle style change request - show design pack picker
+   * 
+   * Does NOT complete the scaffold flow - keeps it in awaiting_decision state.
+   * Emits scaffold_style_selection_requested event with available packs.
+   * 
+   * @returns Updated ScaffoldFlowState (still awaiting_decision)
+   */
+  async handleStyleChange(): Promise<ScaffoldFlowState> {
+    if (!this.state) {
+      throw new Error('No active scaffold flow');
+    }
+    
+    if (this.state.status !== 'awaiting_decision') {
+      throw new Error(`Cannot change style in status: ${this.state.status}`);
+    }
+    
+    // Mark style picker as active
+    this.state.stylePickerActive = true;
+    
+    // Emit scaffold_style_selection_requested event
+    await this.emitStyleSelectionRequested();
+    
+    this.state.lastEventAt = new Date().toISOString();
+    
+    return this.state;
+  }
+  
+  /**
+   * Handle user selecting a design pack from the picker
+   * 
+   * Updates the proposal with the selected pack and returns to normal decision state.
+   * 
+   * @param packId - The selected design pack ID
+   * @returns Updated ScaffoldFlowState
+   */
+  async handleStyleSelect(packId: DesignPackId): Promise<ScaffoldFlowState> {
+    if (!this.state) {
+      throw new Error('No active scaffold flow');
+    }
+    
+    // Validate the pack ID
+    const selectedPack = getDesignPackById(packId);
+    if (!selectedPack) {
+      throw new Error(`Invalid design pack ID: ${packId}`);
+    }
+    
+    // Update state with selected pack
+    this.state.currentDesignPackId = packId;
+    this.state.stylePickerActive = false;
+    
+    // Emit scaffold_style_selected event
+    await this.emitStyleSelected(selectedPack);
+    
+    // Re-emit proposal with updated design pack
+    await this.emitScaffoldProposalCreatedWithPack(selectedPack);
+    
+    // Re-emit decision requested (back to normal decision state)
+    await this.emitScaffoldDecisionRequested();
+    
+    this.state.lastEventAt = new Date().toISOString();
+    
+    return this.state;
+  }
+  
+  /**
+   * Check if style picker is currently active
+   */
+  isStylePickerActive(): boolean {
+    return this.state?.stylePickerActive === true;
+  }
+  
+  /**
+   * Extract app name from user prompt (simple heuristic)
+   */
+  private extractAppNameFromPrompt(prompt: string): string {
+    // Try to extract quoted names
+    const quotedMatch = prompt.match(/["']([^"']+)["']/);
+    if (quotedMatch) return quotedMatch[1].toLowerCase().replace(/\s+/g, '-');
+    
+    // Try patterns like "create/build X app/project"
+    const appMatch = prompt.match(/(?:create|build|make|scaffold)\s+(?:a\s+)?(?:new\s+)?([a-zA-Z0-9-_]+)\s+(?:app|project|site|website)/i);
+    if (appMatch) return appMatch[1].toLowerCase();
+    
+    // Fallback: use first meaningful word
+    const words = prompt.toLowerCase().split(/\s+/);
+    const keywords = ['create', 'build', 'make', 'new', 'scaffold', 'a', 'an', 'the', 'app', 'project'];
+    const meaningfulWord = words.find(w => !keywords.includes(w) && w.length > 2);
+    return meaningfulWord ? meaningfulWord.replace(/[^a-z0-9-]/g, '') : 'my-app';
   }
   
   // =========================================================================
@@ -276,8 +388,39 @@ export class ScaffoldFlowCoordinator {
   private async emitScaffoldProposalCreated(): Promise<void> {
     if (!this.state) return;
     
-    // Generate placeholder summary from user prompt
-    let summary = generatePlaceholderSummary(this.state.userPrompt);
+    // Step 35.3: Select recipe based on user prompt
+    const recipeSelection = selectRecipe(this.state.userPrompt);
+    
+    // Map recipe_id to display name
+    const recipeDisplayNames: Record<string, string> = {
+      'nextjs_app_router': 'Next.js 14 (App Router)',
+      'vite_react': 'Vite + React',
+      'expo': 'Expo (React Native)',
+    };
+    const recipeName = recipeDisplayNames[recipeSelection.recipe_id] || recipeSelection.recipe_id;
+    
+    // Estimate file counts based on recipe
+    const recipeFileCounts: Record<string, { files: number; dirs: number }> = {
+      'nextjs_app_router': { files: 24, dirs: 8 },
+      'vite_react': { files: 18, dirs: 6 },
+      'expo': { files: 22, dirs: 7 },
+    };
+    const counts = recipeFileCounts[recipeSelection.recipe_id] || { files: 20, dirs: 6 };
+    
+    // Step 35.5: Select design pack deterministically
+    const domainHint = detectDomainHint(this.state.userPrompt);
+    const targetDir = this.state.targetDirectory || process.cwd();
+    const appName = this.extractAppNameFromPrompt(this.state.userPrompt);
+    const designPackSelection = selectDesignPack({
+      workspaceRoot: targetDir,
+      targetDir,
+      appName,
+      recipeId: recipeSelection.recipe_id,
+      domainHint,
+    });
+    
+    // Build summary
+    let summary = `Create a new ${recipeName} project with ${designPackSelection.pack.name} design.`;
     
     // Step 37: Augment summary if references are present
     if (this.state.referenceContext) {
@@ -286,13 +429,18 @@ export class ScaffoldFlowCoordinator {
       summary += ` Design will be influenced by ${refCount} provided reference(s).`;
     }
     
-    const payload: ScaffoldProposalCreatedPayload = {
+    // Build payload - cast to any to add extra fields for UI
+    const payload: Record<string, unknown> = {
       scaffold_id: this.state.scaffoldId,
-      recipe: 'TBD', // Placeholder in 35.1
-      design_pack: 'TBD', // Placeholder in 35.1
-      files_count: 0, // Placeholder in 35.1
-      directories_count: 0, // Placeholder in 35.1
-      commands_to_run: [], // Placeholder in 35.1
+      recipe: recipeName,
+      recipe_id: recipeSelection.recipe_id,
+      design_pack: designPackSelection.pack.name,
+      design_pack_id: designPackSelection.pack.id,
+      design_pack_name: designPackSelection.pack.name,
+      design_tokens_summary: formatTokensSummary(designPackSelection.pack),
+      files_count: counts.files,
+      directories_count: counts.dirs,
+      commands_to_run: ['npm install', 'npm run dev'],
       summary,
       // Step 37: Include reference context in payload for UI rendering
       reference_context: this.state.referenceContext,
@@ -318,7 +466,7 @@ export class ScaffoldFlowCoordinator {
     this.state.lastEventAt = event.timestamp;
   }
   
-  private async emitDecisionPointNeeded(): Promise<void> {
+  private async emitScaffoldDecisionRequested(): Promise<void> {
     if (!this.state) return;
     
     const decisionOptions = buildScaffoldDecisionOptions();
@@ -327,11 +475,10 @@ export class ScaffoldFlowCoordinator {
       event_id: randomUUID(),
       task_id: this.state.runId,
       timestamp: new Date().toISOString(),
-      type: 'decision_point_needed',
+      type: 'scaffold_decision_requested',
       mode: 'PLAN' as Mode,
       stage: 'plan' as Stage,
       payload: {
-        decision_type: 'scaffold_approval',
         scaffold_id: this.state.scaffoldId,
         title: 'Create new project',
         description: `Ready to scaffold a new project based on: "${this.state.userPrompt.substring(0, 100)}"`,
@@ -468,6 +615,150 @@ export class ScaffoldFlowCoordinator {
     
     await this.eventBus.publish(event);
   }
+  
+  // =========================================================================
+  // STEP 35.5: Style Selection Event Emission Helpers
+  // =========================================================================
+  
+  /**
+   * Emit scaffold_style_selection_requested event
+   * Shows the design pack picker to user
+   */
+  private async emitStyleSelectionRequested(): Promise<void> {
+    if (!this.state) return;
+    
+    // Get available packs for the picker (6 diverse options)
+    const availablePacks = getDefaultPacksForPicker();
+    
+    const event: Event = {
+      event_id: randomUUID(),
+      task_id: this.state.runId,
+      timestamp: new Date().toISOString(),
+      type: 'scaffold_style_selection_requested',
+      mode: 'PLAN' as Mode,
+      stage: 'plan' as Stage,
+      payload: {
+        scaffold_id: this.state.scaffoldId,
+        current_pack_id: this.state.currentDesignPackId,
+        available_packs: availablePacks.map(pack => ({
+          id: pack.id,
+          name: pack.name,
+          vibe: pack.vibe,
+          primary_color: pack.tokens.colors.primary,
+          background_color: pack.tokens.colors.background,
+          description: pack.preview.description,
+        })),
+        total_available: availablePacks.length,
+      },
+      evidence_ids: [],
+      parent_event_id: null,
+    };
+    
+    await this.eventBus.publish(event);
+  }
+  
+  /**
+   * Emit scaffold_style_selected event
+   * Records user's design pack choice
+   */
+  private async emitStyleSelected(pack: DesignPack): Promise<void> {
+    if (!this.state) return;
+    
+    const event: Event = {
+      event_id: randomUUID(),
+      task_id: this.state.runId,
+      timestamp: new Date().toISOString(),
+      type: 'scaffold_style_selected',
+      mode: 'PLAN' as Mode,
+      stage: 'plan' as Stage,
+      payload: {
+        scaffold_id: this.state.scaffoldId,
+        pack_id: pack.id,
+        pack_name: pack.name,
+        vibe: pack.vibe,
+        primary_color: pack.tokens.colors.primary,
+      },
+      evidence_ids: [],
+      parent_event_id: null,
+    };
+    
+    await this.eventBus.publish(event);
+  }
+  
+  /**
+   * Emit scaffold_proposal_created with a specific design pack
+   * Used when user selects a different pack from the picker
+   */
+  private async emitScaffoldProposalCreatedWithPack(pack: DesignPack): Promise<void> {
+    if (!this.state) return;
+    
+    // Step 35.3: Select recipe based on user prompt (reuse existing logic)
+    const recipeSelection = selectRecipe(this.state.userPrompt);
+    
+    // Map recipe_id to display name
+    const recipeDisplayNames: Record<string, string> = {
+      'nextjs_app_router': 'Next.js 14 (App Router)',
+      'vite_react': 'Vite + React',
+      'expo': 'Expo (React Native)',
+    };
+    const recipeName = recipeDisplayNames[recipeSelection.recipe_id] || recipeSelection.recipe_id;
+    
+    // Estimate file counts based on recipe
+    const recipeFileCounts: Record<string, { files: number; dirs: number }> = {
+      'nextjs_app_router': { files: 24, dirs: 8 },
+      'vite_react': { files: 18, dirs: 6 },
+      'expo': { files: 22, dirs: 7 },
+    };
+    const counts = recipeFileCounts[recipeSelection.recipe_id] || { files: 20, dirs: 6 };
+    
+    // Build summary with the NEW pack name
+    let summary = `Create a new ${recipeName} project with ${pack.name} design.`;
+    
+    // Step 37: Augment summary if references are present
+    if (this.state.referenceContext) {
+      const refCount = this.state.referenceContext.images.length + 
+                       this.state.referenceContext.urls.length;
+      summary += ` Design will be influenced by ${refCount} provided reference(s).`;
+    }
+    
+    // Build payload with the user-selected pack
+    const payload: Record<string, unknown> = {
+      scaffold_id: this.state.scaffoldId,
+      recipe: recipeName,
+      recipe_id: recipeSelection.recipe_id,
+      design_pack: pack.name,
+      design_pack_id: pack.id,
+      design_pack_name: pack.name,
+      design_tokens_summary: formatTokensSummary(pack),
+      files_count: counts.files,
+      directories_count: counts.dirs,
+      commands_to_run: ['npm install', 'npm run dev'],
+      summary,
+      // Mark this as a user override
+      design_pack_overridden: true,
+      // Step 37: Include reference context in payload for UI rendering
+      reference_context: this.state.referenceContext,
+      reference_mode: this.state.styleSourceMode,
+    };
+    
+    const event: Event = {
+      event_id: randomUUID(),
+      task_id: this.state.runId,
+      timestamp: new Date().toISOString(),
+      type: 'scaffold_proposal_created',
+      mode: 'PLAN' as Mode,
+      stage: 'plan' as Stage,
+      payload: payload as unknown as Record<string, unknown>,
+      evidence_ids: [],
+      parent_event_id: null,
+    };
+    
+    await this.eventBus.publish(event);
+    
+    // Update state
+    this.state.currentRecipeId = recipeSelection.recipe_id;
+    this.state.lastEventAt = event.timestamp;
+  }
 }
 
 // ============================================================================
@@ -522,11 +813,10 @@ function buildScaffoldDecisionOptions(): ScaffoldDecisionOptions {
       description: 'Cancel scaffold and return to chat',
     },
     changeStyle: {
-      label: 'Change Style',
+      label: 'Change',
       action: 'change_style',
-      description: 'Customize design pack and recipe',
-      disabled: true,
-      disabledReason: 'Available in Step 35.4',
+      description: 'Choose a different design style',
+      disabled: false,
     },
   };
 }

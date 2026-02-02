@@ -10,6 +10,22 @@ export const version = '0.0.0';
 // Export types
 export * from './types';
 
+// Step 35.8: Greenfield Intent Detection (Single Source of Truth)
+export {
+  detectGreenfieldIntent,
+  isDefinitelyGreenfield,
+  isAmbiguousGreenfield,
+  IntentSignal,
+} from './intent/greenfieldDetector';
+
+export {
+  llmClassifyIntent,
+  needsLlmClassification,
+  LlmIntent,
+  LlmIntentResult,
+  LlmClassifyArgs,
+} from './intent/llmIntentClassifier';
+
 // Export event-sourcing components
 export { EventStore } from './eventStore';
 export { EventBus, EventSubscriber, PrimitiveEventInput, createPrimitiveInput } from './eventBus';
@@ -565,3 +581,92 @@ export type {
   ScaffoldFlowState,
   ScaffoldDecisionOptions,
 } from './scaffoldFlow';
+
+// Step 35.3: Recipe Selection (Deterministic, No-LLM Framework Detection)
+export {
+  selectRecipe,
+  detectCharacteristics,
+  detectPackageManager,
+  getInstallCommand,
+  getRunCommand,
+  getExecCommand,
+} from './scaffold/recipeSelector';
+
+// Step 35.3: Recipe Registry (Plan Building)
+export {
+  getRecipe,
+  buildRecipePlan,
+  getRecipeName,
+  getRecipeDescription,
+  buildFileTreePreview,
+  countFilesAndDirs,
+  summarizeCommands,
+} from './scaffold/recipeRegistry';
+
+// Step 35.4: Scaffold Apply (File Creation)
+export {
+  applyScaffoldPlan,
+} from './scaffold/scaffoldApplyExecutor';
+
+export type {
+  ScaffoldApplyContext,
+  ScaffoldApplyResult,
+  ConflictMode,
+  ApplyStage,
+} from './scaffold/scaffoldApplyExecutor';
+
+// Step 35.3: Recipe Types
+export type {
+  RecipeId,
+  RecipeContext,
+  RecipePlan,
+  FilePlanItem,
+  CommandPlanItem,
+  RecipeSelection,
+  RecipeDetection,
+  PackageManager,
+} from './scaffold/recipeTypes';
+
+// Step 35.X: Post-Scaffold Orchestrator (Design Pack Application + Next Steps)
+export {
+  startPostScaffoldOrchestration,
+  pollForCompletion,
+  applyDesignPackToProject,
+  DEFAULT_POLLING_CONFIG,
+} from './scaffold/postScaffoldOrchestrator';
+
+export type {
+  PostScaffoldContext,
+  PostScaffoldResult,
+  PostScaffoldPollingConfig,
+} from './scaffold/postScaffoldOrchestrator';
+
+// Step 35.5: Design Packs
+export {
+  getDesignPackById,
+  getDefaultPacksForPicker,
+  getPacksByVibe,
+  generateCssVariables,
+  generateGlobalsCss,
+  DESIGN_PACKS,
+} from './scaffold/designPacks';
+
+export type {
+  DesignPack,
+  DesignPackId,
+  DesignVibe,
+  DesignTokens,
+  ColorTokens,
+  FontTokens,
+} from './scaffold/designPacks';
+
+// Step 35.6: Next Steps (Post-scaffold suggestions)
+export {
+  getNextStepsForRecipe,
+  buildNextStepsShownPayload,
+} from './scaffold/nextSteps';
+
+export type {
+  NextStepSuggestion,
+  NextStepsContext,
+} from './scaffold/nextSteps';

@@ -1,4 +1,30 @@
+import { readFileSync } from 'fs';
+import { join } from 'path';
+
+let scaffoldCardScriptCache: string | null = null;
+
+function getScaffoldCardScript(): string {
+  if (scaffoldCardScriptCache !== null) {
+    return scaffoldCardScriptCache;
+  }
+
+  try {
+    const scriptPath = join(__dirname, 'components', 'ScaffoldCard.js');
+    const rawScript = readFileSync(scriptPath, 'utf8');
+    const sanitizedScript = rawScript
+      .replace(/<\/script>/g, '<\\/script>')
+      .replace(/\/\/# sourceMappingURL=.*$/gm, '');
+    scaffoldCardScriptCache = `(function(){ const exports = {}; ${sanitizedScript} })();`;
+  } catch (error) {
+    console.warn('[webview] Failed to load ScaffoldCard script:', error);
+    scaffoldCardScriptCache = '';
+  }
+
+  return scaffoldCardScriptCache;
+}
+
 export function getWebviewContent(): string {
+  const scaffoldCardScript = getScaffoldCardScript();
   return `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -1949,6 +1975,7 @@ export function getWebviewContent(): string {
       border: 1px solid var(--vscode-charts-green);
     }
   </style>
+  ${scaffoldCardScript ? `<script>${scaffoldCardScript}</script>` : ''}
 </head>
 <body>
   <!-- Header Bar -->
@@ -2205,7 +2232,7 @@ export function getWebviewContent(): string {
       // Update Status Pill
       function updateStatus(status) {
         state.taskStatus = status;
-        statusPill.className = \`status-pill \${status}\`;
+        statusPill.className = 'status-pill ' + status;
         const labels = {
           ready: 'Ready',
           running: 'Running',
@@ -2219,7 +2246,7 @@ export function getWebviewContent(): string {
       // Update Stage Label
       function updateStage(stage) {
         state.currentStage = stage;
-        stageLabel.textContent = stage === 'none' ? '' : \`Stage: \${stage}\`;
+        stageLabel.textContent = stage === 'none' ? '' : 'Stage: ' + stage;
       }
 
       // Tab Switching
@@ -2410,9 +2437,27 @@ export function getWebviewContent(): string {
         \`;
       }
 
+      function hydrateScaffoldCards() {
+        const cards = missionTab.querySelectorAll('scaffold-card[data-event]');
+        cards.forEach((card) => {
+          try {
+            if (!customElements.get('scaffold-card')) {
+              return;
+            }
+            const eventJson = card.getAttribute('data-event');
+            if (!eventJson) return;
+            card.event = JSON.parse(decodeURIComponent(eventJson));
+            card.removeAttribute('data-event');
+          } catch (error) {
+            console.error('[ScaffoldCard] Failed to parse event data:', error);
+          }
+        });
+      }
+
       // Render Mission Tab - Event Timeline
       function renderMission() {
         missionTab.innerHTML = renderMissionTimeline(state.events);
+        hydrateScaffoldCards();
         updateUIGating(); // Update UI gating whenever mission is rendered
         updateExportButtonVisibility(); // Update export button visibility
         updateMissionControlBar(); // Update compact bottom bar for mission progress
@@ -3008,6 +3053,40 @@ export function getWebviewContent(): string {
 
       // Render Event Card
       function renderEventCard(event) {
+        // SCAFFOLD EVENTS: Use ScaffoldCard web component (PRIORITY CHECK)
+        const scaffoldEventTypes = [
+'scaffold_started',
+'scaffold_preflight_started',
+          'scaffold_preflight_completed',
+          'scaffold_target_chosen',
+          'scaffold_proposal_created',
+          'scaffold_decision_requested',
+          'scaffold_decision_resolved',
+          'scaffold_style_selection_requested',
+          'scaffold_style_selected',
+          'scaffold_apply_started',
+          'scaffold_applied',
+          'scaffold_blocked',
+          'scaffold_completed',
+          'scaffold_cancelled',
+          // Post-scaffold orchestration events
+          'scaffold_progress',
+          'design_pack_applied',
+          'next_steps_shown',
+          'scaffold_final_complete'
+        ];
+        
+        if (scaffoldEventTypes.includes(event.type)) {
+          // Use the ScaffoldCard custom element (already defined globally in ScaffoldCard.ts)
+          const eventId = event.event_id || 'evt_' + Date.now();
+          const cardId = 'scaffold-' + escapeHtml(eventId);
+          const eventJson = encodeURIComponent(JSON.stringify(event));
+
+          // Attach event JSON as a data attribute to avoid inline scripts in HTML.
+          // Use double quotes for the attribute value to avoid template literal issues
+          return '<scaffold-card id="' + cardId + '" data-event="' + eventJson + '"></scaffold-card>';
+        }
+        
         // Special handling for clarification_presented - render interactive card
         if (event.type === 'clarification_presented') {
           return renderClarificationCard(event);
@@ -3695,6 +3774,133 @@ export function getWebviewContent(): string {
             title: 'Repair Policy',
             color: 'var(--vscode-charts-purple)',
             getSummary: (e) => \`Max \${e.payload.max_attempts || 0} attempts\`
+          },
+          // Step 35 Scaffold Events
+          scaffold_started: {
+            icon: '🏗️',
+            title: 'Scaffold Started',
+            color: 'var(--vscode-charts-purple)',
+            getSummary: (e) => {
+              const userPrompt = e.payload.user_prompt || '';
+              // Truncate prompt for display
+              if (userPrompt.length > 50) {
+                return userPrompt.substring(0, 50) + '...';
+              }
+              return userPrompt || 'Greenfield project setup';
+            }
+          },
+          scaffold_proposal_created: {
+            icon: '📋',
+            title: 'Scaffold Proposal Ready',
+            color: 'var(--vscode-charts-green)',
+            getSummary: (e) => {
+              const summary = e.payload.summary || '';
+              // Use the generated summary from scaffoldFlow.ts
+              if (summary) {
+                return summary.length > 60 ? summary.substring(0, 60) + '...' : summary;
+              }
+              // Fallback
+              const recipe = e.payload.recipe_id || e.payload.recipe || 'TBD';
+              const designPack = e.payload.design_pack_id || e.payload.design_pack || '';
+              if (recipe === 'TBD' && designPack === 'TBD') {
+                return 'Ready for approval - details coming in Step 35.4';
+              }
+              return designPack ? \`\${recipe} + \${designPack}\` : recipe;
+            }
+          },
+          scaffold_decision_resolved: {
+            icon: '✅',
+            title: 'Scaffold Decision',
+            color: 'var(--vscode-charts-green)',
+            getSummary: (e) => {
+              const decision = e.payload.decision || 'proceed';
+              const recipe = e.payload.recipe_id || e.payload.recipe || 'auto';
+              const nextSteps = e.payload.next_steps || [];
+              if (decision === 'cancel') return 'User cancelled scaffold';
+              if (decision === 'change_style') return 'Style customization requested';
+              return \`Approved • Recipe: \${recipe}\${nextSteps.length ? ' • Next: ' + nextSteps[0] : ''}\`;
+            }
+          },
+          scaffold_approved: {
+            icon: '✅',
+            title: 'Scaffold Approved',
+            color: 'var(--vscode-charts-green)',
+            getSummary: () => 'User approved scaffold'
+          },
+          scaffold_cancelled: {
+            icon: '❌',
+            title: 'Scaffold Cancelled',
+            color: 'var(--vscode-charts-red)',
+            getSummary: () => 'User cancelled scaffold'
+          },
+          scaffold_completed: {
+            icon: '🎉',
+            title: 'Scaffold Completed',
+            color: 'var(--vscode-charts-green)',
+            getSummary: (e) => {
+              const status = e.payload.status || 'completed';
+              const reason = e.payload.reason || '';
+              if (status === 'cancelled') return reason || 'Scaffold cancelled';
+              if (status === 'ready_for_step_35_2') return 'Ready for scaffold setup';
+              return reason || 'Scaffold completed';
+            }
+          },
+          scaffold_applied: {
+            icon: '🎉',
+            title: 'Scaffold Applied',
+            color: 'var(--vscode-charts-green)',
+            getSummary: (e) => {
+              const filesCount = (e.payload.files_created || []).length;
+              return \`\${filesCount} files created\`;
+            }
+          },
+          scaffold_failed: {
+            icon: '❌',
+            title: 'Scaffold Failed',
+            color: 'var(--vscode-charts-red)',
+            getSummary: (e) => e.payload.error || 'Scaffold failed'
+          },
+          // Vision Analysis Events (Step 38)
+          vision_analysis_started: {
+            icon: '👁️',
+            title: 'Analyzing References',
+            color: 'var(--vscode-charts-blue)',
+            getSummary: (e) => {
+              const imagesCount = e.payload.images_count || 0;
+              const urlsCount = e.payload.urls_count || 0;
+              return \`\${imagesCount} images, \${urlsCount} URLs\`;
+            }
+          },
+          vision_analysis_completed: {
+            icon: '✅',
+            title: 'Reference Analysis Complete',
+            color: 'var(--vscode-charts-green)',
+            getSummary: (e) => {
+              const status = e.payload.status || 'complete';
+              if (status === 'skipped') return 'Skipped: ' + (e.payload.reason || 'disabled');
+              if (status === 'error') return 'Error: ' + (e.payload.reason || 'failed');
+              return 'Analysis complete';
+            }
+          },
+          reference_tokens_extracted: {
+            icon: '🎨',
+            title: 'Style Tokens Extracted',
+            color: 'var(--vscode-charts-purple)',
+            getSummary: (e) => {
+              const confidence = e.payload.confidence || 0;
+              const moods = (e.payload.moods || []).slice(0, 2).join(', ');
+              return \`\${Math.round(confidence * 100)}% confidence\${moods ? ' • ' + moods : ''}\`;
+            }
+          },
+          reference_tokens_used: {
+            icon: '✨',
+            title: 'Tokens Applied',
+            color: 'var(--vscode-charts-green)',
+            getSummary: (e) => {
+              const usedIn = e.payload.used_in || 'scaffold';
+              const overridesApplied = e.payload.overrides_applied;
+              return \`Applied to \${usedIn}\${overridesApplied ? ' (with overrides)' : ''}\`;
+            }
           }
         };
         return eventCardMap[type];
@@ -5705,6 +5911,57 @@ export function getWebviewContent(): string {
         originalUpdateStatus(status);
         updateSendStopButton();
       };
+
+      // ===== SCAFFOLD-ACTION EVENT LISTENER =====
+      // Listen for scaffold-action events from ScaffoldCard web component
+      // and forward them to the extension via vscode.postMessage
+      document.addEventListener('scaffold-action', (event) => {
+        const detail = event.detail || {};
+        
+        console.log('[ScaffoldAction] Event received:', detail);
+        
+        const { action, scaffoldId, eventId, currentPackId, styleSourceMode, selectedPackId } = detail;
+        
+        // Get task_id from state
+        let taskId = 'unknown';
+        if (state.events.length > 0) {
+          taskId = state.events[0].task_id;
+        }
+        
+        // Find the decision_requested event to get the proper event_id
+        const decisionEvent = state.events.find(e => 
+          e.type === 'scaffold_decision_requested' && 
+          e.payload?.scaffold_id === scaffoldId
+        );
+        
+        const decisionEventId = decisionEvent?.event_id || eventId;
+        
+        console.log('[ScaffoldAction] Forwarding to extension:', {
+          taskId,
+          decisionEventId,
+          action,
+          scaffoldId
+        });
+        
+        // Send to extension
+        if (typeof vscode !== 'undefined') {
+          vscode.postMessage({
+            type: 'ordinex:resolveDecisionPoint',
+            task_id: taskId,
+            decision_event_id: decisionEventId,
+            action: action,
+            // Include extra context for scaffold actions
+            scaffold_context: {
+              scaffold_id: scaffoldId,
+              current_pack_id: currentPackId,
+              style_source_mode: styleSourceMode,
+              selected_pack_id: selectedPackId
+            }
+          });
+        } else {
+          console.log('[ScaffoldAction] Demo mode - would send:', { action, scaffoldId });
+        }
+      });
 
       // Initialize
       updateStatus('ready');
