@@ -97,7 +97,15 @@ import {
   IntentAnalysisContext,
   BehaviorHandlerResult,
   processClarificationResponse,
-  processContinueRunResponse
+  processContinueRunResponse,
+  // Step 35.6: Next Steps Router
+  routeNextStepAction,
+  buildCommandDecisionPoint,
+  NextStepsRouterContext,
+  NextStepRouteResult,
+  CommandRoutePayload,
+  // Package Manager Detection
+  detectPackageManager,
 } from 'core';
 
 class MissionControlViewProvider implements vscode.WebviewViewProvider {
@@ -236,6 +244,11 @@ class MissionControlViewProvider implements vscode.WebviewViewProvider {
       // Step 37: Attachment Upload handler
       case 'ordinex:uploadAttachment':
         await this.handleUploadAttachment(message, webview);
+        break;
+
+      // Step 35.6: Next Steps Selection handler
+      case 'ordinex:selectNextStep':
+        await this.handleSelectNextStep(message, webview);
         break;
 
       default:
@@ -3308,6 +3321,204 @@ This demonstrates the diff proposal pipeline without requiring LLM integration.
         success: false,
         error: error instanceof Error ? error.message : 'Unknown error',
       });
+    }
+  }
+
+  /**
+   * Handle next step selection from scaffold completion (Step 35.6)
+   * Routes to command execution, quick action, or plan mode
+   */
+  private async handleSelectNextStep(message: any, webview: vscode.Webview): Promise<void> {
+    const LOG_PREFIX = '[NEXT_STEP]';
+    const { task_id, suggestion_id, scaffold_id, recipe_id, target_directory, design_pack_id } = message;
+
+    console.log(`${LOG_PREFIX} Received:`, { task_id, suggestion_id, scaffold_id });
+
+    if (!task_id || !suggestion_id || !scaffold_id) {
+      console.error(`${LOG_PREFIX} Missing required fields`);
+      return;
+    }
+
+    if (!this.eventStore) {
+      console.error(`${LOG_PREFIX} EventStore not initialized`);
+      return;
+    }
+
+    try {
+      // Build router context
+      const workspaceRoot = this.selectedWorkspaceRoot ||
+        vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ||
+        '';
+
+      // Detect package manager from workspace files
+      let detectedPM: 'npm' | 'pnpm' | 'yarn' = 'npm';
+      if (workspaceRoot) {
+        try {
+          const files = fs.readdirSync(workspaceRoot);
+          detectedPM = detectPackageManager(files);
+          console.log(`${LOG_PREFIX} Detected package manager: ${detectedPM}`);
+        } catch (e) {
+          console.log(`${LOG_PREFIX} Could not detect package manager, using npm`);
+        }
+      }
+
+      const routerCtx: NextStepsRouterContext = {
+        run_id: task_id,
+        scaffold_id,
+        recipe_id: recipe_id || 'nextjs_app_router',
+        design_pack_id,
+        target_directory: target_directory || workspaceRoot,
+        eventBus: {
+          publish: async (event: Event) => {
+            await this.emitEvent(event);
+          },
+        } as any,
+        workspaceRoot,
+        package_manager: detectedPM,
+      };
+
+      // Route the action
+      const result = await routeNextStepAction(suggestion_id, routerCtx);
+      console.log(`${LOG_PREFIX} Route result:`, result);
+
+      if (!result.success) {
+        console.error(`${LOG_PREFIX} Route failed:`, result.error);
+        await this.emitEvent({
+          event_id: this.generateId(),
+          task_id,
+          timestamp: new Date().toISOString(),
+          type: 'next_step_error',
+          mode: this.currentMode,
+          stage: this.currentStage,
+          payload: { error: result.error, suggestion_id },
+          evidence_ids: [],
+          parent_event_id: null,
+        });
+        await this.sendEventsToWebview(webview, task_id);
+        return;
+      }
+
+      // Handle based on pipeline
+      if (result.pipeline === 'command') {
+        const cmdPayload = result.payload as CommandRoutePayload;
+
+        if (result.needs_approval) {
+          // Emit decision point for command approval
+          const decisionPoint = buildCommandDecisionPoint(cmdPayload);
+          await this.emitEvent({
+            event_id: this.generateId(),
+            task_id,
+            timestamp: new Date().toISOString(),
+            type: 'decision_point_needed',
+            mode: this.currentMode,
+            stage: this.currentStage,
+            payload: {
+              decision_type: 'next_step_command',
+              ...decisionPoint,
+              command_payload: cmdPayload,
+              context: { flow: 'next_steps', scaffold_id },
+            },
+            evidence_ids: [],
+            parent_event_id: null,
+          });
+        } else {
+          // Execute command directly (non-long-running)
+          await this.executeNextStepCommand(task_id, cmdPayload, webview);
+        }
+      } else if (result.pipeline === 'quick_action' || result.pipeline === 'plan') {
+        // Emit intent event to trigger QUICK_ACTION or PLAN flow
+        const payload = result.payload;
+        await this.emitEvent({
+          event_id: this.generateId(),
+          task_id,
+          timestamp: new Date().toISOString(),
+          type: 'next_step_routed',
+          mode: this.currentMode,
+          stage: this.currentStage,
+          payload: {
+            pipeline: result.pipeline,
+            prompt_template: payload.promptTemplate,
+            title: payload.title,
+            scaffold_id,
+            needs_approval: result.needs_approval,
+          },
+          evidence_ids: [],
+          parent_event_id: null,
+        });
+
+        // TODO: Trigger the appropriate intent flow with the prompt template
+        // This would call handleSubmitPrompt with the generated prompt
+        console.log(`${LOG_PREFIX} Routed to ${result.pipeline} pipeline - user should continue with prompt`);
+      }
+
+      await this.sendEventsToWebview(webview, task_id);
+
+    } catch (error) {
+      console.error(`${LOG_PREFIX} Error:`, error);
+      await this.emitEvent({
+        event_id: this.generateId(),
+        task_id,
+        timestamp: new Date().toISOString(),
+        type: 'next_step_error',
+        mode: this.currentMode,
+        stage: this.currentStage,
+        payload: { error: error instanceof Error ? error.message : 'Unknown error' },
+        evidence_ids: [],
+        parent_event_id: null,
+      });
+      await this.sendEventsToWebview(webview, task_id);
+    }
+  }
+
+  /**
+   * Execute a next step command in a terminal
+   */
+  private async executeNextStepCommand(
+    taskId: string,
+    payload: CommandRoutePayload,
+    webview: vscode.Webview
+  ): Promise<void> {
+    const LOG_PREFIX = '[NEXT_STEP_CMD]';
+    console.log(`${LOG_PREFIX} Executing:`, payload.command);
+
+    try {
+      // Create or reuse terminal
+      let terminal = this.activeTerminals.get(taskId);
+      if (!terminal || terminal.exitStatus !== undefined) {
+        terminal = vscode.window.createTerminal({
+          name: `Ordinex: ${payload.longRunning ? 'Dev Server' : 'Command'}`,
+          cwd: payload.cwd,
+        });
+        this.activeTerminals.set(taskId, terminal);
+      }
+
+      // Show terminal and run command
+      terminal.show();
+      terminal.sendText(payload.command);
+
+      // Emit command started event
+      await this.emitEvent({
+        event_id: this.generateId(),
+        task_id: taskId,
+        timestamp: new Date().toISOString(),
+        type: 'command_started',
+        mode: this.currentMode,
+        stage: this.currentStage,
+        payload: {
+          command: payload.command,
+          cwd: payload.cwd,
+          long_running: payload.longRunning,
+          source: 'next_steps',
+        },
+        evidence_ids: [],
+        parent_event_id: null,
+      });
+
+      await this.sendEventsToWebview(webview, taskId);
+
+    } catch (error) {
+      console.error(`${LOG_PREFIX} Error:`, error);
+      throw error;
     }
   }
 

@@ -1,9 +1,11 @@
 /**
  * Recipe System Types (Step 35.3)
- * 
+ *
  * Type definitions for scaffold recipes including file plans,
  * command plans, and recipe context.
  */
+
+import { DesignPack } from './designPacks';
 
 // ============================================================================
 // RECIPE IDENTIFIERS
@@ -64,6 +66,8 @@ export interface RecipeContext {
   language_hint?: 'ts' | 'js';
   /** Package manager to use */
   package_manager: PackageManager;
+  /** Selected design pack for styling (Step 35.5) */
+  design_pack?: DesignPack;
 }
 
 // ============================================================================

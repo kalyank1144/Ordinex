@@ -565,3 +565,101 @@ export type {
   ScaffoldFlowState,
   ScaffoldDecisionOptions,
 } from './scaffoldFlow';
+
+// Step 35.3: Recipe System
+export {
+  buildRecipePlan,
+  getRecipe,
+  getRecipeName,
+  getRecipeDescription,
+  buildFileTreePreview,
+  countFilesAndDirs,
+  summarizeCommands,
+} from './scaffold/recipeRegistry';
+
+export {
+  selectRecipe,
+  detectPackageManager,
+  getInstallCommand,
+  getRunCommand,
+  getExecCommand,
+} from './scaffold/recipeSelector';
+
+export type {
+  RecipeId,
+  RecipeContext,
+  RecipePlan,
+  FilePlanItem,
+  CommandPlanItem,
+  PackageManager,
+  RecipeBuilder,
+  RecipeSelection,
+  RecipeDetection,
+} from './scaffold/recipeTypes';
+
+// Step 35.5: Design Pack System
+export {
+  selectDesignPack,
+  computeSelectionSeed,
+  detectDomainHint,
+  getFilteredPacks,
+  previewSelection,
+  generateSelectionEvidence,
+} from './scaffold/designPackSelector';
+
+export {
+  DESIGN_PACKS,
+  getDesignPackById,
+  getDefaultPacksForPicker,
+  getPacksByVibe,
+  getEnterpriseSubset,
+  getMobileSubset,
+  generateCssVariables,
+  generateGlobalsCss,
+  isValidDesignPackId,
+} from './scaffold/designPacks';
+
+export type {
+  DesignPack,
+  DesignPackId,
+  DesignVibe,
+  DesignTokens,
+  ColorTokens,
+  FontTokens,
+  DesignPackPreview,
+} from './scaffold/designPacks';
+
+export type {
+  DesignPackSelectionInput,
+  DesignPackSelectionResult,
+  SelectionReason,
+} from './scaffold/designPackSelector';
+
+// Step 35.6: Next Steps Action Router
+export {
+  routeNextStepAction,
+  buildCommandDecisionPoint,
+  emitNextStepDismissed,
+} from './scaffold/nextStepsActionRouter';
+
+export type {
+  NextStepsRouterContext,
+  NextStepRouteResult,
+  CommandRoutePayload,
+  QuickActionRoutePayload,
+  PlanRoutePayload,
+} from './scaffold/nextStepsActionRouter';
+
+// Step 35.6: Next Steps Suggestions
+export {
+  generateNextSteps,
+  getNextStepById,
+  shouldAlwaysPrompt,
+  buildNextStepSelectedPayload,
+} from './scaffold/nextSteps';
+
+export type {
+  NextStepSuggestion,
+  NextStepKind,
+  NextStepsContext,
+} from './scaffold/nextSteps';

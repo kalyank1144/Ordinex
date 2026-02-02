@@ -1,6 +1,6 @@
 /**
  * Next.js App Router Recipe (Step 35.3)
- * 
+ *
  * Minimal runnable Next.js 14+ project with App Router.
  * TypeScript by default, ~15-20 files.
  */
@@ -13,6 +13,7 @@ import {
   CommandPlanItem,
 } from '../recipeTypes';
 import { getInstallCommand, getRunCommand } from '../recipeSelector';
+import { DesignPack, generateGlobalsCss, DESIGN_PACKS } from '../designPacks';
 
 // ============================================================================
 // TEMPLATES
@@ -125,11 +126,18 @@ yarn-error.log*
 next-env.d.ts
 `;
 
-const rootLayout = (appName: string) => `import type { Metadata } from 'next'
-import { Inter } from 'next/font/google'
+/**
+ * Generate root layout with design pack font
+ */
+const getRootLayout = (appName: string, pack?: DesignPack): string => {
+  const fontName = pack?.tokens.fonts.heading || 'Inter';
+  const fontImportName = fontName.replace(/\s+/g, '_');
+
+  return `import type { Metadata } from 'next'
+import { ${fontImportName} } from 'next/font/google'
 import './globals.css'
 
-const inter = Inter({ subsets: ['latin'] })
+const font = ${fontImportName}({ subsets: ['latin'] })
 
 export const metadata: Metadata = {
   title: '${appName}',
@@ -143,23 +151,34 @@ export default function RootLayout({
 }) {
   return (
     <html lang="en">
-      <body className={inter.className}>{children}</body>
+      <body className={font.className}>{children}</body>
     </html>
   )
 }
 `;
+};
 
-const homePage = (appName: string) => `export default function Home() {
+/**
+ * Generate home page using design token CSS variables
+ */
+const getHomePage = (appName: string): string => `export default function Home() {
   return (
     <main className="flex min-h-screen flex-col items-center justify-center p-24">
-      <h1 className="text-4xl font-bold mb-4">${appName}</h1>
-      <p className="text-lg text-gray-600">
+      <h1 className="text-4xl font-bold mb-4" style={{ fontFamily: 'var(--font-heading)' }}>
+        ${appName}
+      </h1>
+      <p className="text-lg" style={{ color: 'var(--muted-foreground)' }}>
         Welcome to your new Next.js app!
       </p>
       <div className="mt-8 flex gap-4">
         <a
           href="https://nextjs.org/docs"
-          className="px-4 py-2 bg-black text-white rounded hover:bg-gray-800"
+          className="px-4 py-2 rounded transition-opacity hover:opacity-80"
+          style={{
+            backgroundColor: 'var(--primary)',
+            color: 'var(--primary-foreground)',
+            borderRadius: 'var(--radius)',
+          }}
           target="_blank"
           rel="noopener noreferrer"
         >
@@ -167,7 +186,11 @@ const homePage = (appName: string) => `export default function Home() {
         </a>
         <a
           href="https://nextjs.org/learn"
-          className="px-4 py-2 border border-black rounded hover:bg-gray-100"
+          className="px-4 py-2 border rounded transition-colors hover:opacity-80"
+          style={{
+            borderColor: 'var(--border)',
+            borderRadius: 'var(--radius)',
+          }}
           target="_blank"
           rel="noopener noreferrer"
         >
@@ -179,34 +202,55 @@ const homePage = (appName: string) => `export default function Home() {
 }
 `;
 
-const globalsCss = `@tailwind base;
+/**
+ * Generate globals.css with design pack tokens
+ * Falls back to minimal default if no pack provided
+ */
+const getGlobalsCss = (pack?: DesignPack): string => {
+  if (pack) {
+    return generateGlobalsCss(pack);
+  }
+  // Fallback to minimal default
+  return `@tailwind base;
 @tailwind components;
 @tailwind utilities;
 
-:root {
-  --foreground-rgb: 0, 0, 0;
-  --background-start-rgb: 214, 219, 220;
-  --background-end-rgb: 255, 255, 255;
-}
-
-@media (prefers-color-scheme: dark) {
+@layer base {
   :root {
-    --foreground-rgb: 255, 255, 255;
-    --background-start-rgb: 0, 0, 0;
-    --background-end-rgb: 0, 0, 0;
+    --background: #ffffff;
+    --foreground: #0f172a;
+    --primary: #0f172a;
+    --primary-foreground: #ffffff;
+    --secondary: #64748b;
+    --secondary-foreground: #ffffff;
+    --accent: #0ea5e9;
+    --accent-foreground: #ffffff;
+    --muted: #f1f5f9;
+    --muted-foreground: #64748b;
+    --border: #e2e8f0;
+    --font-heading: "Inter", system-ui, sans-serif;
+    --font-body: "Inter", system-ui, sans-serif;
+    --radius: 0.5rem;
+    --spacing-base: 1rem;
+    --spacing-lg: 1.5rem;
+    --shadow: 0 1px 2px 0 rgb(0 0 0 / 0.05);
   }
 }
 
-body {
-  color: rgb(var(--foreground-rgb));
-  background: linear-gradient(
-    to bottom,
-    transparent,
-    rgb(var(--background-end-rgb))
-  )
-  rgb(var(--background-start-rgb));
+@layer base {
+  * {
+    @apply border-border;
+  }
+  body {
+    @apply bg-background text-foreground;
+    font-family: var(--font-body);
+  }
+  h1, h2, h3, h4, h5, h6 {
+    font-family: var(--font-heading);
+  }
 }
 `;
+};
 
 const readme = (appName: string, pm: string) => `# ${appName}
 
@@ -246,11 +290,14 @@ The easiest way to deploy your Next.js app is to use the [Vercel Platform](https
 
 export const nextjsAppRouterRecipe: RecipeBuilder = {
   id: 'nextjs_app_router',
-  
+
   build(ctx: RecipeContext): RecipePlan {
-    const { app_name, target_directory, package_manager } = ctx;
+    const { app_name, target_directory, package_manager, design_pack } = ctx;
     const pm = package_manager;
-    
+
+    // Use design pack if provided, otherwise fall back to default (minimal-light)
+    const pack = design_pack || DESIGN_PACKS.find(p => p.id === 'minimal-light');
+
     const files: FilePlanItem[] = [
       // Root config files
       { path: 'package.json', kind: 'file', content: packageJson(app_name, pm), description: 'Project manifest' },
@@ -260,13 +307,13 @@ export const nextjsAppRouterRecipe: RecipeBuilder = {
       { path: '.eslintrc.json', kind: 'file', content: eslintrc, description: 'ESLint configuration' },
       { path: '.gitignore', kind: 'file', content: gitignore, description: 'Git ignore rules' },
       { path: 'README.md', kind: 'file', content: readme(app_name, pm), description: 'Project documentation' },
-      
+
       // App directory
       { path: 'app', kind: 'dir', description: 'Next.js App Router directory' },
-      { path: 'app/layout.tsx', kind: 'file', content: rootLayout(app_name), description: 'Root layout component' },
-      { path: 'app/page.tsx', kind: 'file', content: homePage(app_name), description: 'Home page component' },
-      { path: 'app/globals.css', kind: 'file', content: globalsCss, description: 'Global styles' },
-      
+      { path: 'app/layout.tsx', kind: 'file', content: getRootLayout(app_name, pack), description: 'Root layout component' },
+      { path: 'app/page.tsx', kind: 'file', content: getHomePage(app_name), description: 'Home page component' },
+      { path: 'app/globals.css', kind: 'file', content: getGlobalsCss(pack), description: 'Global styles with design tokens' },
+
       // Public directory
       { path: 'public', kind: 'dir', description: 'Static assets directory' },
     ];
@@ -311,8 +358,11 @@ export const nextjsAppRouterRecipe: RecipeBuilder = {
         'Uses Next.js 14 with App Router',
         'TypeScript enabled by default',
         'ESLint configured with Next.js rules',
-        'Ready for Tailwind CSS (add via npx)',
+        pack ? `Design: ${pack.name} (${pack.vibe})` : 'Default minimal styling',
       ],
+      design_pack_id: pack?.id,
+      design_tokens_summary: pack ? `${pack.tokens.colors.primary} | ${pack.tokens.fonts.heading}` : undefined,
+      preview_asset_id: pack?.preview.imageAssetId,
     };
   },
 };
