@@ -26,6 +26,29 @@ export {
   LlmClassifyArgs,
 } from './intent/llmIntentClassifier';
 
+// Step 40: Production-Grade Intent Routing (Unified Router)
+export {
+  detectGreenfieldIntent as detectGreenfieldSignal,
+  detectCommandIntent as detectCommandSignal,
+  detectEditScale,
+  detectSlashOverride,
+  normalizeUserInput,
+} from './intent/intentSignals';
+
+export {
+  routeIntent,
+  isDefinitelyScaffold,
+  isDefinitelyRunCommand,
+  shouldCallLLM,
+  generateClarificationQuestion,
+} from './intent/intentRouter';
+
+export type {
+  RoutedIntent,
+  RoutingContext,
+  IntentRoutingResult,
+} from './intent/intentRouter';
+
 // Export event-sourcing components
 export { EventStore } from './eventStore';
 export { EventBus, EventSubscriber, PrimitiveEventInput, createPrimitiveInput } from './eventBus';

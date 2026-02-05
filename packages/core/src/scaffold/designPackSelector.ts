@@ -22,6 +22,7 @@ import {
   getMobileSubset,
 } from './designPacks';
 import { RecipeId } from './recipeTypes';
+import type { ReferenceTokens, StyleSourceMode } from '../types';
 
 // ============================================================================
 // TYPES
@@ -319,6 +320,282 @@ export function previewSelection(input: DesignPackSelectionInput): {
 }
 
 // ============================================================================
+// STEP 38: REFERENCE TOKENS INTEGRATION
+// ============================================================================
+
+/**
+ * Style overrides extracted from reference tokens
+ */
+export interface TokenStyleOverrides {
+  palette?: {
+    primary?: string;
+    secondary?: string;
+    accent?: string;
+  };
+  radius?: 'none' | 'sm' | 'md' | 'lg' | 'full';
+  shadows?: 'none' | 'subtle' | 'medium' | 'dramatic';
+}
+
+/**
+ * Extended input for token-based selection
+ */
+export interface DesignPackSelectionWithTokensInput extends DesignPackSelectionInput {
+  /** Extracted reference tokens */
+  referenceTokens?: ReferenceTokens;
+  /** How user wants to use references */
+  referenceMode?: StyleSourceMode;
+  /** Confidence thresholds */
+  confidenceThresholds?: {
+    useReference: number;  // default 0.6
+    combine: number;       // default 0.7
+  };
+}
+
+/**
+ * Extended result with style overrides
+ */
+export interface DesignPackSelectionWithOverridesResult extends DesignPackSelectionResult {
+  /** Style overrides to apply */
+  overrides?: TokenStyleOverrides;
+  /** Whether overrides were applied */
+  overridesApplied: boolean;
+  /** Reference tokens summary for UI */
+  tokensSummary?: {
+    moods?: string[];
+    paletteSummary?: string;
+    confidence: number;
+  };
+}
+
+/**
+ * Default confidence thresholds
+ */
+const DEFAULT_CONFIDENCE_THRESHOLDS = {
+  useReference: 0.6,
+  combine: 0.7,
+};
+
+/**
+ * Mood keywords mapped to design pack vibes
+ */
+const MOOD_TO_VIBE_MAP: Record<string, string[]> = {
+  minimal: ['neutral', 'clean'],
+  modern: ['modern', 'vibrant'],
+  enterprise: ['neutral'],
+  vibrant: ['vibrant', 'warm'],
+  playful: ['playful', 'vibrant'],
+  clean: ['clean', 'neutral', 'modern'],
+  bold: ['vibrant', 'warm'],
+  professional: ['neutral', 'modern'],
+  warm: ['warm', 'playful'],
+  dark: ['modern', 'neutral'],
+};
+
+/**
+ * Select design pack with reference token integration
+ * 
+ * Step 38 Rules:
+ * - If referenceMode='use_reference' and confidence >= useReference threshold:
+ *   - Select closest pack by mood match
+ *   - Apply full palette/radius/shadows overrides
+ * - If referenceMode='combine_with_design_pack' and confidence >= combine threshold:
+ *   - Keep seeded pack selection
+ *   - Apply accent color only
+ * - If referenceMode='ignore_reference' or low confidence:
+ *   - Use standard selection, no overrides
+ * 
+ * @param input - Extended selection input with tokens
+ * @returns Selection result with overrides
+ */
+export function selectDesignPackWithTokens(
+  input: DesignPackSelectionWithTokensInput
+): DesignPackSelectionWithOverridesResult {
+  const thresholds = input.confidenceThresholds || DEFAULT_CONFIDENCE_THRESHOLDS;
+  const tokens = input.referenceTokens;
+  const mode = input.referenceMode || 'ignore_reference';
+
+  // No tokens or ignore mode - standard selection
+  if (!tokens || mode === 'ignore_reference') {
+    const result = selectDesignPack(input);
+    return {
+      ...result,
+      overridesApplied: false,
+    };
+  }
+
+  const confidence = tokens.confidence;
+
+  // use_reference mode with sufficient confidence
+  if (mode === 'use_reference' && confidence >= thresholds.useReference) {
+    // Select pack by mood match
+    const moodMatchedPack = selectPackByMood(tokens, input);
+    
+    // Build full overrides
+    const overrides = buildFullOverrides(tokens);
+    
+    return {
+      ...moodMatchedPack,
+      overrides: Object.keys(overrides).length > 0 ? overrides : undefined,
+      overridesApplied: Object.keys(overrides).length > 0,
+      tokensSummary: buildTokensSummary(tokens),
+    };
+  }
+
+  // combine mode with sufficient confidence
+  if (mode === 'combine_with_design_pack' && confidence >= thresholds.combine) {
+    // Keep standard pack selection
+    const result = selectDesignPack(input);
+    
+    // Apply accent only
+    const overrides = buildAccentOnlyOverrides(tokens);
+    
+    return {
+      ...result,
+      overrides: Object.keys(overrides).length > 0 ? overrides : undefined,
+      overridesApplied: Object.keys(overrides).length > 0,
+      tokensSummary: buildTokensSummary(tokens),
+    };
+  }
+
+  // Low confidence - standard selection, no overrides
+  const result = selectDesignPack(input);
+  return {
+    ...result,
+    overridesApplied: false,
+    tokensSummary: buildTokensSummary(tokens),
+  };
+}
+
+/**
+ * Select pack based on mood match from tokens
+ */
+function selectPackByMood(
+  tokens: ReferenceTokens,
+  input: DesignPackSelectionInput
+): DesignPackSelectionResult {
+  const moods = tokens.style?.mood || [];
+  
+  if (moods.length === 0) {
+    // No mood hints, use standard selection
+    return selectDesignPack(input);
+  }
+
+  // Get candidate packs (respecting vibe guardrails)
+  const candidates = getFilteredPacks(input);
+  
+  if (candidates.length === 0) {
+    return selectDesignPack(input);
+  }
+
+  // Score each pack by mood match
+  const scores = candidates.map(pack => {
+    let score = 0;
+    const packVibe = pack.vibe.toLowerCase();
+    
+    for (const mood of moods) {
+      const moodLower = mood.toLowerCase();
+      const vibes = MOOD_TO_VIBE_MAP[moodLower] || [];
+      
+      if (vibes.some(v => packVibe.includes(v))) {
+        score += 2;
+      } else if (packVibe.includes(moodLower)) {
+        score += 1;
+      }
+    }
+    
+    return { pack, score };
+  });
+
+  // Sort by score descending, then by pack id for determinism
+  scores.sort((a, b) => {
+    if (b.score !== a.score) return b.score - a.score;
+    return a.pack.id.localeCompare(b.pack.id);
+  });
+
+  const bestMatch = scores[0].pack;
+  const seed = computeSelectionSeed(input);
+
+  return {
+    pack: bestMatch,
+    seed,
+    reason: scores[0].score > 0 ? 'seeded' : 'fallback',
+  };
+}
+
+/**
+ * Build full style overrides from tokens (use_reference mode)
+ */
+function buildFullOverrides(tokens: ReferenceTokens): TokenStyleOverrides {
+  const overrides: TokenStyleOverrides = {};
+
+  // Palette
+  if (tokens.style?.palette) {
+    const p = tokens.style.palette;
+    if (p.primary || p.secondary || p.accent) {
+      overrides.palette = {};
+      if (p.primary) overrides.palette.primary = p.primary;
+      if (p.secondary) overrides.palette.secondary = p.secondary;
+      if (p.accent) overrides.palette.accent = p.accent;
+    }
+  }
+
+  // Radius
+  if (tokens.style?.radius) {
+    overrides.radius = tokens.style.radius;
+  }
+
+  // Shadows
+  if (tokens.style?.shadows) {
+    overrides.shadows = tokens.style.shadows;
+  }
+
+  return overrides;
+}
+
+/**
+ * Build accent-only overrides (combine mode)
+ */
+function buildAccentOnlyOverrides(tokens: ReferenceTokens): TokenStyleOverrides {
+  const overrides: TokenStyleOverrides = {};
+
+  if (tokens.style?.palette?.accent) {
+    overrides.palette = { accent: tokens.style.palette.accent };
+  } else if (tokens.style?.palette?.primary) {
+    // Use primary as accent fallback
+    overrides.palette = { accent: tokens.style.palette.primary };
+  }
+
+  return overrides;
+}
+
+/**
+ * Build compact tokens summary for UI/events
+ */
+function buildTokensSummary(tokens: ReferenceTokens): {
+  moods?: string[];
+  paletteSummary?: string;
+  confidence: number;
+} {
+  const palette = tokens.style?.palette;
+  let paletteSummary: string | undefined;
+  
+  if (palette) {
+    const colors: string[] = [];
+    if (palette.primary) colors.push(palette.primary);
+    if (palette.accent) colors.push(palette.accent);
+    if (colors.length > 0) {
+      paletteSummary = colors.join(', ');
+    }
+  }
+
+  return {
+    moods: tokens.style?.mood,
+    paletteSummary,
+    confidence: tokens.confidence,
+  };
+}
+
+// ============================================================================
 // EXPORT SUMMARY FOR EVENTS
 // ============================================================================
 
@@ -343,5 +620,34 @@ export function generateSelectionEvidence(result: DesignPackSelectionResult): {
     selection_reason: result.reason,
     preview_asset_id: result.pack.preview.imageAssetId,
     tokens_summary: `${result.pack.tokens.colors.primary} | ${result.pack.tokens.fonts.heading}`,
+  };
+}
+
+/**
+ * Generate extended evidence with override info
+ */
+export function generateSelectionEvidenceWithOverrides(
+  result: DesignPackSelectionWithOverridesResult
+): {
+  design_pack_id: string;
+  design_pack_name: string;
+  design_seed: string;
+  selection_reason: SelectionReason;
+  overrides_applied: boolean;
+  overrides?: TokenStyleOverrides;
+  tokens_summary?: {
+    moods?: string[];
+    paletteSummary?: string;
+    confidence: number;
+  };
+} {
+  return {
+    design_pack_id: result.pack.id,
+    design_pack_name: result.pack.name,
+    design_seed: result.seed,
+    selection_reason: result.reason,
+    overrides_applied: result.overridesApplied,
+    overrides: result.overrides,
+    tokens_summary: result.tokensSummary,
   };
 }

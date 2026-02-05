@@ -1,5 +1,5 @@
 /**
- * Step 38: Vision Configuration
+ * Step 38: Vision Configuration (COMPLETE)
  * 
  * Reads and validates workspace settings for vision analysis.
  * IMPORTANT: Vision provider is INDEPENDENT from chat model dropdown.
@@ -8,8 +8,12 @@
  * - ordinex.references.visionMode: 'off' | 'prompt' | 'on' (default: 'off')
  * - ordinex.references.visionProvider: 'anthropic' | 'backend-default' | 'openai' (default: 'anthropic')
  * - ordinex.references.maxImages: number (max 10)
- * - ordinex.references.maxPixels: number (max dimension for resize)
- * - ordinex.references.maxTotalUploadMB: number (max total upload size)
+ * - ordinex.references.imageMaxDim: number (max dimension for resize, default 1024)
+ * - ordinex.references.maxPixels: number (max total pixels, default 1024*1024)
+ * - ordinex.references.maxTotalUploadMB: number (max total upload size, default 15)
+ * - ordinex.references.jpegQuality: number (0-1, default 0.8)
+ * - ordinex.references.minConfidenceUseReference: number (default 0.6)
+ * - ordinex.references.minConfidenceCombine: number (default 0.7)
  */
 
 import type {
@@ -19,19 +23,67 @@ import type {
 } from '../types';
 
 // ============================================================================
+// EXTENDED VISION CONFIG (Complete Step 38 spec)
+// ============================================================================
+
+/**
+ * Complete Vision Configuration interface
+ * Extends the basic types.ts VisionConfig with additional fields per spec
+ */
+export interface VisionConfigComplete {
+  /** Vision analysis mode ('off' | 'prompt' | 'on') - default 'off' */
+  visionMode: VisionMode;
+  /** Vision provider (independent from chat model) - default 'anthropic' */
+  visionProvider: VisionProvider;
+  /** Maximum number of images to analyze - default 10, hard limit 10 */
+  maxImages: number;
+  /** Maximum dimension for resized images - default 1024 */
+  imageMaxDim: number;
+  /** Maximum total pixels per image (width * height) - default 1024*1024 */
+  maxPixels: number;
+  /** Maximum total upload size in MB - default 15 */
+  maxTotalUploadMB: number;
+  /** JPEG quality for compression (0-1) - default 0.8 */
+  jpegQuality: number;
+  /** Tokens schema version for evidence - always 'reference_tokens_v1' */
+  tokensSchemaVersion: 'reference_tokens_v1';
+  /** Minimum confidence to apply full overrides in use_reference mode - default 0.6 */
+  minConfidenceUseReference: number;
+  /** Minimum confidence to apply accent overrides in combine mode - default 0.7 */
+  minConfidenceCombine: number;
+}
+
+// ============================================================================
 // DEFAULT VALUES (Enterprise-safe)
 // ============================================================================
 
 /**
- * Default vision configuration
+ * Default vision configuration (basic)
  * Enterprise-safe: visionMode defaults to 'off'
  */
 export const DEFAULT_VISION_CONFIG: VisionConfig = {
   visionMode: 'off',
   visionProvider: 'anthropic',
   maxImages: 10,
-  maxPixels: 1024,
+  maxPixels: 1024 * 1024,
   maxTotalUploadMB: 15,
+};
+
+/**
+ * Default complete vision configuration (full spec)
+ * Includes all Step 38 fields for confidence thresholds and preprocessing
+ */
+export const DEFAULT_VISION_CONFIG_COMPLETE: VisionConfigComplete = {
+  visionMode: 'off',
+  visionProvider: 'anthropic',
+  maxImages: 10,
+  imageMaxDim: 1024,
+  maxPixels: 1024 * 1024,
+  maxTotalUploadMB: 15,
+  jpegQuality: 0.8,
+  tokensSchemaVersion: 'reference_tokens_v1',
+  minConfidenceUseReference: 0.6,
+  minConfidenceCombine: 0.7,
 };
 
 /**

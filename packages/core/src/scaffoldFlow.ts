@@ -48,7 +48,10 @@ import { selectRecipe } from './scaffold/recipeSelector';
 // Step 35.5: Design pack selection
 import {
   selectDesignPack,
+  selectDesignPackWithTokens,
   detectDomainHint,
+  generateSelectionEvidenceWithOverrides,
+  type TokenStyleOverrides,
 } from './scaffold/designPackSelector';
 import {
   formatTokensSummary,
@@ -57,10 +60,9 @@ import {
   DesignPack,
   DesignPackId,
 } from './scaffold/designPacks';
-// Step 38: Vision imports (wiring available, not active in scaffold flow yet)
-// Vision analyzer can be used here when design pack selection is fully implemented
-// import { createVisionAnalyzer } from './vision/visionAnalyzer';
-// import { buildCompactSummary } from './vision/referenceContextSummary';
+// Step 38: Vision imports for token-based design pack selection
+import { buildCompactSummary, buildReferenceContextSummary } from './vision/referenceContextSummary';
+import { DEFAULT_VISION_CONFIG_COMPLETE, type VisionConfigComplete } from './vision/visionConfig';
 
 // ============================================================================
 // SCAFFOLD FLOW STATE

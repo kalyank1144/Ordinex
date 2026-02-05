@@ -150,7 +150,9 @@ export type EventType =
   | 'vision_analysis_started'
   | 'vision_analysis_completed'
   | 'reference_tokens_extracted'
-  | 'reference_tokens_used';
+  | 'reference_tokens_used'
+  // Step 40: Production-Grade Intent Routing
+  | 'intent_routed';
 
 export const CANONICAL_EVENT_TYPES: readonly EventType[] = [
   'intent_received',
@@ -287,6 +289,8 @@ export const CANONICAL_EVENT_TYPES: readonly EventType[] = [
   'vision_analysis_completed',
   'reference_tokens_extracted',
   'reference_tokens_used',
+  // Step 40: Production-Grade Intent Routing
+  'intent_routed',
 ] as const;
 
 export type Mode = 'ANSWER' | 'PLAN' | 'MISSION';

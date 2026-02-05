@@ -1,5 +1,5 @@
 /**
- * ScaffoldCard - UI Component for Greenfield Scaffold Flow (Step 35.1 + 35.2)
+ * ScaffoldCard - UI Component for Greenfield Scaffold Flow (Step 35.1 + 35.2 + 39)
  *
  * Minimal custom element implementation without external deps.
  * 
@@ -8,9 +8,14 @@
  * - scaffold_preflight_started: Shows preflight check starting
  * - scaffold_preflight_completed: Shows preflight results with target directory
  * - scaffold_target_chosen: Shows selected target directory
- * - scaffold_proposal_created: Shows proposal with recipe/design placeholders
+ * - scaffold_proposal_created: Shows proposal with recipe/design + VISUAL PREVIEW (Step 39)
  * - scaffold_blocked: Shows safety block with options
  * - scaffold_completed: Shows completion status
+ * 
+ * Step 39 Enhancements:
+ * - Real rendered visual preview (hero, components, typography)
+ * - Mini previews in style picker gallery
+ * - Reference influence badge when tokens present
  */
 
 declare class HTMLElement {
@@ -260,6 +265,10 @@ export class ScaffoldCard extends HTMLElement {
     const styleSourceMode = payload.style_source_mode || 'combine_with_design_pack';
     const hasReferences = referenceContext && 
       ((referenceContext.images || []).length > 0 || (referenceContext.urls || []).length > 0);
+    
+    // Step 39: Reference tokens influence
+    const referenceTokensSummary = payload.reference_tokens_summary || null;
+    const styleOverrides = payload.style_overrides || null;
 
     const isTBD = (val: string | number) => !val || val === 'TBD' || val === 0;
     const hasDesignPack = !isTBD(designPack) && designPackId;
@@ -269,6 +278,9 @@ export class ScaffoldCard extends HTMLElement {
     const proceedOption = options.find((o: any) => o.action === 'proceed') || { label: 'Proceed', disabled: false };
     const cancelOption = options.find((o: any) => o.action === 'cancel') || { label: 'Cancel', disabled: false };
     const changeStyleOption = options.find((o: any) => o.action === 'change_style');
+    
+    // Step 39: Get design pack tokens for visual preview
+    const packTokens = this.getDesignPackTokens(designPackId, styleOverrides);
 
     return `
       <div class="scaffold-card proposal">
@@ -287,23 +299,18 @@ export class ScaffoldCard extends HTMLElement {
         ${hasDesignPack ? `
           <div class="design-pack-preview">
             <div class="preview-header">
-              <span class="preview-label">Design Style</span>
+              <span class="preview-label">Design Preview</span>
               ${changeStyleOption && !changeStyleOption.disabled ? `
                 <button class="change-style-btn" data-action="change_style">
                   🎨 ${this.escapeHtml(changeStyleOption.label || 'Change Style')}
                 </button>
               ` : ''}
             </div>
-            <div class="preview-content">
-              <div class="preview-image-container">
-                <div class="preview-placeholder" data-pack-id="${this.escapeHtml(designPackId)}">
-                  <span class="pack-initial">${this.escapeHtml(designPack.charAt(0).toUpperCase())}</span>
-                </div>
-              </div>
-              <div class="preview-details">
-                <div class="pack-name">${this.escapeHtml(String(designPack))}</div>
-                ${tokensSummary ? `<div class="tokens-summary">${this.escapeHtml(tokensSummary)}</div>` : ''}
-              </div>
+            ${referenceTokensSummary && referenceTokensSummary.confidence >= 0.5 ? this.renderInfluenceBadge(referenceTokensSummary) : ''}
+            ${this.renderVisualPreview(packTokens, designPack, false)}
+            <div class="pack-meta">
+              <span class="pack-name-badge">${this.escapeHtml(String(designPack))}</span>
+              ${tokensSummary ? `<span class="tokens-hint">${this.escapeHtml(tokensSummary)}</span>` : ''}
             </div>
           </div>
         ` : ''}
@@ -331,7 +338,7 @@ export class ScaffoldCard extends HTMLElement {
         
         <div class="actions">
           <button class="btn-primary" data-action="proceed" ${proceedOption.disabled ? 'disabled' : ''}>
-            ✅ ${this.escapeHtml(proceedOption.label || 'Proceed')}
+            ✅ ${this.escapeHtml(proceedOption.label || 'Create Project')}
           </button>
           <button class="btn-secondary" data-action="cancel" ${cancelOption.disabled ? 'disabled' : ''}>
             ${this.escapeHtml(cancelOption.label || 'Cancel')}
@@ -339,6 +346,217 @@ export class ScaffoldCard extends HTMLElement {
         </div>
         
         <div class="timestamp">${this.formatTimestamp(event.timestamp || '')}</div>
+      </div>
+    `;
+  }
+  
+  // ========== STEP 39: Visual Preview Methods ==========
+  
+  /**
+   * Render influence badge (Step 39 - reference tokens)
+   */
+  private renderInfluenceBadge(tokensSummary: any): string {
+    const confidence = Math.round((tokensSummary.confidence || 0) * 100);
+    const moods = tokensSummary.moods?.slice(0, 2)?.join(', ') || '';
+    
+    return `
+      <div class="influence-badge">
+        <span class="influence-icon">✨</span>
+        <span class="influence-text">
+          Influenced by references (${confidence}% confidence)
+          ${moods ? ` · ${this.escapeHtml(moods)}` : ''}
+        </span>
+      </div>
+    `;
+  }
+  
+  /**
+   * Get design pack tokens by ID (Step 39)
+   * Returns tokens for visual preview rendering
+   */
+  private getDesignPackTokens(packId: string, styleOverrides?: any): any {
+    // Hardcoded design pack tokens (mirrors designPacks.ts)
+    const PACK_TOKENS: Record<string, any> = {
+      'minimal-light': {
+        colors: { primary: '#0f172a', secondary: '#64748b', accent: '#0ea5e9', background: '#ffffff', foreground: '#0f172a', muted: '#f1f5f9', border: '#e2e8f0', primary_fg: '#ffffff' },
+        fonts: { heading: 'Inter', body: 'Inter' },
+        radius: '8px'
+      },
+      'minimal-dark': {
+        colors: { primary: '#f8fafc', secondary: '#94a3b8', accent: '#38bdf8', background: '#0f172a', foreground: '#f8fafc', muted: '#1e293b', border: '#334155', primary_fg: '#0f172a' },
+        fonts: { heading: 'Inter', body: 'Inter' },
+        radius: '8px'
+      },
+      'enterprise-blue': {
+        colors: { primary: '#1e40af', secondary: '#3b82f6', accent: '#0284c7', background: '#ffffff', foreground: '#1e293b', muted: '#f8fafc', border: '#e2e8f0', primary_fg: '#ffffff' },
+        fonts: { heading: 'IBM Plex Sans', body: 'IBM Plex Sans' },
+        radius: '4px'
+      },
+      'vibrant-neon': {
+        colors: { primary: '#a855f7', secondary: '#22d3ee', accent: '#f472b6', background: '#18181b', foreground: '#fafafa', muted: '#27272a', border: '#3f3f46', primary_fg: '#000000' },
+        fonts: { heading: 'Space Grotesk', body: 'Space Grotesk' },
+        radius: '8px'
+      },
+      'gradient-ocean': {
+        colors: { primary: '#0284c7', secondary: '#06b6d4', accent: '#8b5cf6', background: '#f0f9ff', foreground: '#0c4a6e', muted: '#e0f2fe', border: '#bae6fd', primary_fg: '#ffffff' },
+        fonts: { heading: 'Montserrat', body: 'Inter' },
+        radius: '12px'
+      },
+      'neo-brutalist': {
+        colors: { primary: '#000000', secondary: '#000000', accent: '#facc15', background: '#ffffff', foreground: '#000000', muted: '#f5f5f5', border: '#000000', primary_fg: '#ffffff' },
+        fonts: { heading: 'DM Sans', body: 'DM Sans' },
+        radius: '4px'
+      },
+      'vibrant-pop': {
+        colors: { primary: '#7c3aed', secondary: '#ec4899', accent: '#f59e0b', background: '#fefce8', foreground: '#1c1917', muted: '#fef3c7', border: '#fde047', primary_fg: '#ffffff' },
+        fonts: { heading: 'Poppins', body: 'Poppins' },
+        radius: '12px'
+      },
+      'warm-sand': {
+        colors: { primary: '#92400e', secondary: '#b45309', accent: '#dc2626', background: '#fffbeb', foreground: '#451a03', muted: '#fef3c7', border: '#fde68a', primary_fg: '#ffffff' },
+        fonts: { heading: 'Playfair Display', body: 'Source Sans Pro' },
+        radius: '8px'
+      },
+      'enterprise-slate': {
+        colors: { primary: '#334155', secondary: '#64748b', accent: '#0d9488', background: '#ffffff', foreground: '#1e293b', muted: '#f8fafc', border: '#cbd5e1', primary_fg: '#ffffff' },
+        fonts: { heading: 'IBM Plex Sans', body: 'IBM Plex Sans' },
+        radius: '4px'
+      },
+      'gradient-sunset': {
+        colors: { primary: '#f97316', secondary: '#ec4899', accent: '#a855f7', background: '#fffbeb', foreground: '#1c1917', muted: '#fff7ed', border: '#fed7aa', primary_fg: '#ffffff' },
+        fonts: { heading: 'Montserrat', body: 'Inter' },
+        radius: '12px'
+      },
+      'glassmorphism': {
+        colors: { primary: '#6366f1', secondary: '#8b5cf6', accent: '#ec4899', background: '#f8fafc', foreground: '#1e293b', muted: 'rgba(255,255,255,0.4)', border: 'rgba(255,255,255,0.3)', primary_fg: '#ffffff' },
+        fonts: { heading: 'Inter', body: 'Inter' },
+        radius: '12px'
+      },
+      'warm-olive': {
+        colors: { primary: '#3f6212', secondary: '#65a30d', accent: '#ca8a04', background: '#fefce8', foreground: '#1a2e05', muted: '#ecfccb', border: '#bef264', primary_fg: '#ffffff' },
+        fonts: { heading: 'Merriweather', body: 'Source Sans Pro' },
+        radius: '8px'
+      }
+    };
+    
+    let tokens = PACK_TOKENS[packId] || PACK_TOKENS['minimal-light'];
+    
+    // Apply style overrides from reference tokens
+    if (styleOverrides?.palette) {
+      tokens = { ...tokens, colors: { ...tokens.colors } };
+      if (styleOverrides.palette.primary) tokens.colors.primary = styleOverrides.palette.primary;
+      if (styleOverrides.palette.secondary) tokens.colors.secondary = styleOverrides.palette.secondary;
+      if (styleOverrides.palette.accent) tokens.colors.accent = styleOverrides.palette.accent;
+    }
+    if (styleOverrides?.radius) {
+      const radiusMap: Record<string, string> = { 'none': '0px', 'sm': '4px', 'md': '8px', 'lg': '12px', 'full': '9999px' };
+      tokens.radius = radiusMap[styleOverrides.radius] || tokens.radius;
+    }
+    
+    return tokens;
+  }
+  
+  /**
+   * Render visual preview using design pack tokens (Step 39)
+   * Pure CSS/HTML - no images, no network
+   */
+  private renderVisualPreview(tokens: any, packName: string, compact: boolean = false): string {
+    const c = tokens.colors;
+    const fonts = tokens.fonts;
+    const radius = tokens.radius || '8px';
+    
+    if (compact) {
+      // Mini preview for style picker
+      return `
+        <div class="visual-preview-mini" style="
+          background: linear-gradient(135deg, ${c.background} 0%, ${c.muted} 50%, ${c.primary}15 100%);
+          border: 1px solid ${c.border};
+          border-radius: 6px;
+          overflow: hidden;
+          position: relative;
+          height: 50px;
+        ">
+          <div style="padding: 6px; position: relative; z-index: 2;">
+            <div style="font-family: '${fonts.heading}', sans-serif; font-size: 9px; font-weight: 700; color: ${c.foreground}; margin-bottom: 3px;">Preview</div>
+            <div style="display: inline-block; padding: 2px 6px; background: ${c.primary}; color: ${c.primary_fg || '#fff'}; border-radius: 3px; font-size: 7px; font-weight: 600;">Button</div>
+          </div>
+          <div style="position: absolute; top: 0; right: 0; width: 50%; height: 100%; overflow: hidden; z-index: 1;">
+            <div style="position: absolute; width: 20px; height: 20px; border-radius: 50%; background: ${c.primary}; opacity: 0.2; top: 2px; right: 4px;"></div>
+            <div style="position: absolute; width: 14px; height: 14px; border-radius: 50%; background: ${c.accent}; opacity: 0.2; top: 18px; right: 16px;"></div>
+          </div>
+        </div>
+      `;
+    }
+    
+    // Full preview for proposal card
+    return `
+      <div class="visual-preview-full" style="
+        background: ${c.background};
+        border: 1px solid ${c.border};
+        border-radius: ${radius};
+        overflow: hidden;
+        box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+      ">
+        <!-- Hero Section -->
+        <div style="
+          position: relative;
+          padding: 16px;
+          background: linear-gradient(135deg, ${c.background} 0%, ${c.muted} 100%);
+          overflow: hidden;
+        ">
+          <div style="position: relative; z-index: 2;">
+            <div style="font-family: '${fonts.heading}', sans-serif; font-size: 14px; font-weight: 700; color: ${c.foreground}; margin-bottom: 4px; letter-spacing: -0.02em;">
+              Build Something Great
+            </div>
+            <div style="font-family: '${fonts.body}', sans-serif; font-size: 10px; color: ${c.secondary || c.foreground}80; margin-bottom: 8px;">
+              Modern, fast, and beautiful applications.
+            </div>
+            <button style="
+              display: inline-block;
+              padding: 5px 14px;
+              background: ${c.primary};
+              color: ${c.primary_fg || '#ffffff'};
+              border: none;
+              border-radius: calc(${radius} / 2);
+              font-family: '${fonts.body}', sans-serif;
+              font-size: 10px;
+              font-weight: 600;
+              box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            ">Get Started</button>
+          </div>
+          <!-- Decorative shapes -->
+          <div style="position: absolute; top: 0; right: 0; width: 50%; height: 100%; overflow: hidden; z-index: 1;">
+            <div style="position: absolute; width: 50px; height: 50px; border-radius: 50%; background: ${c.primary}; opacity: 0.12; top: -8px; right: 8px;"></div>
+            <div style="position: absolute; width: 32px; height: 32px; border-radius: 50%; background: ${c.accent}; opacity: 0.12; top: 24px; right: 42px;"></div>
+            <div style="position: absolute; width: 24px; height: 24px; border-radius: 50%; background: ${c.secondary}; opacity: 0.12; bottom: 8px; right: 16px;"></div>
+          </div>
+        </div>
+        
+        <!-- Components Row -->
+        <div style="padding: 10px 16px; border-top: 1px solid ${c.border}; background: ${c.background};">
+          <div style="font-family: '${fonts.body}', sans-serif; font-size: 9px; font-weight: 600; text-transform: uppercase; color: ${c.secondary || c.foreground}80; margin-bottom: 6px; letter-spacing: 0.5px;">
+            Components
+          </div>
+          <div style="display: flex; gap: 8px; align-items: center; flex-wrap: wrap;">
+            <button style="padding: 3px 8px; background: ${c.primary}; color: ${c.primary_fg || '#fff'}; border: none; border-radius: calc(${radius} / 2); font-size: 9px; font-weight: 600;">Primary</button>
+            <button style="padding: 3px 8px; background: ${c.muted}; color: ${c.foreground}; border: 1px solid ${c.border}; border-radius: calc(${radius} / 2); font-size: 9px;">Secondary</button>
+            <input type="text" placeholder="Input" style="padding: 3px 8px; border: 1px solid ${c.border}; border-radius: calc(${radius} / 2); background: ${c.background}; color: ${c.foreground}; font-size: 9px; width: 60px;">
+            <div style="padding: 5px 8px; border: 1px solid ${c.border}; border-radius: ${radius}; background: ${c.background}; box-shadow: 0 1px 3px rgba(0,0,0,0.08);">
+              <div style="font-size: 9px; font-weight: 600; color: ${c.foreground};">Card</div>
+              <div style="font-size: 8px; color: ${c.secondary || c.foreground}80;">Preview</div>
+            </div>
+          </div>
+        </div>
+        
+        <!-- Typography Row -->
+        <div style="padding: 8px 16px; border-top: 1px solid ${c.border}; background: ${c.muted};">
+          <div style="display: flex; gap: 12px; align-items: baseline;">
+            <span style="font-family: '${fonts.heading}', sans-serif; font-size: 14px; font-weight: 700; color: ${c.foreground};">H1</span>
+            <span style="font-family: '${fonts.heading}', sans-serif; font-size: 12px; font-weight: 600; color: ${c.foreground};">H2</span>
+            <span style="font-family: '${fonts.body}', sans-serif; font-size: 10px; color: ${c.foreground};">Body</span>
+            <span style="font-family: 'SF Mono', Consolas, monospace; font-size: 9px; color: ${c.secondary || c.foreground}80; background: ${c.background}; padding: 2px 4px; border-radius: 3px;">mono</span>
+          </div>
+        </div>
       </div>
     `;
   }
@@ -1880,6 +2098,127 @@ export class ScaffoldCard extends HTMLElement {
           border-radius: 3px;
           font-family: var(--vscode-editor-font-family), monospace;
           color: var(--vscode-textLink-foreground);
+        }
+        
+        /* Step 39: Visual Preview Styles */
+        .visual-preview-full {
+          margin-bottom: 12px;
+        }
+        
+        .pack-meta {
+          display: flex;
+          align-items: center;
+          gap: 12px;
+          margin-top: 10px;
+          padding: 8px 0;
+        }
+        
+        .pack-name-badge {
+          display: inline-block;
+          padding: 4px 12px;
+          background: var(--vscode-badge-background);
+          color: var(--vscode-badge-foreground);
+          border-radius: 12px;
+          font-size: 12px;
+          font-weight: 600;
+        }
+        
+        .tokens-hint {
+          font-size: 11px;
+          color: var(--vscode-descriptionForeground);
+          font-family: var(--vscode-editor-font-family), monospace;
+        }
+        
+        .influence-badge {
+          display: flex;
+          align-items: center;
+          gap: 8px;
+          padding: 8px 12px;
+          background: linear-gradient(90deg, rgba(139, 92, 246, 0.15) 0%, rgba(59, 130, 246, 0.08) 100%);
+          border-radius: 6px;
+          margin-bottom: 12px;
+          border: 1px solid rgba(139, 92, 246, 0.3);
+        }
+        
+        .influence-icon {
+          font-size: 16px;
+        }
+        
+        .influence-text {
+          font-size: 11px;
+          color: var(--vscode-foreground);
+          font-style: italic;
+        }
+        
+        /* Step 39: Enhanced Style Picker with Mini Previews */
+        .pack-option-enhanced {
+          display: flex;
+          flex-direction: column;
+          padding: 8px;
+          background: var(--vscode-input-background);
+          border: 2px solid transparent;
+          border-radius: 8px;
+          cursor: pointer;
+          transition: all 0.2s;
+          position: relative;
+          min-height: 90px;
+        }
+        
+        .pack-option-enhanced:hover {
+          border-color: var(--vscode-focusBorder);
+          background: var(--vscode-list-hoverBackground);
+        }
+        
+        .pack-option-enhanced.selected {
+          border-color: #a855f7;
+          background: rgba(168, 85, 247, 0.1);
+        }
+        
+        .pack-mini-preview {
+          width: 100%;
+          height: 50px;
+          border-radius: 4px;
+          margin-bottom: 6px;
+          overflow: hidden;
+        }
+        
+        .pack-meta-row {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          gap: 6px;
+        }
+        
+        .pack-name-small {
+          font-size: 11px;
+          font-weight: 600;
+          color: var(--vscode-foreground);
+          white-space: nowrap;
+          overflow: hidden;
+          text-overflow: ellipsis;
+        }
+        
+        .pack-vibe-tag {
+          padding: 2px 6px;
+          background: rgba(168, 85, 247, 0.15);
+          color: #a855f7;
+          border-radius: 8px;
+          font-size: 9px;
+          font-weight: 500;
+          text-transform: uppercase;
+        }
+        
+        .pack-palette-strip {
+          display: flex;
+          gap: 3px;
+          margin-top: 4px;
+        }
+        
+        .palette-dot {
+          width: 12px;
+          height: 12px;
+          border-radius: 50%;
+          border: 1px solid rgba(0, 0, 0, 0.1);
         }
       </style>
     `;
