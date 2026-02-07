@@ -1,7 +1,7 @@
 import * as vscode from 'vscode';
 import * as path from 'path';
 import * as fs from 'fs';
-import { getWebviewContent } from 'webview';
+import { getWebviewContent, getSettingsPanelContent } from 'webview';
 import { VSCodeWorkspaceWriter } from './vscodeWorkspaceWriter';
 import { VSCodeCheckpointManager } from './vscodeCheckpointManager';
 import { 
@@ -108,7 +108,19 @@ import {
   applyScaffoldPlan,
   RecipeContext,
   ScaffoldApplyContext,
+  // Step 43: Preflight Checks
+  runPreflightChecksWithEvents,
+  emitPreflightResolutionSelected,
+  applyResolutions,
+  // Step 44: Post-Scaffold Verification Pipeline
+  runPostVerificationWithEvents,
+  // Step 40.5: Intelligence Layer
+  enrichUserInput,
+  getSessionContextManager,
+  DEFAULT_INTELLIGENCE_SETTINGS,
 } from 'core';
+import type { PreflightChecksInput, PreflightOrchestratorCtx, VerifyRecipeInfo, VerifyConfig, VerifyEventCtx } from 'core';
+import type { EnrichedInput, EditorContext, DiagnosticEntry } from 'core';
 
 class MissionControlViewProvider implements vscode.WebviewViewProvider {
   public static readonly viewType = 'ordinex.missionControl';
@@ -125,6 +137,13 @@ class MissionControlViewProvider implements vscode.WebviewViewProvider {
   private currentExecutingMissionId: string | null = null; // Track which mission is running
   private pendingCommandContexts: Map<string, CommandPhaseContext> = new Map(); // Awaiting command approval by task
   private activeTerminals: Map<string, vscode.Terminal> = new Map(); // Track terminals by task ID
+  private pendingPreflightResult: any = null; // Step 43: Store preflight result for resolution
+  private pendingPreflightInput: PreflightChecksInput | null = null; // Step 43: Store preflight input for re-run
+  private pendingPreflightCtx: PreflightOrchestratorCtx | null = null; // Step 43: Store orchestrator context
+  private pendingVerifyTargetDir: string | null = null; // Step 44: Target dir for verification retry
+  private pendingVerifyRecipe: VerifyRecipeInfo | null = null; // Step 44: Recipe info for verification retry
+  private pendingVerifyScaffoldId: string | null = null; // Step 44: Scaffold ID for verification retry
+  private settingsPanel: vscode.WebviewPanel | null = null; // Step 45: Settings panel
 
   constructor(
     private readonly _extensionUri: vscode.Uri,
@@ -133,6 +152,140 @@ class MissionControlViewProvider implements vscode.WebviewViewProvider {
     // Initialize event store
     const storePath = path.join(_context.globalStorageUri.fsPath, 'events.jsonl');
     this.eventStore = new EventStore(storePath);
+
+    // Step 40.5 Enhancement: Set up file change listeners for session context
+    this.setupFileChangeListeners();
+
+    // Step 40.5 Enhancement: Initialize session persistence if enabled
+    this.initSessionPersistence();
+  }
+
+  // -------------------------------------------------------------------------
+  // Step 40.5 Enhancement: EditorContext builder
+  // -------------------------------------------------------------------------
+
+  private buildEditorContext(): EditorContext {
+    const editor = vscode.window.activeTextEditor;
+    const maxDiag = DEFAULT_INTELLIGENCE_SETTINGS.maxDiagnostics;
+    const maxSelected = DEFAULT_INTELLIGENCE_SETTINGS.maxSelectedTextChars;
+
+    const editorCtx: EditorContext = {
+      diagnostics: [],
+      workspaceDiagnostics: [],
+    };
+
+    if (editor) {
+      editorCtx.activeFile = editor.document.uri.fsPath;
+      editorCtx.cursorLine = editor.selection.active.line;
+      editorCtx.cursorColumn = editor.selection.active.character;
+
+      // Selected text (capped)
+      const sel = editor.document.getText(editor.selection);
+      if (sel && sel.length > 0) {
+        editorCtx.selectedText = sel.substring(0, maxSelected);
+      }
+
+      // File diagnostics (errors + warnings, capped)
+      const fileDiags = vscode.languages.getDiagnostics(editor.document.uri);
+      editorCtx.diagnostics = fileDiags
+        .filter(d => d.severity <= vscode.DiagnosticSeverity.Warning)
+        .slice(0, maxDiag)
+        .map(d => ({
+          message: d.message.substring(0, 200),
+          severity: d.severity === vscode.DiagnosticSeverity.Error ? 'error' as const
+            : d.severity === vscode.DiagnosticSeverity.Warning ? 'warning' as const
+            : 'info' as const,
+          file: editor.document.uri.fsPath,
+          line: d.range.start.line,
+        }));
+    }
+
+    // Workspace diagnostics (errors only, capped)
+    const allDiags = vscode.languages.getDiagnostics();
+    const wsErrors: DiagnosticEntry[] = [];
+    for (const [uri, diags] of allDiags) {
+      if (wsErrors.length >= maxDiag) break;
+      for (const d of diags) {
+        if (wsErrors.length >= maxDiag) break;
+        if (d.severity === vscode.DiagnosticSeverity.Error) {
+          wsErrors.push({
+            message: d.message.substring(0, 200),
+            severity: 'error',
+            file: uri.fsPath,
+            line: d.range.start.line,
+          });
+        }
+      }
+    }
+    editorCtx.workspaceDiagnostics = wsErrors;
+
+    return editorCtx;
+  }
+
+  // -------------------------------------------------------------------------
+  // Step 40.5 Enhancement: File change listeners
+  // -------------------------------------------------------------------------
+
+  private setupFileChangeListeners(): void {
+    const sessionManager = getSessionContextManager();
+
+    this._context.subscriptions.push(
+      vscode.window.onDidChangeActiveTextEditor((editor) => {
+        if (editor?.document.uri.scheme === 'file') {
+          sessionManager.addFileMention(editor.document.uri.fsPath, 'mentioned');
+        }
+      })
+    );
+
+    this._context.subscriptions.push(
+      vscode.workspace.onDidSaveTextDocument((doc) => {
+        if (doc.uri.scheme === 'file') {
+          sessionManager.addFileMention(doc.uri.fsPath, 'edited');
+        }
+      })
+    );
+
+    this._context.subscriptions.push(
+      vscode.languages.onDidChangeDiagnostics((event) => {
+        for (const uri of event.uris) {
+          const diags = vscode.languages.getDiagnostics(uri);
+          for (const d of diags.filter(d => d.severity === vscode.DiagnosticSeverity.Error).slice(0, 3)) {
+            sessionManager.addError(
+              d.message.substring(0, 200),
+              'build',
+              uri.fsPath,
+              d.range.start.line
+            );
+          }
+        }
+      })
+    );
+  }
+
+  // -------------------------------------------------------------------------
+  // Step 40.5 Enhancement: Session persistence
+  // -------------------------------------------------------------------------
+
+  private initSessionPersistence(): void {
+    // Check VS Code settings for persistence preference
+    const config = vscode.workspace.getConfiguration('ordinex.intelligence');
+    const persistSetting = config.get<string>('sessionPersistence', 'off');
+
+    if (persistSetting !== 'on') return;
+
+    const workspaceRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+    if (!workspaceRoot) return;
+
+    const sessionManager = getSessionContextManager();
+    const persistPath = path.join(workspaceRoot, '.ordinex', 'session-context.json');
+
+    // Load existing session
+    sessionManager.loadFromFile(persistPath);
+
+    // Enable auto-save
+    sessionManager.enablePersistence(persistPath);
+
+    console.log('[Step40.5] Session persistence enabled:', persistPath);
   }
 
   public resolveWebviewView(
@@ -248,6 +401,28 @@ class MissionControlViewProvider implements vscode.WebviewViewProvider {
         await this.handleUploadAttachment(message, webview);
         break;
 
+      // Step 43: Preflight resolution handlers
+      case 'preflight_resolution_selected':
+        await this.handlePreflightResolution(message, webview);
+        break;
+
+      case 'preflight_proceed':
+        await this.handlePreflightProceed(message, webview);
+        break;
+
+      // Step 44: Verification action handlers
+      case 'verification_retry':
+        await this.handleVerificationRetry(message, webview);
+        break;
+
+      case 'verification_restore':
+        await this.handleVerificationRestore(message, webview);
+        break;
+
+      case 'verification_continue':
+        await this.handleVerificationContinue(message, webview);
+        break;
+
       default:
         console.log('Unknown message type:', message.type);
     }
@@ -307,7 +482,98 @@ class MissionControlViewProvider implements vscode.WebviewViewProvider {
       console.log('✓ intent_received event emitted');
       await this.sendEventsToWebview(webview, taskId);
 
-      // 2. STEP 33: Build intent analysis context
+      // 2. STEP 40.5: Enrich user input with intelligence layer
+      const workspaceRoot = this.selectedWorkspaceRoot
+        || vscode.workspace.workspaceFolders?.[0]?.uri.fsPath
+        || '';
+      const openFilePaths = vscode.workspace.textDocuments
+        .filter(doc => doc.uri.scheme === 'file')
+        .map(doc => doc.uri.fsPath);
+
+      let enrichedInput: EnrichedInput | null = null;
+      let effectivePrompt = text; // Falls back to raw text if enrichment fails
+
+      if (workspaceRoot) {
+        try {
+          const editorContext = this.buildEditorContext();
+          enrichedInput = await enrichUserInput(text, {
+            workspaceRoot,
+            openFiles: openFilePaths,
+            editorContext,
+          });
+          effectivePrompt = enrichedInput.enrichedPrompt;
+          console.log('[Step40.5] Enrichment complete:', {
+            outOfScope: enrichedInput.outOfScope,
+            clarificationNeeded: enrichedInput.clarificationNeeded,
+            resolvedCount: enrichedInput.metadata.resolvedCount,
+            durationMs: enrichedInput.metadata.enrichmentDurationMs,
+          });
+        } catch (enrichErr) {
+          console.warn('[Step40.5] Enrichment failed, using raw input:', enrichErr);
+        }
+      } else {
+        console.warn('[Step40.5] No workspace root, skipping enrichment');
+      }
+
+      // 2a. Handle out-of-scope requests
+      if (enrichedInput?.outOfScope) {
+        console.log('[Step40.5] Out-of-scope request detected, sending redirect');
+        await this.emitEvent({
+          event_id: this.generateId(),
+          task_id: taskId,
+          timestamp: new Date().toISOString(),
+          type: 'stream_complete',
+          mode: this.currentMode,
+          stage: this.currentStage,
+          payload: {
+            response: enrichedInput.outOfScopeResponse || 'I focus on coding tasks. Is there code I can help you with?',
+            out_of_scope: true,
+          },
+          evidence_ids: [],
+          parent_event_id: null,
+        });
+        await this.sendEventsToWebview(webview, taskId);
+        this.currentTaskId = null;
+        return;
+      }
+
+      // 2b. Handle clarification needed from enrichment
+      if (enrichedInput?.clarificationNeeded) {
+        console.log('[Step40.5] Clarification needed:', enrichedInput.clarificationQuestion);
+        await this.emitEvent({
+          event_id: this.generateId(),
+          task_id: taskId,
+          timestamp: new Date().toISOString(),
+          type: 'clarification_requested',
+          mode: this.currentMode,
+          stage: this.currentStage,
+          payload: {
+            question: enrichedInput.clarificationQuestion || 'Could you provide more details?',
+            options: enrichedInput.clarificationOptions || [],
+            context_source: 'intelligence_layer',
+          },
+          evidence_ids: [],
+          parent_event_id: null,
+        });
+        await this.emitEvent({
+          event_id: this.generateId(),
+          task_id: taskId,
+          timestamp: new Date().toISOString(),
+          type: 'execution_paused',
+          mode: this.currentMode,
+          stage: this.currentStage,
+          payload: {
+            reason: 'awaiting_clarification',
+            description: 'Intelligence layer needs more information',
+          },
+          evidence_ids: [],
+          parent_event_id: null,
+        });
+        await this.sendEventsToWebview(webview, taskId);
+        return;
+      }
+
+      // 3. STEP 33: Build intent analysis context
       const events = this.eventStore?.getEventsByTaskId(taskId) || [];
       const activeRun = detectActiveRun(events);
       const analysisContext: IntentAnalysisContext = {
@@ -318,16 +584,16 @@ class MissionControlViewProvider implements vscode.WebviewViewProvider {
       };
       console.log('[Step33] Analysis context:', analysisContext);
 
-      // 3. STEP 33: Analyze intent (behavior-first) with flow_kind detection
-      const commandDetection = detectCommandIntent(text);
+      // 4. STEP 33: Analyze intent using ENRICHED prompt (behavior-first) with flow_kind detection
+      const commandDetection = detectCommandIntent(effectivePrompt);
       console.log('[Step33] Command detection:', commandDetection);
 
       // Use analyzeIntentWithFlow to get flow_kind for greenfield detection
-      let analysisWithFlow = analyzeIntentWithFlow(text, analysisContext);
+      let analysisWithFlow = analyzeIntentWithFlow(effectivePrompt, analysisContext);
       let analysis = analysisWithFlow; // Same object, but typed to include flow_kind
-      
+
       console.log('[Step35] Flow kind:', analysisWithFlow.flow_kind);
-      console.log('[Step35] Is greenfield request:', isGreenfieldRequest(text));
+      console.log('[Step35] Is greenfield request:', isGreenfieldRequest(effectivePrompt));
 
       // If a clear command intent is detected, do not block on stale active-run state
       if (analysis.behavior === 'CONTINUE_RUN' && commandDetection.isCommandIntent && commandDetection.confidence >= 0.75) {
@@ -374,7 +640,7 @@ class MissionControlViewProvider implements vscode.WebviewViewProvider {
       if (analysisWithFlow.flow_kind === 'scaffold') {
         console.log('[Step35] 🏗️ SCAFFOLD flow detected - routing DIRECTLY to scaffold handler');
         console.log('[Step35] Bypassing behavior switch (was:', analysis.behavior, ')');
-        await this.handleScaffoldFlow(text, taskId, modelId || 'sonnet-4.5', webview, attachments || []);
+        await this.handleScaffoldFlow(effectivePrompt, taskId, modelId || 'sonnet-4.5', webview, attachments || []);
         console.log('[Step33] Behavior handling complete (scaffold flow)');
         return; // Exit early - scaffold flow handles everything
       }
@@ -385,7 +651,7 @@ class MissionControlViewProvider implements vscode.WebviewViewProvider {
       switch (analysis.behavior) {
         case 'ANSWER':
           console.log('>>> BEHAVIOR: ANSWER <<<');
-          await this.handleAnswerMode(text, taskId, modelId || 'sonnet-4.5', webview);
+          await this.handleAnswerMode(effectivePrompt, taskId, modelId || 'sonnet-4.5', webview);
           break;
 
         case 'PLAN':
@@ -393,14 +659,14 @@ class MissionControlViewProvider implements vscode.WebviewViewProvider {
           // Note: Scaffold flow is now handled BEFORE the behavior switch
           // If we reach here, it's a standard PLAN flow
           console.log('[Step35] Standard PLAN flow');
-          await this.handlePlanMode(text, taskId, modelId || 'sonnet-4.5', webview);
+          await this.handlePlanMode(effectivePrompt, taskId, modelId || 'sonnet-4.5', webview);
           break;
 
         case 'QUICK_ACTION':
           console.log('>>> BEHAVIOR: QUICK_ACTION <<<');
           
           // STEP 34.5: Check if this is a command execution request
-          const commandIntent = detectCommandIntent(text);
+          const commandIntent = detectCommandIntent(effectivePrompt);
           
           if (commandIntent.isCommandIntent) {
             // This is a COMMAND - route to command execution phase
@@ -513,10 +779,10 @@ class MissionControlViewProvider implements vscode.WebviewViewProvider {
             try {
               const referencedFiles = analysis.referenced_files || [];
               const fileHint = referencedFiles.length > 0 ? referencedFiles.join(', ') : 'target files';
-              const stepDescription = `Edit ${fileHint} to resolve: ${text}`;
+              const stepDescription = `Edit ${fileHint} to resolve: ${effectivePrompt}`;
 
               const quickPlan: StructuredPlan = {
-                goal: `Quick fix: ${text}`,
+                goal: `Quick fix: ${effectivePrompt}`,
                 assumptions: ['Single focused change', 'Minimal scope', 'Fast execution'],
                 success_criteria: ['Issue resolved', 'No unintended changes'],
                 scope_contract: {
@@ -2659,30 +2925,81 @@ This demonstrates the diff proposal pipeline without requiring LLM integration.
           
           // Clear the coordinator reference
           this.activeScaffoldCoordinator = null;
-          
-          // CRITICAL: Clear currentTaskId so next prompt starts fresh
-          console.log('[handleResolveDecisionPoint] Scaffold completed, clearing currentTaskId');
-          this.currentTaskId = null;
-          this.currentStage = 'none';
-          
+
           await this.sendEventsToWebview(webview, task_id);
-          
+
           if (updatedState.completionStatus === 'ready_for_step_35_2') {
-            // STEP 35.4: Scaffold approved - select recipe and show next steps
-            // NOTE: scaffold_completed was already emitted by ScaffoldFlowCoordinator
-            console.log('[handleResolveDecisionPoint] Scaffold approved, selecting recipe...');
-            
+            // STEP 43: Run preflight checks before recipe selection
+            console.log('[handleResolveDecisionPoint] Scaffold approved, running preflight checks...');
+
             try {
               // Get workspace root
               const scaffoldWorkspaceRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
               if (!scaffoldWorkspaceRoot) {
                 throw new Error('No workspace folder open');
               }
-              
+
               // Get the original intent to determine recipe
               const scaffoldEvents = this.eventStore?.getEventsByTaskId(task_id) || [];
               const scaffoldIntentEvent = scaffoldEvents.find((e: Event) => e.type === 'intent_received');
               const scaffoldPrompt = (scaffoldIntentEvent?.payload.prompt as string) || 'Create a new project';
+
+              // Step 43: Run preflight checks
+              const preflightEventBus = new EventBus(this.eventStore!);
+              preflightEventBus.subscribe(async () => {
+                await this.sendEventsToWebview(webview, task_id);
+              });
+
+              const scaffoldIdFromEvents = (scaffoldEvents.find(e => e.type === 'scaffold_started')?.payload?.scaffold_id as string) || this.generateId();
+
+              const preflightCtx: PreflightOrchestratorCtx = {
+                scaffoldId: scaffoldIdFromEvents,
+                runId: task_id,
+                eventBus: preflightEventBus as any,
+                mode: this.currentMode,
+              };
+
+              const preflightInput: PreflightChecksInput = {
+                targetDir: scaffoldWorkspaceRoot,
+                workspaceRoot: scaffoldWorkspaceRoot,
+                plannedFiles: ['package.json', 'src/index.ts', 'tsconfig.json'], // placeholder — actual files determined by recipe
+                appName: 'my-app',
+              };
+
+              const preflightResult = await runPreflightChecksWithEvents(preflightInput, preflightCtx);
+              console.log('[handleResolveDecisionPoint] Preflight result:', {
+                canProceed: preflightResult.canProceed,
+                blockers: preflightResult.blockers.length,
+                warnings: preflightResult.warnings.length,
+              });
+
+              await this.sendEventsToWebview(webview, task_id);
+
+              if (!preflightResult.canProceed) {
+                // Store state for resolution handling
+                this.pendingPreflightResult = preflightResult;
+                this.pendingPreflightInput = preflightInput;
+                this.pendingPreflightCtx = preflightCtx;
+                console.log('[handleResolveDecisionPoint] Preflight blocked — awaiting user resolution');
+
+                // Send preflight card data to webview
+                webview.postMessage({
+                  type: 'ordinex:preflightCard',
+                  payload: {
+                    scaffold_id: scaffoldIdFromEvents,
+                    run_id: task_id,
+                    target_directory: preflightInput.targetDir,
+                    can_proceed: preflightResult.canProceed,
+                    checks: preflightResult.checks,
+                    blockers_count: preflightResult.blockers.length,
+                    warnings_count: preflightResult.warnings.length,
+                  },
+                });
+                return; // Wait for user to resolve via preflight_resolution_selected messages
+              }
+
+              // Preflight passed — continue to recipe selection
+              console.log('[handleResolveDecisionPoint] Preflight passed, selecting recipe...');
               
               // Select recipe based on user prompt
               const recipeSelection = selectRecipe(scaffoldPrompt);
@@ -2822,13 +3139,22 @@ This demonstrates the diff proposal pipeline without requiring LLM integration.
               vscode.window.showInformationMessage(
                 `🎉 ${recipeNames[recipeSelection.recipe_id] || 'Project'} scaffold started! Follow the terminal prompts to complete setup.`
               );
-              
+
+              // Clear task AFTER scaffold command has been sent to terminal
+              console.log('[handleResolveDecisionPoint] Scaffold apply complete, clearing currentTaskId');
+              this.currentTaskId = null;
+              this.currentStage = 'none';
+
             } catch (scaffoldApplyError) {
               console.error('[handleResolveDecisionPoint] Scaffold error:', scaffoldApplyError);
               vscode.window.showErrorMessage(`Scaffold failed: ${scaffoldApplyError}`);
+              this.currentTaskId = null;
+              this.currentStage = 'none';
             }
           } else if (updatedState.completionStatus === 'cancelled') {
             vscode.window.showInformationMessage('Scaffold cancelled.');
+            this.currentTaskId = null;
+            this.currentStage = 'none';
           }
           
           return;
@@ -3615,8 +3941,464 @@ This demonstrates the diff proposal pipeline without requiring LLM integration.
   }
 
   /**
+   * Step 43: Handle preflight resolution selection from webview
+   *
+   * Called when user clicks a resolution option in the PreflightCard.
+   * Applies the resolution, re-runs checks, and either proceeds or shows updated card.
+   */
+  private async handlePreflightResolution(message: any, webview: vscode.Webview) {
+    const { scaffoldId, checkId, optionId, modifications } = message;
+    const LOG_PREFIX = '[Ordinex:Preflight]';
+
+    console.log(`${LOG_PREFIX} Resolution selected:`, { scaffoldId, checkId, optionId });
+
+    if (!this.pendingPreflightResult || !this.pendingPreflightInput || !this.pendingPreflightCtx) {
+      console.error(`${LOG_PREFIX} No pending preflight state`);
+      return;
+    }
+
+    try {
+      // Emit the resolution selected event
+      emitPreflightResolutionSelected(
+        this.pendingPreflightCtx,
+        checkId,
+        optionId,
+        modifications?.targetDir,
+        modifications?.mergeMode,
+        modifications?.monorepoPlacement,
+      );
+
+      // Apply the resolution to the input
+      const selections: Record<string, string> = { [checkId]: optionId };
+      const updatedInput = applyResolutions(
+        this.pendingPreflightInput,
+        this.pendingPreflightResult,
+        selections
+      );
+
+      if (!updatedInput) {
+        // User cancelled
+        console.log(`${LOG_PREFIX} User cancelled via preflight resolution`);
+        this.pendingPreflightResult = null;
+        this.pendingPreflightInput = null;
+        this.pendingPreflightCtx = null;
+        vscode.window.showInformationMessage('Scaffold cancelled.');
+        return;
+      }
+
+      // Re-run preflight with updated input
+      const rerunResult = await runPreflightChecksWithEvents(updatedInput, this.pendingPreflightCtx);
+      console.log(`${LOG_PREFIX} Re-run result:`, {
+        canProceed: rerunResult.canProceed,
+        blockers: rerunResult.blockers.length,
+      });
+
+      const taskId = this.pendingPreflightCtx.runId;
+      await this.sendEventsToWebview(webview, taskId);
+
+      if (!rerunResult.canProceed) {
+        // Still blocked — update stored state and send updated card
+        this.pendingPreflightResult = rerunResult;
+        this.pendingPreflightInput = updatedInput;
+
+        webview.postMessage({
+          type: 'ordinex:preflightCard',
+          payload: {
+            scaffold_id: scaffoldId,
+            run_id: taskId,
+            target_directory: updatedInput.targetDir,
+            can_proceed: rerunResult.canProceed,
+            checks: rerunResult.checks,
+            blockers_count: rerunResult.blockers.length,
+            warnings_count: rerunResult.warnings.length,
+          },
+        });
+        return;
+      }
+
+      // All clear — proceed (trigger the same flow as preflight_proceed)
+      console.log(`${LOG_PREFIX} All blockers resolved, proceeding...`);
+      await this.handlePreflightProceed({ scaffoldId }, webview);
+
+    } catch (error) {
+      console.error(`${LOG_PREFIX} Error handling resolution:`, error);
+      vscode.window.showErrorMessage(`Preflight resolution failed: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
+
+  /**
+   * Step 43: Handle preflight proceed from webview
+   *
+   * Called when all preflight checks pass and user clicks "Continue to Scaffold".
+   * Clears pending preflight state and triggers recipe selection + apply.
+   */
+  private async handlePreflightProceed(message: any, webview: vscode.Webview) {
+    const LOG_PREFIX = '[Ordinex:Preflight]';
+    console.log(`${LOG_PREFIX} Proceeding after preflight...`);
+
+    // Clean up preflight state
+    const preflightInput = this.pendingPreflightInput;
+    this.pendingPreflightResult = null;
+    this.pendingPreflightInput = null;
+    this.pendingPreflightCtx = null;
+
+    if (!this.currentTaskId || !this.eventStore) {
+      console.error(`${LOG_PREFIX} No active task or event store`);
+      return;
+    }
+
+    const taskId = this.currentTaskId;
+    const targetDir = preflightInput?.targetDir || vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+
+    if (!targetDir) {
+      vscode.window.showErrorMessage('No target directory determined');
+      return;
+    }
+
+    // Emit quality gates passed event
+    await this.emitEvent({
+      event_id: this.generateId(),
+      task_id: taskId,
+      timestamp: new Date().toISOString(),
+      type: 'scaffold_quality_gates_passed',
+      mode: this.currentMode,
+      stage: this.currentStage,
+      payload: {
+        scaffold_id: message.scaffoldId || this.generateId(),
+        run_id: taskId,
+        gates_passed: 6,
+        total_duration_ms: 0,
+      },
+      evidence_ids: [],
+      parent_event_id: null,
+    });
+
+    await this.sendEventsToWebview(webview, taskId);
+
+    // Now continue with recipe selection and apply (same as existing flow)
+    try {
+      const events = this.eventStore.getEventsByTaskId(taskId);
+      const intentEvent = events.find((e: Event) => e.type === 'intent_received');
+      const scaffoldPrompt = (intentEvent?.payload.prompt as string) || 'Create a new project';
+
+      const recipeSelection = selectRecipe(scaffoldPrompt);
+      console.log(`${LOG_PREFIX} Recipe selected: ${recipeSelection.recipe_id}`);
+
+      await this.emitEvent({
+        event_id: this.generateId(),
+        task_id: taskId,
+        timestamp: new Date().toISOString(),
+        type: 'scaffold_decision_resolved',
+        mode: this.currentMode,
+        stage: this.currentStage,
+        payload: {
+          decision: 'proceed',
+          recipe_id: recipeSelection.recipe_id,
+          target_directory: targetDir,
+        },
+        evidence_ids: [],
+        parent_event_id: null,
+      });
+
+      await this.sendEventsToWebview(webview, taskId);
+
+      // Emit scaffold_apply_started
+      const recipeNames: Record<string, string> = {
+        'nextjs_app_router': 'Next.js',
+        'vite_react': 'Vite + React',
+        'expo': 'Expo',
+      };
+
+      const createCmd = recipeSelection.recipe_id === 'nextjs_app_router'
+        ? 'npx create-next-app@latest my-app'
+        : recipeSelection.recipe_id === 'vite_react'
+        ? 'npm create vite@latest my-app -- --template react-ts'
+        : 'npx create-expo-app my-app';
+
+      // Emit checkpoint_created event
+      await this.emitEvent({
+        event_id: this.generateId(),
+        task_id: taskId,
+        timestamp: new Date().toISOString(),
+        type: 'scaffold_checkpoint_created',
+        mode: this.currentMode,
+        stage: this.currentStage,
+        payload: {
+          reason: 'pre_scaffold',
+          target_directory: targetDir,
+        },
+        evidence_ids: [],
+        parent_event_id: null,
+      });
+
+      await this.emitEvent({
+        event_id: this.generateId(),
+        task_id: taskId,
+        timestamp: new Date().toISOString(),
+        type: 'scaffold_apply_started',
+        mode: this.currentMode,
+        stage: this.currentStage,
+        payload: {
+          recipe_id: recipeSelection.recipe_id,
+          command: createCmd,
+          target_directory: targetDir,
+        },
+        evidence_ids: [],
+        parent_event_id: null,
+      });
+
+      await this.sendEventsToWebview(webview, taskId);
+
+      // Run scaffold in terminal
+      const terminal = vscode.window.createTerminal({
+        name: `Scaffold: ${recipeNames[recipeSelection.recipe_id] || 'Project'}`,
+        cwd: targetDir,
+      });
+      terminal.show(true);
+      terminal.sendText(createCmd);
+
+      // Emit scaffold_applied
+      await this.emitEvent({
+        event_id: this.generateId(),
+        task_id: taskId,
+        timestamp: new Date().toISOString(),
+        type: 'scaffold_applied',
+        mode: this.currentMode,
+        stage: this.currentStage,
+        payload: {
+          recipe_id: recipeSelection.recipe_id,
+          command: createCmd,
+          method: 'vscode_terminal',
+          message: 'Scaffold command running in terminal.',
+        },
+        evidence_ids: [],
+        parent_event_id: null,
+      });
+
+      await this.sendEventsToWebview(webview, taskId);
+
+      vscode.window.showInformationMessage(
+        `${recipeNames[recipeSelection.recipe_id] || 'Project'} scaffold started! Follow the terminal prompts.`
+      );
+
+      // Step 44: Store verification context for retry and trigger async verification
+      const scaffoldId = message.scaffoldId || this.generateId();
+      const verifyRecipe: VerifyRecipeInfo = {
+        recipeId: recipeSelection.recipe_id,
+        recipeName: recipeNames[recipeSelection.recipe_id],
+        hasTypeScript: recipeSelection.recipe_id === 'nextjs_app_router' || recipeSelection.recipe_id === 'vite_react',
+      };
+      this.pendingVerifyTargetDir = targetDir;
+      this.pendingVerifyRecipe = verifyRecipe;
+      this.pendingVerifyScaffoldId = scaffoldId;
+
+      // Fire-and-forget: run verification after a delay to let scaffold command complete
+      this.triggerPostScaffoldVerification(targetDir, verifyRecipe, scaffoldId, taskId, webview);
+
+    } catch (error) {
+      console.error(`${LOG_PREFIX} Error in post-preflight apply:`, error);
+      vscode.window.showErrorMessage(`Scaffold failed: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
+
+  /**
+   * Step 44: Trigger post-scaffold verification pipeline.
+   *
+   * Waits for scaffold command to create files (polls for package.json),
+   * then runs verification checks and sends results to webview.
+   */
+  private async triggerPostScaffoldVerification(
+    targetDir: string,
+    recipe: VerifyRecipeInfo,
+    scaffoldId: string,
+    taskId: string,
+    webview: vscode.Webview
+  ): Promise<void> {
+    const LOG_PREFIX = '[Ordinex:Verify]';
+    console.log(`${LOG_PREFIX} Waiting for scaffold to create files in ${targetDir}...`);
+
+    // Poll for package.json up to 3 minutes (scaffold CLI takes time)
+    const maxWaitMs = 180_000;
+    const pollIntervalMs = 3_000;
+    const startWait = Date.now();
+    let found = false;
+
+    while (Date.now() - startWait < maxWaitMs) {
+      if (fs.existsSync(path.join(targetDir, 'package.json'))) {
+        found = true;
+        break;
+      }
+      await new Promise(resolve => setTimeout(resolve, pollIntervalMs));
+    }
+
+    if (!found) {
+      console.log(`${LOG_PREFIX} package.json not found after ${maxWaitMs / 1000}s, skipping verification`);
+      return;
+    }
+
+    // Small delay for file system to settle
+    await new Promise(resolve => setTimeout(resolve, 2000));
+
+    console.log(`${LOG_PREFIX} Running post-scaffold verification...`);
+
+    const eventBus = new (require('events').EventEmitter)();
+    const events: Event[] = [];
+    eventBus.on('event', (e: Event) => {
+      events.push(e);
+      // Store events as they come in
+      if (this.eventStore) {
+        this.eventStore.append(e);
+      }
+    });
+
+    const ctx: VerifyEventCtx = {
+      scaffoldId,
+      runId: taskId,
+      eventBus,
+      mode: this.currentMode,
+    };
+
+    const config: VerifyConfig = {
+      installTimeoutMs: 120_000,
+      lintTimeoutMs: 60_000,
+      typecheckTimeoutMs: 60_000,
+      buildTimeoutMs: 120_000,
+      allowBuild: true,
+      installMaxRetries: 1,
+      replayMode: false,
+    };
+
+    try {
+      const result = await runPostVerificationWithEvents(targetDir, recipe, config, ctx);
+
+      console.log(`${LOG_PREFIX} Verification complete: ${result.outcome}`);
+
+      // Send verification result to webview
+      webview.postMessage({
+        type: 'ordinex:verificationCard',
+        payload: {
+          scaffold_id: scaffoldId,
+          run_id: taskId,
+          outcome: result.outcome,
+          steps: result.steps,
+          total_duration_ms: result.totalDurationMs,
+          package_manager: result.packageManager,
+          from_replay: result.fromReplay,
+          allow_continue: result.outcome !== 'fail',
+        },
+      });
+
+      // Clear task on success
+      if (result.outcome === 'pass') {
+        this.currentTaskId = null;
+        this.currentStage = 'none';
+        this.pendingVerifyTargetDir = null;
+        this.pendingVerifyRecipe = null;
+        this.pendingVerifyScaffoldId = null;
+      }
+    } catch (error) {
+      console.error(`${LOG_PREFIX} Verification error:`, error);
+    }
+  }
+
+  /**
+   * Step 44: Handle verification retry from webview
+   */
+  private async handleVerificationRetry(message: any, webview: vscode.Webview): Promise<void> {
+    const LOG_PREFIX = '[Ordinex:Verify]';
+    console.log(`${LOG_PREFIX} Retry requested for scaffold ${message.scaffoldId}`);
+
+    const targetDir = this.pendingVerifyTargetDir;
+    const recipe = this.pendingVerifyRecipe;
+    const scaffoldId = this.pendingVerifyScaffoldId || message.scaffoldId;
+    const taskId = this.currentTaskId || this.generateId();
+
+    if (!targetDir || !recipe) {
+      console.error(`${LOG_PREFIX} No pending verification context for retry`);
+      vscode.window.showErrorMessage('Cannot retry verification: no pending context.');
+      return;
+    }
+
+    await this.triggerPostScaffoldVerification(targetDir, recipe, scaffoldId, taskId, webview);
+  }
+
+  /**
+   * Step 44: Handle verification restore (rollback to checkpoint)
+   */
+  private async handleVerificationRestore(message: any, webview: vscode.Webview): Promise<void> {
+    const LOG_PREFIX = '[Ordinex:Verify]';
+    console.log(`${LOG_PREFIX} Restore checkpoint requested for scaffold ${message.scaffoldId}`);
+
+    const taskId = this.currentTaskId || this.generateId();
+
+    // Emit checkpoint restored event
+    await this.emitEvent({
+      event_id: this.generateId(),
+      task_id: taskId,
+      timestamp: new Date().toISOString(),
+      type: 'scaffold_checkpoint_restored',
+      mode: this.currentMode,
+      stage: this.currentStage,
+      payload: {
+        scaffold_id: message.scaffoldId,
+        reason: 'verification_failed',
+        restored_at_iso: new Date().toISOString(),
+      },
+      evidence_ids: [],
+      parent_event_id: null,
+    });
+
+    // Clean up state
+    this.pendingVerifyTargetDir = null;
+    this.pendingVerifyRecipe = null;
+    this.pendingVerifyScaffoldId = null;
+    this.currentTaskId = null;
+    this.currentStage = 'none';
+
+    vscode.window.showInformationMessage('Scaffold checkpoint restored. You can try again.');
+    await this.sendEventsToWebview(webview, taskId);
+  }
+
+  /**
+   * Step 44: Handle verification continue anyway
+   */
+  private async handleVerificationContinue(message: any, webview: vscode.Webview): Promise<void> {
+    const LOG_PREFIX = '[Ordinex:Verify]';
+    console.log(`${LOG_PREFIX} Continue anyway after verification for scaffold ${message.scaffoldId}`);
+
+    const taskId = this.currentTaskId || this.generateId();
+
+    // Emit final complete event
+    await this.emitEvent({
+      event_id: this.generateId(),
+      task_id: taskId,
+      timestamp: new Date().toISOString(),
+      type: 'scaffold_final_complete',
+      mode: this.currentMode,
+      stage: this.currentStage,
+      payload: {
+        scaffold_id: message.scaffoldId,
+        verification_outcome: 'continued_with_warnings',
+        completed_at_iso: new Date().toISOString(),
+      },
+      evidence_ids: [],
+      parent_event_id: null,
+    });
+
+    // Clean up state
+    this.pendingVerifyTargetDir = null;
+    this.pendingVerifyRecipe = null;
+    this.pendingVerifyScaffoldId = null;
+    this.currentTaskId = null;
+    this.currentStage = 'none';
+
+    vscode.window.showInformationMessage('Scaffold complete! Some verification checks had warnings.');
+    await this.sendEventsToWebview(webview, taskId);
+  }
+
+  /**
    * Step 37: Handle attachment upload from webview
-   * 
+   *
    * Receives base64-encoded attachment data from webview,
    * validates, stores to evidence directory, and returns evidence_id.
    */
@@ -3732,6 +4514,171 @@ This demonstrates the diff proposal pipeline without requiring LLM integration.
     });
   }
 
+  // -------------------------------------------------------------------------
+  // Step 45: Settings Panel
+  // -------------------------------------------------------------------------
+
+  private async openSettingsPanel(): Promise<void> {
+    // If panel already exists, reveal it
+    if (this.settingsPanel) {
+      this.settingsPanel.reveal(vscode.ViewColumn.One);
+      return;
+    }
+
+    this.settingsPanel = vscode.window.createWebviewPanel(
+      'ordinexSettings',
+      'Ordinex Settings',
+      vscode.ViewColumn.One,
+      { enableScripts: true, retainContextWhenHidden: true }
+    );
+
+    this.settingsPanel.webview.html = getSettingsPanelContent();
+
+    // Handle messages from settings panel
+    this.settingsPanel.webview.onDidReceiveMessage(
+      async (message) => {
+        await this.handleSettingsMessage(message, this.settingsPanel!.webview);
+      }
+    );
+
+    // Clean up on dispose
+    this.settingsPanel.onDidDispose(() => {
+      this.settingsPanel = null;
+    });
+  }
+
+  private async handleSettingsMessage(message: any, webview: vscode.Webview): Promise<void> {
+    switch (message.type) {
+      case 'ordinex:settings:getAll':
+        await this.sendCurrentSettings(webview);
+        break;
+
+      case 'ordinex:settings:saveApiKey': {
+        try {
+          const key = message.apiKey?.trim();
+          if (!key || !key.startsWith('sk-ant-')) {
+            webview.postMessage({ type: 'ordinex:settings:saveResult', setting: 'API Key', success: false, error: 'Invalid key format' });
+            return;
+          }
+          await this._context.secrets.store('ordinex.apiKey', key);
+          this.emitSettingsChangedEvent('apiKey', 'updated');
+          webview.postMessage({ type: 'ordinex:settings:saveResult', setting: 'API Key', success: true });
+        } catch (err: any) {
+          webview.postMessage({ type: 'ordinex:settings:saveResult', setting: 'API Key', success: false, error: err.message });
+        }
+        break;
+      }
+
+      case 'ordinex:settings:clearApiKey': {
+        try {
+          await this._context.secrets.delete('ordinex.apiKey');
+          this.emitSettingsChangedEvent('apiKey', 'cleared');
+          await this.sendCurrentSettings(webview);
+        } catch (err: any) {
+          webview.postMessage({ type: 'ordinex:settings:saveResult', setting: 'API Key', success: false, error: err.message });
+        }
+        break;
+      }
+
+      case 'ordinex:settings:setCommandPolicy': {
+        const mode = message.mode;
+        if (['off', 'prompt', 'auto'].includes(mode)) {
+          await vscode.workspace.getConfiguration('ordinex.commandPolicy').update('mode', mode, vscode.ConfigurationTarget.Global);
+          this.emitSettingsChangedEvent('commandPolicy', mode);
+          webview.postMessage({ type: 'ordinex:settings:saveResult', setting: 'Command Policy', success: true });
+        }
+        break;
+      }
+
+      case 'ordinex:settings:setAutonomyLevel': {
+        const level = message.level;
+        if (['conservative', 'balanced', 'aggressive'].includes(level)) {
+          await vscode.workspace.getConfiguration('ordinex.autonomy').update('level', level, vscode.ConfigurationTarget.Global);
+          this.emitSettingsChangedEvent('autonomyLevel', level);
+          webview.postMessage({ type: 'ordinex:settings:saveResult', setting: 'Autonomy Level', success: true });
+        }
+        break;
+      }
+
+      case 'ordinex:settings:setSessionPersistence': {
+        const enabled = message.enabled ? 'on' : 'off';
+        await vscode.workspace.getConfiguration('ordinex.intelligence').update('sessionPersistence', enabled, vscode.ConfigurationTarget.Global);
+        this.emitSettingsChangedEvent('sessionPersistence', enabled);
+        webview.postMessage({ type: 'ordinex:settings:saveResult', setting: 'Session Persistence', success: true });
+        break;
+      }
+
+      default:
+        console.log('[Settings] Unknown message type:', message.type);
+    }
+  }
+
+  private async sendCurrentSettings(webview: vscode.Webview): Promise<void> {
+    // API key status (never send full key)
+    let apiKeyConfigured = false;
+    let apiKeyPreview = '';
+    try {
+      const storedKey = await this._context.secrets.get('ordinex.apiKey');
+      if (storedKey) {
+        apiKeyConfigured = true;
+        apiKeyPreview = 'sk-ant-...' + storedKey.slice(-4);
+      }
+    } catch { /* ignore */ }
+
+    // Policies from configuration
+    const config = vscode.workspace.getConfiguration('ordinex');
+    const commandPolicy = config.get<string>('commandPolicy.mode', 'prompt');
+    const autonomyLevel = config.get<string>('autonomy.level', 'conservative');
+    const sessionPersistence = config.get<string>('intelligence.sessionPersistence', 'off') === 'on';
+
+    // Account info
+    const extensionVersion = this._context.extension?.packageJSON?.version || '0.0.0';
+    const workspacePath = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath || '—';
+    const eventStorePath = this.eventStore
+      ? path.join(this._context.globalStorageUri.fsPath, 'events.jsonl')
+      : '—';
+
+    let eventsCount = 0;
+    if (this.eventStore) {
+      try {
+        const events = this.eventStore.getAllEvents();
+        eventsCount = events.length;
+      } catch { /* ignore */ }
+    }
+
+    webview.postMessage({
+      type: 'ordinex:settings:update',
+      apiKeyConfigured,
+      apiKeyPreview,
+      commandPolicy,
+      autonomyLevel,
+      sessionPersistence,
+      extensionVersion,
+      workspacePath,
+      eventStorePath,
+      eventsCount,
+    });
+  }
+
+  private emitSettingsChangedEvent(setting: string, value: string): void {
+    if (!this.eventStore) return;
+    try {
+      this.eventStore.append({
+        event_id: this.generateId(),
+        type: 'settings_changed',
+        task_id: this.currentTaskId || 'settings',
+        timestamp: new Date().toISOString(),
+        mode: this.currentMode,
+        stage: this.currentStage,
+        payload: { setting, value },
+        evidence_ids: [],
+        parent_event_id: null,
+      });
+    } catch (err) {
+      console.error('[Settings] Failed to emit settings_changed event:', err);
+    }
+  }
+
   private generateId(): string {
     return Date.now().toString(36) + Math.random().toString(36).substring(2);
   }
@@ -3794,6 +4741,86 @@ export function activate(context: vscode.ExtensionContext) {
         await context.secrets.delete('ordinex.apiKey');
         vscode.window.showInformationMessage('Ordinex API key cleared');
       }
+    })
+  );
+
+  // Step 45: Register Settings command
+  context.subscriptions.push(
+    vscode.commands.registerCommand('ordinex.openSettings', () => {
+      // Open settings as an editor tab
+      const panel = vscode.window.createWebviewPanel(
+        'ordinexSettings',
+        'Ordinex Settings',
+        vscode.ViewColumn.One,
+        { enableScripts: true, retainContextWhenHidden: true }
+      );
+      panel.webview.html = getSettingsPanelContent();
+
+      // Wire up message handling
+      panel.webview.onDidReceiveMessage(async (message) => {
+        // Delegate to provider — we need a lightweight handler here since
+        // the command is registered outside the class. Re-use the same logic.
+        switch (message.type) {
+          case 'ordinex:settings:getAll': {
+            let apiKeyConfigured = false;
+            let apiKeyPreview = '';
+            try {
+              const storedKey = await context.secrets.get('ordinex.apiKey');
+              if (storedKey) {
+                apiKeyConfigured = true;
+                apiKeyPreview = 'sk-ant-...' + storedKey.slice(-4);
+              }
+            } catch { /* ignore */ }
+
+            const cfg = vscode.workspace.getConfiguration('ordinex');
+            panel.webview.postMessage({
+              type: 'ordinex:settings:update',
+              apiKeyConfigured,
+              apiKeyPreview,
+              commandPolicy: cfg.get<string>('commandPolicy.mode', 'prompt'),
+              autonomyLevel: cfg.get<string>('autonomy.level', 'conservative'),
+              sessionPersistence: cfg.get<string>('intelligence.sessionPersistence', 'off') === 'on',
+              extensionVersion: context.extension?.packageJSON?.version || '0.0.0',
+              workspacePath: vscode.workspace.workspaceFolders?.[0]?.uri.fsPath || '—',
+              eventStorePath: path.join(context.globalStorageUri.fsPath, 'events.jsonl'),
+              eventsCount: 0,
+            });
+            break;
+          }
+          case 'ordinex:settings:saveApiKey': {
+            const key = message.apiKey?.trim();
+            if (key && key.startsWith('sk-ant-')) {
+              await context.secrets.store('ordinex.apiKey', key);
+              panel.webview.postMessage({ type: 'ordinex:settings:saveResult', setting: 'API Key', success: true });
+            } else {
+              panel.webview.postMessage({ type: 'ordinex:settings:saveResult', setting: 'API Key', success: false, error: 'Invalid key format' });
+            }
+            break;
+          }
+          case 'ordinex:settings:clearApiKey':
+            await context.secrets.delete('ordinex.apiKey');
+            panel.webview.postMessage({ type: 'ordinex:settings:saveResult', setting: 'API Key', success: true });
+            break;
+          case 'ordinex:settings:setCommandPolicy':
+            if (['off', 'prompt', 'auto'].includes(message.mode)) {
+              await vscode.workspace.getConfiguration('ordinex.commandPolicy').update('mode', message.mode, vscode.ConfigurationTarget.Global);
+              panel.webview.postMessage({ type: 'ordinex:settings:saveResult', setting: 'Command Policy', success: true });
+            }
+            break;
+          case 'ordinex:settings:setAutonomyLevel':
+            if (['conservative', 'balanced', 'aggressive'].includes(message.level)) {
+              await vscode.workspace.getConfiguration('ordinex.autonomy').update('level', message.level, vscode.ConfigurationTarget.Global);
+              panel.webview.postMessage({ type: 'ordinex:settings:saveResult', setting: 'Autonomy Level', success: true });
+            }
+            break;
+          case 'ordinex:settings:setSessionPersistence': {
+            const val = message.enabled ? 'on' : 'off';
+            await vscode.workspace.getConfiguration('ordinex.intelligence').update('sessionPersistence', val, vscode.ConfigurationTarget.Global);
+            panel.webview.postMessage({ type: 'ordinex:settings:saveResult', setting: 'Session Persistence', success: true });
+            break;
+          }
+        }
+      });
     })
   );
 

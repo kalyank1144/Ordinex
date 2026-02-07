@@ -46,8 +46,45 @@
       {
         "command": "ordinex.clearApiKey",
         "title": "Ordinex: Clear API Key"
+      },
+      {
+        "command": "ordinex.openSettings",
+        "title": "Ordinex: Open Settings",
+        "icon": "$(gear)"
       }
-    ]
+    ],
+    "menus": {
+      "view/title": [
+        {
+          "command": "ordinex.openSettings",
+          "when": "view == ordinex.missionControl",
+          "group": "navigation"
+        }
+      ]
+    },
+    "configuration": {
+      "title": "Ordinex",
+      "properties": {
+        "ordinex.commandPolicy.mode": {
+          "type": "string",
+          "enum": ["off", "prompt", "auto"],
+          "default": "prompt",
+          "description": "Controls how terminal commands are executed. off = never, prompt = ask first (default), auto = run without asking."
+        },
+        "ordinex.autonomy.level": {
+          "type": "string",
+          "enum": ["conservative", "balanced", "aggressive"],
+          "default": "conservative",
+          "description": "Controls AI autonomy level during mission execution. conservative = confirm every step (default), balanced = confirm risky steps, aggressive = minimal confirmations."
+        },
+        "ordinex.intelligence.sessionPersistence": {
+          "type": "string",
+          "enum": ["off", "on"],
+          "default": "off",
+          "description": "When on, session context is persisted to disk and restored across VS Code restarts."
+        }
+      }
+    }
   },
   "scripts": {
     "dev": "pnpm run compile && code --extensionDevelopmentPath=$PWD",

@@ -264,6 +264,9 @@ const COMMAND_VERBS = [
   'run',
   'execute',
   'launch',
+  'start',
+  'stop',
+  'restart',
   'serve',
   'test',
   'deploy',
@@ -288,6 +291,8 @@ const COMMAND_TARGETS = [
   'script',
   'command',
   'task',
+  'app',
+  'application',
 ];
 
 /**

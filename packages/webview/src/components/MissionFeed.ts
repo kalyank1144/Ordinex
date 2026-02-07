@@ -955,7 +955,7 @@ export const EVENT_CARD_MAP: Record<EventType, EventCardConfig> = {
       const recipe = e.payload.recipe_id as string || 'unknown';
       const status = e.payload.status as string || 'completed';
       if (status === 'ready_for_step_35_2') {
-        return `${recipe} scaffold ready for file creation`;
+        return `${recipe} scaffold approved — setting up project`;
       }
       return `${recipe} scaffold completed successfully`;
     }

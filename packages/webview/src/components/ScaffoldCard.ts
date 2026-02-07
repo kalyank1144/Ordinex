@@ -130,6 +130,59 @@ export class ScaffoldCard extends HTMLElement {
       case 'scaffold_final_complete':
         body = this.renderFinalComplete(payload);
         break;
+      // Step 43: Preflight checks events
+      case 'scaffold_preflight_checks_started':
+        body = this.renderStatusCard('\u{1F50D}', 'Running Preflight Checks', 'Validating workspace before scaffold...', 'running');
+        break;
+      case 'scaffold_preflight_checks_completed':
+        body = this.renderStatusCard(
+          payload.can_proceed ? '\u2705' : '\u26D4',
+          'Preflight Checks Complete',
+          payload.can_proceed ? 'All checks passed' : `${payload.blockers_count || 0} blocker(s) found`,
+          payload.can_proceed ? 'pass' : 'block'
+        );
+        break;
+      case 'scaffold_preflight_resolution_selected':
+        body = this.renderStatusCard('\u{1F527}', 'Resolution Applied', payload.resolution || 'User resolved preflight issue', 'info');
+        break;
+      case 'scaffold_quality_gates_passed':
+        body = this.renderStatusCard('\u2705', 'Quality Gates Passed', 'All preflight checks cleared', 'pass');
+        break;
+      case 'scaffold_quality_gates_failed':
+        body = this.renderStatusCard('\u274C', 'Quality Gates Failed', payload.reason || 'Preflight checks blocked', 'block');
+        break;
+      case 'scaffold_checkpoint_created':
+        body = this.renderStatusCard('\u{1F4BE}', 'Checkpoint Created', 'Backup saved before scaffold', 'info');
+        break;
+      case 'scaffold_checkpoint_restored':
+        body = this.renderStatusCard('\u{1F504}', 'Checkpoint Restored', 'Rolled back to pre-scaffold state', 'info');
+        break;
+      case 'scaffold_apply_completed':
+        body = this.renderStatusCard('\u2705', 'Scaffold Applied', 'Project files created successfully', 'pass');
+        break;
+      // Step 44: Verification events
+      case 'scaffold_verify_started':
+        body = this.renderStatusCard('\u{1F50D}', 'Verifying Scaffold', 'Running post-scaffold verification...', 'running');
+        break;
+      case 'scaffold_verify_step_completed':
+        body = this.renderStatusCard(
+          payload.status === 'pass' ? '\u2705' : '\u26A0\uFE0F',
+          payload.label || 'Verification Step',
+          payload.message || '',
+          payload.status || 'info'
+        );
+        break;
+      case 'scaffold_verify_completed':
+        body = this.renderStatusCard(
+          payload.outcome === 'pass' ? '\u2705' : '\u26A0\uFE0F',
+          'Verification Complete',
+          payload.outcome === 'pass' ? 'All checks passed' : 'Some issues found',
+          payload.outcome === 'pass' ? 'pass' : 'warn'
+        );
+        break;
+      case 'settings_changed':
+        body = this.renderStatusCard('\u2699\uFE0F', 'Settings Updated', `${payload.setting || 'Setting'} changed`, 'info');
+        break;
       default:
         body = `<div class="scaffold-card">Unknown scaffold event: ${this.escapeHtml(String(event.type))}</div>`;
         break;
@@ -243,7 +296,7 @@ export class ScaffoldCard extends HTMLElement {
         </div>
         ${!hasDesignPack ? `
           <div class="placeholder-notice">
-            📌 Recipe and design pack selection coming in Step 35.5
+            📌 Recipe and design pack will be selected after approval
           </div>
         ` : ''}
         <div class="timestamp">${this.formatTimestamp(event.timestamp || '')}</div>
@@ -577,7 +630,7 @@ export class ScaffoldCard extends HTMLElement {
           <span class="completion-icon">${isReady ? '🚀' : '🔙'}</span>
           <span class="completion-text">
             ${isReady 
-              ? 'Scaffold approved! Ready for file creation in Step 35.2.' 
+              ? 'Scaffold approved! Setting up your project...'
               : this.escapeHtml(reason || 'Scaffold was cancelled')}
           </span>
         </div>
@@ -1188,6 +1241,21 @@ export class ScaffoldCard extends HTMLElement {
             <span class="hint-text">Open a terminal and run <code>cd ${this.escapeHtml(projectName)}</code> to get started</span>
           </div>
         ` : ''}
+      </div>
+    `;
+  }
+
+  private renderStatusCard(icon: string, title: string, message: string, status: string): string {
+    const badgeClass = status === 'pass' ? 'ready' : status === 'block' ? 'cancelled' : status === 'running' ? 'starting' : 'ready';
+    const badgeText = status === 'pass' ? 'Passed' : status === 'block' ? 'Blocked' : status === 'running' ? 'Running' : 'Done';
+    return `
+      <div class="scaffold-card ${status === 'pass' ? 'applied' : status === 'block' ? 'cancelled' : 'starting'}">
+        <div class="header">
+          <span class="icon">${icon}</span>
+          <h3>${this.escapeHtml(title)}</h3>
+          <span class="badge ${badgeClass}">${badgeText}</span>
+        </div>
+        ${message ? `<div class="status-message" style="padding:8px 16px 12px;font-size:12px;color:var(--vscode-descriptionForeground);">${this.escapeHtml(message)}</div>` : ''}
       </div>
     `;
   }

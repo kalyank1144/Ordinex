@@ -1,0 +1,532 @@
+{
+  "description": "Step 42: Intent routing golden test cases. Every case in this file is a locked regression — do NOT change expected intents without team review.",
+  "cases": [
+    {
+      "id": "scaffold-001",
+      "group": "A-scaffold",
+      "input": "Creating a new fitness app",
+      "expectedIntent": "SCAFFOLD",
+      "note": "CRITICAL REGRESSION: Strong greenfield — creation verb + app type"
+    },
+    {
+      "id": "scaffold-002",
+      "group": "A-scaffold",
+      "input": "Build a dashboard from scratch",
+      "expectedIntent": "SCAFFOLD",
+      "note": "Explicit greenfield phrase"
+    },
+    {
+      "id": "scaffold-003",
+      "group": "A-scaffold",
+      "input": "Scaffold a React project",
+      "expectedIntent": "SCAFFOLD",
+      "note": "scaffold + framework"
+    },
+    {
+      "id": "scaffold-004",
+      "group": "A-scaffold",
+      "input": "I want to make a workout tracker app",
+      "expectedIntent": "SCAFFOLD",
+      "note": "I want to + creation verb + project noun"
+    },
+    {
+      "id": "scaffold-005",
+      "group": "A-scaffold",
+      "input": "New Next.js project for my startup",
+      "expectedIntent": "SCAFFOLD",
+      "note": "new + framework + project noun"
+    },
+    {
+      "id": "scaffold-006",
+      "group": "A-scaffold",
+      "input": "Create a new blog application",
+      "expectedIntent": "SCAFFOLD",
+      "note": "creation verb + project noun"
+    },
+    {
+      "id": "scaffold-007",
+      "group": "A-scaffold",
+      "input": "Bootstrap a Vue.js project",
+      "expectedIntent": "SCAFFOLD",
+      "note": "bootstrap + framework"
+    },
+    {
+      "id": "scaffold-008",
+      "group": "A-scaffold",
+      "input": "Make me a new e-commerce site",
+      "expectedIntent": "SCAFFOLD",
+      "note": "creation verb + app type + new"
+    },
+    {
+      "id": "scaffold-009",
+      "group": "A-scaffold",
+      "input": "I want to build a chat application",
+      "expectedIntent": "SCAFFOLD",
+      "note": "I want to + project noun"
+    },
+    {
+      "id": "scaffold-010",
+      "group": "A-scaffold",
+      "input": "Initialize a TypeScript project",
+      "expectedIntent": "SCAFFOLD",
+      "note": "init + framework"
+    },
+    {
+      "id": "scaffold-011",
+      "group": "A-scaffold",
+      "input": "Create a todo app with React and TypeScript",
+      "expectedIntent": "SCAFFOLD",
+      "note": "creation + app type + framework"
+    },
+    {
+      "id": "scaffold-012",
+      "group": "A-scaffold",
+      "input": "Building a SaaS dashboard from scratch",
+      "expectedIntent": "SCAFFOLD",
+      "note": "creation + app type + greenfield phrase"
+    },
+    {
+      "id": "scaffold-013",
+      "group": "A-scaffold",
+      "input": "Can you create a new project for me?",
+      "expectedIntent": "SCAFFOLD",
+      "note": "action question phrase but strong greenfield signal wins"
+    },
+    {
+      "id": "scaffold-014",
+      "group": "A-scaffold",
+      "input": "Start building a social media app",
+      "expectedIntent": "SCAFFOLD",
+      "note": "creation verb + app type"
+    },
+    {
+      "id": "scaffold-015",
+      "group": "A-scaffold",
+      "input": "Can you help me build a new dashboard?",
+      "expectedIntent": "SCAFFOLD",
+      "note": "question mark but greenfield signal overrides"
+    },
+    {
+      "id": "scaffold-016",
+      "group": "A-scaffold",
+      "input": "Set up a new Vite app",
+      "expectedIntent": "SCAFFOLD",
+      "note": "new + framework + project noun"
+    },
+
+    {
+      "id": "command-001",
+      "group": "B-command",
+      "input": "npm run dev",
+      "expectedIntent": "RUN_COMMAND",
+      "note": "Direct command pattern"
+    },
+    {
+      "id": "command-002",
+      "group": "B-command",
+      "input": "Run the tests",
+      "expectedIntent": "RUN_COMMAND",
+      "note": "verb + target"
+    },
+    {
+      "id": "command-003",
+      "group": "B-command",
+      "input": "Run the app",
+      "expectedIntent": "RUN_COMMAND",
+      "note": "CRITICAL REGRESSION: verb run + target app"
+    },
+    {
+      "id": "command-004",
+      "group": "B-command",
+      "input": "pnpm install",
+      "expectedIntent": "RUN_COMMAND",
+      "note": "Direct command pattern (pnpm)"
+    },
+    {
+      "id": "command-005",
+      "group": "B-command",
+      "input": "Execute the build",
+      "expectedIntent": "RUN_COMMAND",
+      "note": "verb execute + target build"
+    },
+    {
+      "id": "command-006",
+      "group": "B-command",
+      "input": "Launch the dev server",
+      "expectedIntent": "RUN_COMMAND",
+      "note": "verb launch + target dev/server"
+    },
+    {
+      "id": "command-007",
+      "group": "B-command",
+      "input": "yarn test",
+      "expectedIntent": "RUN_COMMAND",
+      "note": "Direct command pattern (yarn)"
+    },
+    {
+      "id": "command-008",
+      "group": "B-command",
+      "input": "Start the development server",
+      "expectedIntent": "RUN_COMMAND",
+      "note": "verb start + target development/server"
+    },
+    {
+      "id": "command-009",
+      "group": "B-command",
+      "input": "Run vitest",
+      "expectedIntent": "RUN_COMMAND",
+      "note": "Direct command pattern (vitest)"
+    },
+    {
+      "id": "command-010",
+      "group": "B-command",
+      "input": "Start the app",
+      "expectedIntent": "RUN_COMMAND",
+      "note": "verb start + target app"
+    },
+    {
+      "id": "command-011",
+      "group": "B-command",
+      "input": "tsc --noEmit",
+      "expectedIntent": "RUN_COMMAND",
+      "note": "Direct command pattern (tsc)"
+    },
+    {
+      "id": "command-012",
+      "group": "B-command",
+      "input": "eslint src/",
+      "expectedIntent": "RUN_COMMAND",
+      "note": "Direct command pattern (eslint)"
+    },
+    {
+      "id": "command-013",
+      "group": "B-command",
+      "input": "Run the build",
+      "expectedIntent": "RUN_COMMAND",
+      "note": "verb run + target build"
+    },
+    {
+      "id": "command-014",
+      "group": "B-command",
+      "input": "Run the dev server",
+      "expectedIntent": "RUN_COMMAND",
+      "note": "verb run + target dev/server"
+    },
+
+    {
+      "id": "plan-001",
+      "group": "C-plan",
+      "input": "Refactor the entire authentication module",
+      "expectedIntent": "PLAN",
+      "note": "Large pattern: refactor"
+    },
+    {
+      "id": "plan-002",
+      "group": "C-plan",
+      "input": "Migrate the database to PostgreSQL",
+      "expectedIntent": "PLAN",
+      "note": "Large pattern: migrate"
+    },
+    {
+      "id": "plan-003",
+      "group": "C-plan",
+      "input": "Rewrite the API layer",
+      "expectedIntent": "PLAN",
+      "note": "Large pattern: rewrite"
+    },
+    {
+      "id": "plan-004",
+      "group": "C-plan",
+      "input": "Restructure the project folders",
+      "expectedIntent": "PLAN",
+      "note": "Large pattern: restructure"
+    },
+    {
+      "id": "plan-005",
+      "group": "C-plan",
+      "input": "Integrate Stripe payments",
+      "expectedIntent": "PLAN",
+      "note": "Large pattern: integrate"
+    },
+    {
+      "id": "plan-006",
+      "group": "C-plan",
+      "input": "Overhaul the user interface",
+      "expectedIntent": "PLAN",
+      "note": "Large pattern: overhaul"
+    },
+    {
+      "id": "plan-007",
+      "group": "C-plan",
+      "input": "Upgrade React to version 19",
+      "expectedIntent": "PLAN",
+      "note": "Large pattern: upgrade X to"
+    },
+    {
+      "id": "plan-008",
+      "group": "C-plan",
+      "input": "Add authentication and then implement role-based access",
+      "expectedIntent": "PLAN",
+      "note": "Multi-step indicator: then"
+    },
+    {
+      "id": "plan-009",
+      "group": "C-plan",
+      "input": "First set up the database, then create the API endpoints",
+      "expectedIntent": "PLAN",
+      "note": "Multi-step indicators: first, then"
+    },
+    {
+      "id": "plan-010",
+      "group": "C-plan",
+      "input": "Architect a microservices system",
+      "expectedIntent": "PLAN",
+      "note": "Large pattern: architect"
+    },
+
+    {
+      "id": "quick-001",
+      "group": "D-quickAction",
+      "input": "Fix the typo in README",
+      "expectedIntent": "QUICK_ACTION",
+      "note": "Trivial pattern: fix typo"
+    },
+    {
+      "id": "quick-002",
+      "group": "D-quickAction",
+      "input": "Make the button blue",
+      "expectedIntent": "QUICK_ACTION",
+      "note": "Single file trivial scope"
+    },
+    {
+      "id": "quick-003",
+      "group": "D-quickAction",
+      "input": "Change the background color to red",
+      "expectedIntent": "QUICK_ACTION",
+      "note": "Single file trivial scope"
+    },
+    {
+      "id": "quick-004",
+      "group": "D-quickAction",
+      "input": "Remove the unused import",
+      "expectedIntent": "QUICK_ACTION",
+      "note": "Trivial pattern: remove unused"
+    },
+    {
+      "id": "quick-005",
+      "group": "D-quickAction",
+      "input": "Rename the variable from foo to bar",
+      "expectedIntent": "QUICK_ACTION",
+      "note": "Trivial pattern: rename X to Y"
+    },
+    {
+      "id": "quick-006",
+      "group": "D-quickAction",
+      "input": "Fix the missing semicolon",
+      "expectedIntent": "QUICK_ACTION",
+      "note": "Single file trivial scope"
+    },
+    {
+      "id": "quick-007",
+      "group": "D-quickAction",
+      "input": "Add a console.log to debug this",
+      "expectedIntent": "QUICK_ACTION",
+      "note": "Single file trivial scope"
+    },
+    {
+      "id": "quick-008",
+      "group": "D-quickAction",
+      "input": "Update the comment in the header",
+      "expectedIntent": "QUICK_ACTION",
+      "note": "Trivial pattern: update comment"
+    },
+
+    {
+      "id": "answer-001",
+      "group": "E-answer",
+      "input": "What is React?",
+      "expectedIntent": "ANSWER",
+      "note": "Question starter: what is"
+    },
+    {
+      "id": "answer-002",
+      "group": "E-answer",
+      "input": "How does useState work?",
+      "expectedIntent": "ANSWER",
+      "note": "Question starter: how does"
+    },
+    {
+      "id": "answer-003",
+      "group": "E-answer",
+      "input": "Why is my app crashing?",
+      "expectedIntent": "ANSWER",
+      "note": "Question starter: why is + ?"
+    },
+    {
+      "id": "answer-004",
+      "group": "E-answer",
+      "input": "Explain the difference between let and const",
+      "expectedIntent": "ANSWER",
+      "note": "Question starter: explain"
+    },
+    {
+      "id": "answer-005",
+      "group": "E-answer",
+      "input": "Tell me about TypeScript generics",
+      "expectedIntent": "ANSWER",
+      "note": "Question starter: tell me about"
+    },
+    {
+      "id": "answer-006",
+      "group": "E-answer",
+      "input": "Is it possible to use hooks in class components?",
+      "expectedIntent": "ANSWER",
+      "note": "Question starter: is it possible"
+    },
+    {
+      "id": "answer-007",
+      "group": "E-answer",
+      "input": "What's the difference between == and ===?",
+      "expectedIntent": "ANSWER",
+      "note": "Question starter: what's the difference"
+    },
+    {
+      "id": "answer-008",
+      "group": "E-answer",
+      "input": "Where does the state get initialized?",
+      "expectedIntent": "ANSWER",
+      "note": "Question starter: where does"
+    },
+    {
+      "id": "answer-009",
+      "group": "E-answer",
+      "input": "Can you explain how middleware works?",
+      "expectedIntent": "ANSWER",
+      "note": "Question starter: can you explain"
+    },
+    {
+      "id": "answer-010",
+      "group": "E-answer",
+      "input": "What does the app do?",
+      "expectedIntent": "ANSWER",
+      "note": "Question with app keyword — must NOT trigger command"
+    },
+
+    {
+      "id": "slash-001",
+      "group": "F-slash",
+      "input": "/scaffold create a new app",
+      "expectedIntent": "SCAFFOLD",
+      "note": "Slash override: /scaffold"
+    },
+    {
+      "id": "slash-002",
+      "group": "F-slash",
+      "input": "/plan redesign the database",
+      "expectedIntent": "PLAN",
+      "note": "Slash override: /plan"
+    },
+    {
+      "id": "slash-003",
+      "group": "F-slash",
+      "input": "/run npm test",
+      "expectedIntent": "RUN_COMMAND",
+      "note": "Slash override: /run"
+    },
+    {
+      "id": "slash-004",
+      "group": "F-slash",
+      "input": "/answer tell me about React",
+      "expectedIntent": "ANSWER",
+      "note": "Slash override: /answer"
+    },
+    {
+      "id": "slash-005",
+      "group": "F-slash",
+      "input": "/do build the project",
+      "expectedIntent": "RUN_COMMAND",
+      "note": "Slash override: /do maps to run"
+    },
+    {
+      "id": "slash-006",
+      "group": "F-slash",
+      "input": "/ask how does this work",
+      "expectedIntent": "ANSWER",
+      "note": "Slash override: /ask maps to answer"
+    },
+
+    {
+      "id": "edge-001",
+      "group": "G-edge",
+      "input": "app",
+      "expectedIntentNot": "RUN_COMMAND",
+      "expectedIntent": "QUICK_ACTION",
+      "note": "CRITICAL REGRESSION: 'app' alone must NEVER route to RUN_COMMAND"
+    },
+    {
+      "id": "edge-002",
+      "group": "G-edge",
+      "input": "test",
+      "expectedIntentNot": "SCAFFOLD",
+      "expectedIntent": "RUN_COMMAND",
+      "note": "'test' alone → RUN_COMMAND (verb+target match for 'run tests')"
+    },
+    {
+      "id": "edge-003",
+      "group": "G-edge",
+      "input": "Can you fix the login bug?",
+      "expectedIntent": "QUICK_ACTION",
+      "note": "Action question + fix existing → QUICK_ACTION not ANSWER"
+    },
+    {
+      "id": "edge-004",
+      "group": "G-edge",
+      "input": "Please create a new React app for me",
+      "expectedIntent": "SCAFFOLD",
+      "note": "Polite request but strong greenfield"
+    },
+    {
+      "id": "edge-005",
+      "group": "G-edge",
+      "input": "Fix the bug, then update the styles, and finally add docs",
+      "expectedIntent": "PLAN",
+      "note": "Multi-step with then/finally → PLAN"
+    },
+    {
+      "id": "edge-006",
+      "group": "G-edge",
+      "input": "hello",
+      "expectedIntent": "QUICK_ACTION",
+      "note": "Bare greeting → trivial scope fallback"
+    },
+    {
+      "id": "edge-007",
+      "group": "G-edge",
+      "input": "run",
+      "expectedIntentNot": "SCAFFOLD",
+      "expectedIntent": "QUICK_ACTION",
+      "note": "Single command verb alone → no target → trivial"
+    },
+    {
+      "id": "edge-008",
+      "group": "G-edge",
+      "input": "fix the whitespace in main.ts",
+      "expectedIntent": "QUICK_ACTION",
+      "note": "Trivial pattern: fix whitespace"
+    },
+    {
+      "id": "edge-009",
+      "group": "G-edge",
+      "input": "Deploy the app to Vercel",
+      "expectedIntent": "RUN_COMMAND",
+      "note": "verb deploy + target app"
+    },
+    {
+      "id": "edge-010",
+      "group": "G-edge",
+      "input": "correct spelling in utils.ts",
+      "expectedIntent": "QUICK_ACTION",
+      "note": "Trivial pattern: correct spelling"
+    }
+  ]
+}

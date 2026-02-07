@@ -152,7 +152,33 @@ export type EventType =
   | 'reference_tokens_extracted'
   | 'reference_tokens_used'
   // Step 40: Production-Grade Intent Routing
-  | 'intent_routed';
+  | 'intent_routed'
+  // Step 40.5: Intelligence Layer
+  | 'context_enriched'
+  | 'clarification_asked'
+  | 'out_of_scope_detected'
+  | 'reference_resolved'
+  // Step 41: Dev Server Lifecycle
+  | 'process_started'
+  | 'process_ready'
+  | 'process_output'
+  | 'process_stopped'
+  | 'process_error'
+  // Step 43: Scaffold Quality Gates (Preflight Checks + Resolutions + Safe Apply)
+  | 'scaffold_preflight_checks_started'
+  | 'scaffold_preflight_checks_completed'
+  | 'scaffold_preflight_resolution_selected'
+  | 'scaffold_quality_gates_passed'
+  | 'scaffold_quality_gates_failed'
+  | 'scaffold_checkpoint_created'
+  | 'scaffold_checkpoint_restored'
+  | 'scaffold_apply_completed'
+  // Step 44: Post-Scaffold Verification Pipeline
+  | 'scaffold_verify_started'
+  | 'scaffold_verify_step_completed'
+  | 'scaffold_verify_completed'
+  // Step 45: Settings Panel
+  | 'settings_changed';
 
 export const CANONICAL_EVENT_TYPES: readonly EventType[] = [
   'intent_received',
@@ -291,6 +317,32 @@ export const CANONICAL_EVENT_TYPES: readonly EventType[] = [
   'reference_tokens_used',
   // Step 40: Production-Grade Intent Routing
   'intent_routed',
+  // Step 40.5: Intelligence Layer
+  'context_enriched',
+  'clarification_asked',
+  'out_of_scope_detected',
+  'reference_resolved',
+  // Step 41: Dev Server Lifecycle
+  'process_started',
+  'process_ready',
+  'process_output',
+  'process_stopped',
+  'process_error',
+  // Step 43: Scaffold Quality Gates
+  'scaffold_preflight_checks_started',
+  'scaffold_preflight_checks_completed',
+  'scaffold_preflight_resolution_selected',
+  'scaffold_quality_gates_passed',
+  'scaffold_quality_gates_failed',
+  'scaffold_checkpoint_created',
+  'scaffold_checkpoint_restored',
+  'scaffold_apply_completed',
+  // Step 44: Post-Scaffold Verification Pipeline
+  'scaffold_verify_started',
+  'scaffold_verify_step_completed',
+  'scaffold_verify_completed',
+  // Step 45: Settings Panel
+  'settings_changed',
 ] as const;
 
 export type Mode = 'ANSWER' | 'PLAN' | 'MISSION';
@@ -1265,4 +1317,337 @@ export interface VisionImageData {
  * Vision consent decision from user
  */
 export type VisionConsentDecision = 'analyze_once' | 'enable_always' | 'skip';
+
+// ============================================================================
+// STEP 40.5: INTELLIGENCE LAYER TYPES
+// ============================================================================
+
+/**
+ * Context enriched event payload
+ */
+export interface ContextEnrichedPayload {
+  /** Associated run ID */
+  run_id: string;
+  /** Original user input */
+  original_input: string;
+  /** Detected project type */
+  project_type: string;
+  /** Whether TypeScript is used */
+  has_typescript: boolean;
+  /** Detected component library */
+  component_library: string;
+  /** Number of references resolved */
+  references_resolved: number;
+  /** Whether clarification is needed */
+  needs_clarification: boolean;
+  /** Enrichment duration in ms */
+  duration_ms: number;
+}
+
+/**
+ * Clarification asked event payload
+ */
+export interface ClarificationAskedPayload {
+  /** Associated run ID */
+  run_id: string;
+  /** Clarification question */
+  question: string;
+  /** Available options (if any) */
+  options?: string[];
+  /** Reason for clarification */
+  reason: 'ambiguous_reference' | 'missing_context' | 'vague_input';
+}
+
+/**
+ * Out of scope detected event payload
+ */
+export interface OutOfScopeDetectedPayload {
+  /** Associated run ID */
+  run_id: string;
+  /** Original user input */
+  original_input: string;
+  /** Generated response */
+  response: string;
+  /** Detected category */
+  category: 'weather' | 'general_knowledge' | 'entertainment' | 'personal' | 'other';
+}
+
+/**
+ * Reference resolved event payload
+ */
+export interface ReferenceResolvedPayload {
+  /** Associated run ID */
+  run_id: string;
+  /** Original reference text (e.g., "the button") */
+  original: string;
+  /** Resolved path/entity */
+  resolved: string;
+  /** Resolution source */
+  source: 'session_history' | 'codebase_scan' | 'open_files' | 'recent_error';
+  /** Confidence score (0-1) */
+  confidence: number;
+}
+
+// ============================================================================
+// STEP 41: DEV SERVER LIFECYCLE TYPES
+// ============================================================================
+
+/**
+ * Process status lifecycle
+ */
+export type ProcessStatus = 'starting' | 'running' | 'ready' | 'stopped' | 'error';
+
+/**
+ * Process started event payload
+ */
+export interface ProcessStartedPayload {
+  /** Associated run ID */
+  run_id: string;
+  /** Process ID */
+  process_id: string;
+  /** Command that was run */
+  command: string;
+  /** Command arguments */
+  args: string[];
+  /** Working directory */
+  cwd: string;
+  /** OS process ID */
+  pid?: number;
+}
+
+/**
+ * Process ready event payload
+ */
+export interface ProcessReadyPayload {
+  /** Associated run ID */
+  run_id: string;
+  /** Process ID */
+  process_id: string;
+  /** Detected port (if applicable) */
+  port?: number;
+  /** Time to ready in ms */
+  time_to_ready_ms: number;
+}
+
+/**
+ * Process output event payload
+ */
+export interface ProcessOutputPayload {
+  /** Associated run ID */
+  run_id: string;
+  /** Process ID */
+  process_id: string;
+  /** Output stream (stdout/stderr) */
+  stream: 'stdout' | 'stderr';
+  /** Output data */
+  data: string;
+  /** Whether output was truncated */
+  truncated: boolean;
+}
+
+/**
+ * Process stopped event payload
+ */
+export interface ProcessStoppedPayload {
+  /** Associated run ID */
+  run_id: string;
+  /** Process ID */
+  process_id: string;
+  /** Exit code */
+  exit_code?: number;
+  /** Stop reason */
+  reason: 'user_stopped' | 'extension_deactivate' | 'error' | 'completed';
+  /** Runtime duration in ms */
+  duration_ms: number;
+}
+
+/**
+ * Process error event payload
+ */
+export interface ProcessErrorPayload {
+  /** Associated run ID */
+  run_id: string;
+  /** Process ID */
+  process_id: string;
+  /** Error message */
+  error: string;
+  /** Whether error is recoverable */
+  recoverable: boolean;
+}
+
+// ============================================================================
+// STEP 43: SCAFFOLD QUALITY GATES (PREFLIGHT CHECKS + RESOLUTIONS + SAFE APPLY)
+// ============================================================================
+
+/**
+ * Preflight check status
+ */
+export type PreflightCheckStatus = 'pass' | 'warn' | 'block';
+
+/**
+ * Resolution option action
+ */
+export type ResolutionAction = 'proceed' | 'modify' | 'cancel';
+
+/**
+ * Merge mode for scaffold apply when target is non-empty
+ */
+export type ScaffoldMergeMode = 'abort' | 'skip_conflicts' | 'replace_all';
+
+/**
+ * Monorepo placement option
+ */
+export type MonorepoPlacement = 'apps' | 'packages' | 'root';
+
+/**
+ * Resolution option presented to the user for a preflight check
+ */
+export interface ResolutionOption {
+  /** Unique option identifier */
+  id: string;
+  /** Display label */
+  label: string;
+  /** Description of what this option does */
+  description: string;
+  /** Action type */
+  action: ResolutionAction;
+  /** Modifications to apply if selected */
+  modifications?: {
+    targetDir?: string;
+    mergeMode?: ScaffoldMergeMode;
+    monorepoPlacement?: MonorepoPlacement;
+  };
+}
+
+/**
+ * Single preflight check result
+ */
+export interface PreflightCheck {
+  /** Unique check identifier */
+  id: string;
+  /** Human-readable check name */
+  name: string;
+  /** Check status */
+  status: PreflightCheckStatus;
+  /** Human-readable message */
+  message: string;
+  /** Resolution options (for warn/block) */
+  resolution?: {
+    options: ResolutionOption[];
+  };
+}
+
+/**
+ * Complete preflight result
+ */
+export interface PreflightResult {
+  /** Whether scaffold can proceed (no unresolved blockers) */
+  canProceed: boolean;
+  /** All checks that were run */
+  checks: PreflightCheck[];
+  /** Checks with status 'block' */
+  blockers: PreflightCheck[];
+  /** Checks with status 'warn' */
+  warnings: PreflightCheck[];
+  /** User-selected resolutions (populated after user interaction) */
+  selectedResolutions?: Record<string, string>;
+}
+
+/**
+ * Scaffold preflight config (merge/placement policy)
+ */
+export interface ScaffoldPreflightConfig {
+  /** Merge mode for non-empty directories */
+  mergeMode: ScaffoldMergeMode;
+  /** Override target directory */
+  targetDirOverride?: string;
+  /** Monorepo placement if detected */
+  monorepoPlacement?: MonorepoPlacement;
+}
+
+/**
+ * Scaffold preflight checks started event payload
+ */
+export interface ScaffoldPreflightChecksStartedPayload {
+  /** Scaffold operation ID */
+  scaffold_id: string;
+  /** Run ID */
+  run_id: string;
+  /** Target directory being checked */
+  target_directory: string;
+  /** Planned files count */
+  planned_files_count: number;
+  /** ISO timestamp */
+  created_at_iso: string;
+}
+
+/**
+ * Scaffold preflight checks completed event payload
+ */
+export interface ScaffoldPreflightChecksCompletedPayload {
+  /** Scaffold operation ID */
+  scaffold_id: string;
+  /** Run ID */
+  run_id: string;
+  /** Whether scaffold can proceed */
+  can_proceed: boolean;
+  /** Total checks run */
+  total_checks: number;
+  /** Number of blockers */
+  blockers_count: number;
+  /** Number of warnings */
+  warnings_count: number;
+  /** Check summaries for audit */
+  check_summaries: Array<{ id: string; status: PreflightCheckStatus; message: string }>;
+  /** Duration in ms */
+  duration_ms: number;
+}
+
+/**
+ * Scaffold preflight resolution selected event payload
+ */
+export interface ScaffoldPreflightResolutionSelectedPayload {
+  /** Scaffold operation ID */
+  scaffold_id: string;
+  /** Run ID */
+  run_id: string;
+  /** Check ID the resolution applies to */
+  check_id: string;
+  /** Selected option ID */
+  option_id: string;
+  /** Resulting target directory (if modified) */
+  resolved_target_dir?: string;
+  /** Resulting merge mode (if modified) */
+  resolved_merge_mode?: ScaffoldMergeMode;
+  /** Resulting monorepo placement (if modified) */
+  resolved_monorepo_placement?: MonorepoPlacement;
+}
+
+/**
+ * Scaffold quality gates passed event payload
+ */
+export interface ScaffoldQualityGatesPassedPayload {
+  /** Scaffold operation ID */
+  scaffold_id: string;
+  /** Run ID */
+  run_id: string;
+  /** Number of gates passed */
+  gates_passed: number;
+  /** Total duration in ms */
+  total_duration_ms: number;
+}
+
+/**
+ * Scaffold quality gates failed event payload
+ */
+export interface ScaffoldQualityGatesFailedPayload {
+  /** Scaffold operation ID */
+  scaffold_id: string;
+  /** Run ID */
+  run_id: string;
+  /** Failed gate names */
+  failed_gates: string[];
+  /** Total duration in ms */
+  total_duration_ms: number;
+}
 

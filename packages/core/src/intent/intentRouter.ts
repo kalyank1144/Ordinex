@@ -366,6 +366,32 @@ export async function routeIntent(
 }
 
 // ============================================================================
+// PURE HEURISTIC WRAPPER (Step 42)
+// ============================================================================
+
+/**
+ * Step 42: Pure heuristic-only routing entry point for testing
+ *
+ * Runs the full routing pipeline WITHOUT LLM classification.
+ * Use this as the single testable entry point covered by golden fixtures.
+ * For production use with LLM fallback, call routeIntent() directly.
+ *
+ * @param text - User's input text
+ * @param options - Optional overrides
+ * @returns IntentRoutingResult (always heuristic/behavior sourced)
+ */
+export async function routeUserInput(
+  text: string,
+  options?: { behaviorConfidence?: number }
+): Promise<IntentRoutingResult> {
+  return routeIntent(text, {
+    isReplay: false,
+    behaviorConfidence: options?.behaviorConfidence ?? 0.5,
+    // No llmConfig → pure heuristic only, LLM branch skipped
+  });
+}
+
+// ============================================================================
 // HELPER FUNCTIONS
 // ============================================================================
 
