@@ -130,6 +130,78 @@ export class ScaffoldCard extends HTMLElement {
       case 'scaffold_final_complete':
         body = this.renderFinalComplete(payload);
         break;
+      // Feature Intelligence events (LLM-powered feature generation)
+      case 'feature_extraction_started':
+        body = this.renderStatusCard('\u{1F9E0}', 'Extracting Features', `Analyzing prompt for ${this.escapeHtml(String(payload.recipe_id || ''))} features...`, 'running');
+        break;
+      case 'feature_extraction_completed':
+        body = this.renderStatusCard('\u2705', 'Features Extracted', `Detected ${this.escapeHtml(String(payload.app_type || 'app'))}: ${payload.features_count || 0} features, ${payload.pages_count || 0} pages`, 'pass');
+        break;
+      case 'feature_code_generating':
+        body = this.renderStatusCard('\u{1F528}', 'Generating Code', this.escapeHtml(String(payload.message || 'Generating feature components...')), 'running');
+        break;
+      case 'feature_code_applied':
+        body = this.renderFeatureCodeApplied(payload);
+        break;
+      case 'feature_code_error':
+        body = this.renderStatusCard('\u26A0\uFE0F', 'Feature Generation Skipped', this.escapeHtml(String(payload.error || 'Falling back to generic scaffold')), 'warn');
+        break;
+      // Process Management events
+      case 'process_started':
+        body = this.renderStatusCard('🚀', 'Dev Server Starting',
+          `Running: ${this.escapeHtml(String(payload.command || ''))}`, 'running');
+        break;
+      case 'process_ready':
+        const port = payload.port ? ` on port ${payload.port}` : '';
+        body = this.renderStatusCard('✅', 'Dev Server Ready',
+          `Server is running${port}. Time to ready: ${Math.round((payload.time_to_ready_ms || 0) / 1000)}s`, 'pass');
+        break;
+      case 'process_stopped':
+        body = this.renderStatusCard('⏹️', 'Dev Server Stopped',
+          this.escapeHtml(String(payload.reason || 'Process stopped')), 'info');
+        break;
+      case 'process_error':
+        body = this.renderStatusCard('❌', 'Dev Server Error',
+          this.escapeHtml(String(payload.error || 'Unknown error')), 'fail');
+        break;
+      // Auto-fix events
+      case 'scaffold_autofix_started':
+        body = this.renderStatusCard('🔧', 'Auto-Fixing Errors',
+          `Analyzing ${payload.error_count || 0} error(s) and generating fixes...`, 'running');
+        break;
+      case 'scaffold_autofix_applied':
+        body = this.renderStatusCard('✅', 'Auto-Fix Applied',
+          `Fixed ${payload.files_fixed || 0} file(s). Re-running verification...`, 'pass');
+        break;
+      case 'scaffold_autofix_failed':
+        body = this.renderStatusCard('⚠️', 'Auto-Fix Failed',
+          this.escapeHtml(String(payload.error || 'Could not automatically fix errors')), 'warn');
+        break;
+      // Streaming verification events
+      case 'scaffold_verify_started':
+        body = this.renderStatusCard('🔍', 'Verifying Project',
+          `Running post-scaffold verification (${this.escapeHtml(String(payload.recipe_id || ''))})...`, 'running');
+        break;
+      case 'scaffold_verify_step_completed': {
+        const stepStatus = String(payload.step_status || 'pass');
+        const stepIcon = stepStatus === 'pass' ? '✅' : stepStatus === 'warn' ? '⚠️' : stepStatus === 'fail' ? '❌' : '⏭️';
+        body = this.renderStatusCard(stepIcon, `Verify: ${this.escapeHtml(String(payload.step_name || ''))}`,
+          this.escapeHtml(String(payload.message || '')), stepStatus === 'fail' ? 'fail' : stepStatus === 'warn' ? 'warn' : 'pass');
+        break;
+      }
+      case 'scaffold_verify_completed': {
+        const vOutcome = String(payload.outcome || 'pass');
+        const vIcon = vOutcome === 'pass' ? '✅' : vOutcome === 'partial' ? '⚠️' : '❌';
+        const vTitle = vOutcome === 'pass' ? 'Verification Passed' : vOutcome === 'partial' ? 'Verification: Warnings' : 'Verification Failed';
+        const totalSteps = payload.total_steps || 0;
+        const durationSec = Math.round((payload.duration_ms || 0) / 1000);
+        const passCount = payload.pass_count || 0;
+        const failCount = payload.fail_count || 0;
+        body = this.renderStatusCard(vIcon, vTitle,
+          `${totalSteps} checks completed in ${durationSec}s (${passCount} passed, ${failCount} failed)`,
+          vOutcome === 'fail' ? 'fail' : vOutcome === 'partial' ? 'warn' : 'pass');
+        break;
+      }
       // Step 43: Preflight checks events
       case 'scaffold_preflight_checks_started':
         body = this.renderStatusCard('\u{1F50D}', 'Running Preflight Checks', 'Validating workspace before scaffold...', 'running');
@@ -159,26 +231,6 @@ export class ScaffoldCard extends HTMLElement {
         break;
       case 'scaffold_apply_completed':
         body = this.renderStatusCard('\u2705', 'Scaffold Applied', 'Project files created successfully', 'pass');
-        break;
-      // Step 44: Verification events
-      case 'scaffold_verify_started':
-        body = this.renderStatusCard('\u{1F50D}', 'Verifying Scaffold', 'Running post-scaffold verification...', 'running');
-        break;
-      case 'scaffold_verify_step_completed':
-        body = this.renderStatusCard(
-          payload.status === 'pass' ? '\u2705' : '\u26A0\uFE0F',
-          payload.label || 'Verification Step',
-          payload.message || '',
-          payload.status || 'info'
-        );
-        break;
-      case 'scaffold_verify_completed':
-        body = this.renderStatusCard(
-          payload.outcome === 'pass' ? '\u2705' : '\u26A0\uFE0F',
-          'Verification Complete',
-          payload.outcome === 'pass' ? 'All checks passed' : 'Some issues found',
-          payload.outcome === 'pass' ? 'pass' : 'warn'
-        );
         break;
       case 'settings_changed':
         body = this.renderStatusCard('\u2699\uFE0F', 'Settings Updated', `${payload.setting || 'Setting'} changed`, 'info');
@@ -1172,8 +1224,8 @@ export class ScaffoldCard extends HTMLElement {
   }
 
   private renderNextStepsShown(payload: Record<string, any>): string {
-    const steps = payload.steps || [];
-    const projectPath = payload.project_path || '';
+    const steps = payload.suggestions || payload.steps || [];
+    const projectPath = payload.target_directory || payload.project_path || '';
 
     return `
       <div class="scaffold-card ready">
@@ -1188,13 +1240,16 @@ export class ScaffoldCard extends HTMLElement {
           </div>
           ${steps.length > 0 ? `
             <div class="next-steps-list">
-              ${steps.slice(0, 4).map((step: any, idx: number) => `
+              ${steps.slice(0, 6).map((step: any, idx: number) => `
                 <div class="next-step-item">
                   <span class="step-number">${idx + 1}</span>
-                  <span class="step-title">${this.escapeHtml(step.title || step.label || step)}</span>
+                  <div class="step-content">
+                    <span class="step-title">${this.escapeHtml(step.title || step.label || String(step))}</span>
+                    ${step.description ? `<span class="step-desc" style="font-size:11px;color:var(--vscode-descriptionForeground);display:block;margin-top:2px">${this.escapeHtml(step.description)}</span>` : ''}
+                  </div>
                 </div>
               `).join('')}
-              ${steps.length > 4 ? `<div class="more-steps">+${steps.length - 4} more steps</div>` : ''}
+              ${steps.length > 6 ? `<div class="more-steps">+${steps.length - 6} more steps</div>` : ''}
             </div>
           ` : ''}
           ${projectPath ? `
@@ -1204,6 +1259,38 @@ export class ScaffoldCard extends HTMLElement {
             </div>
           ` : ''}
         </div>
+      </div>
+    `;
+  }
+
+  private renderFeatureCodeApplied(payload: Record<string, any>): string {
+    const createdFiles: string[] = payload.created_files || [];
+    const modifiedFiles: string[] = payload.modified_files || [];
+    const totalFiles = payload.total_files || (createdFiles.length + modifiedFiles.length);
+    const summary = payload.summary || 'Feature code generated';
+
+    return `
+      <div class="scaffold-card applied">
+        <div class="header">
+          <span class="icon">\u2728</span>
+          <h3>Feature Code Applied</h3>
+          <span class="badge ready">${totalFiles} file${totalFiles !== 1 ? 's' : ''}</span>
+        </div>
+        <div class="status-message" style="padding:8px 16px 4px;font-size:12px;color:var(--vscode-descriptionForeground);">
+          ${this.escapeHtml(summary)}
+        </div>
+        ${createdFiles.length > 0 ? `
+          <div style="padding:4px 16px 8px;font-size:11px;color:var(--vscode-descriptionForeground);">
+            <div style="font-weight:600;margin-bottom:2px;">Created:</div>
+            ${createdFiles.map(f => `<div style="padding-left:8px;font-family:monospace;">\u2795 ${this.escapeHtml(f)}</div>`).join('')}
+          </div>
+        ` : ''}
+        ${modifiedFiles.length > 0 ? `
+          <div style="padding:0 16px 12px;font-size:11px;color:var(--vscode-descriptionForeground);">
+            <div style="font-weight:600;margin-bottom:2px;">Modified:</div>
+            ${modifiedFiles.map(f => `<div style="padding-left:8px;font-family:monospace;">\u{270F}\uFE0F ${this.escapeHtml(f)}</div>`).join('')}
+          </div>
+        ` : ''}
       </div>
     `;
   }
@@ -2349,7 +2436,26 @@ export function isScaffoldEvent(eventType: string): boolean {
     'scaffold_progress',
     'design_pack_applied',
     'next_steps_shown',
-    'scaffold_final_complete'
+    'scaffold_final_complete',
+    // Feature Intelligence events
+    'feature_extraction_started',
+    'feature_extraction_completed',
+    'feature_code_generating',
+    'feature_code_applied',
+    'feature_code_error',
+    // Process Management events
+    'process_started',
+    'process_ready',
+    'process_stopped',
+    'process_error',
+    // Auto-fix events
+    'scaffold_autofix_started',
+    'scaffold_autofix_applied',
+    'scaffold_autofix_failed',
+    // Verification streaming events
+    'scaffold_verify_started',
+    'scaffold_verify_step_completed',
+    'scaffold_verify_completed',
   ].includes(eventType);
 }
 

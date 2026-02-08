@@ -13,6 +13,7 @@
  */
 
 import { RecipeId } from './recipeTypes';
+import type { FeatureRequirements } from '../types';
 
 // ============================================================================
 // NEXT STEP ID TYPES
@@ -495,6 +496,269 @@ export function buildNextStepSelectedPayload(
     suggestion_id: suggestion.id,
     kind: suggestion.kind,
   };
+}
+
+// ============================================================================
+// FEATURE-AWARE NEXT STEPS
+// ============================================================================
+
+/**
+ * Generate feature-aware next steps based on extracted requirements.
+ *
+ * Instead of generic suggestions like "Add Database" or "Create New Page",
+ * this generates suggestions tailored to the user's feature (e.g., for a todo
+ * app: "Add Task Persistence", "Add Due Dates", "Add User Authentication").
+ *
+ * @param ctx - Next steps context
+ * @param requirements - Extracted feature requirements
+ * @returns Array of feature-aware suggestions
+ */
+export function getFeatureAwareNextSteps(
+  ctx: NextStepsContext,
+  requirements: FeatureRequirements,
+): NextStepSuggestion[] {
+  const suggestions: NextStepSuggestion[] = [];
+  const pm = ctx.package_manager || 'npm';
+
+  // Always start with dev server
+  suggestions.push({
+    id: 'start_dev_server',
+    title: 'Start Dev Server',
+    description: `Launch the development server to see your ${requirements.app_type} app`,
+    kind: 'command',
+    safety: 'prompt',
+    icon: '🚀',
+    primary: true,
+    command: {
+      cmd: adjustCommandForPM('npm run dev', pm),
+      cwd: ctx.target_directory,
+      longRunning: true,
+    },
+  });
+
+  // Feature-specific enhancement suggestions
+  const appSuggestions = getAppSpecificSuggestions(requirements);
+  for (const suggestion of appSuggestions) {
+    if (suggestions.length >= 6) break;
+    suggestions.push(suggestion);
+  }
+
+  // Add lint/build if we have room
+  if (suggestions.length < 5) {
+    suggestions.push({
+      id: 'run_lint',
+      title: 'Run Lint',
+      description: 'Check code for issues',
+      kind: 'command',
+      safety: 'safe',
+      icon: '🔍',
+      command: {
+        cmd: adjustCommandForPM('npm run lint', pm),
+        cwd: ctx.target_directory,
+      },
+    });
+  }
+
+  if (suggestions.length < 6) {
+    suggestions.push({
+      id: 'run_build',
+      title: 'Run Build',
+      description: 'Build for production',
+      kind: 'command',
+      safety: 'safe',
+      icon: '📦',
+      command: {
+        cmd: adjustCommandForPM('npm run build', pm),
+        cwd: ctx.target_directory,
+      },
+    });
+  }
+
+  return suggestions;
+}
+
+/**
+ * Get app-type-specific enhancement suggestions
+ */
+function getAppSpecificSuggestions(requirements: FeatureRequirements): NextStepSuggestion[] {
+  const appType = requirements.app_type.toLowerCase();
+
+  // Common patterns for different app types
+  const suggestionMap: Record<string, NextStepSuggestion[]> = {
+    todo: [
+      {
+        id: 'add_database' as NextStepId,
+        title: 'Add Task Persistence',
+        description: 'Connect to a database to persist tasks across sessions',
+        kind: 'plan',
+        safety: 'prompt',
+        icon: '🗄️',
+        promptTemplate: 'Add database persistence to this todo app. Store tasks in a database so they survive page refreshes. Use Prisma with SQLite for simplicity.',
+      },
+      {
+        id: 'add_auth' as NextStepId,
+        title: 'Add User Authentication',
+        description: 'Add login so each user has their own task list',
+        kind: 'plan',
+        safety: 'prompt',
+        icon: '🔐',
+        promptTemplate: 'Add user authentication to this todo app so each user has their own private task list.',
+      },
+      {
+        id: 'create_page' as NextStepId,
+        title: 'Add Due Dates',
+        description: 'Add date picker and deadline tracking to tasks',
+        kind: 'quick_action',
+        safety: 'safe',
+        icon: '📅',
+        promptTemplate: 'Add due date functionality to the todo app. Add a date picker to the task form and display due dates on each task. Highlight overdue tasks.',
+      },
+    ],
+    blog: [
+      {
+        id: 'create_page' as NextStepId,
+        title: 'Add Markdown Support',
+        description: 'Add MDX for rich blog posts with code blocks',
+        kind: 'plan',
+        safety: 'prompt',
+        icon: '📝',
+        promptTemplate: 'Add markdown/MDX support to this blog app for rich blog posts with code syntax highlighting.',
+      },
+      {
+        id: 'add_database' as NextStepId,
+        title: 'Add Post Categories',
+        description: 'Organize posts with categories and tags',
+        kind: 'quick_action',
+        safety: 'safe',
+        icon: '🏷️',
+        promptTemplate: 'Add categories and tags to blog posts. Include a category filter on the main page.',
+      },
+      {
+        id: 'add_auth' as NextStepId,
+        title: 'Add Author Dashboard',
+        description: 'Add admin panel for creating and editing posts',
+        kind: 'plan',
+        safety: 'prompt',
+        icon: '📊',
+        promptTemplate: 'Add an author dashboard for creating, editing, and deleting blog posts with a rich text editor.',
+      },
+    ],
+    ecommerce: [
+      {
+        id: 'add_database' as NextStepId,
+        title: 'Add Product Database',
+        description: 'Connect to a database for product catalog',
+        kind: 'plan',
+        safety: 'prompt',
+        icon: '🗄️',
+        promptTemplate: 'Add a product database to this ecommerce app using Prisma with PostgreSQL. Include product CRUD operations.',
+      },
+      {
+        id: 'add_auth' as NextStepId,
+        title: 'Add Checkout Flow',
+        description: 'Add cart summary and checkout page',
+        kind: 'plan',
+        safety: 'prompt',
+        icon: '💳',
+        promptTemplate: 'Add a checkout flow to this ecommerce app with cart summary, shipping info form, and order confirmation.',
+      },
+      {
+        id: 'create_page' as NextStepId,
+        title: 'Add Product Search',
+        description: 'Add search and filter functionality',
+        kind: 'quick_action',
+        safety: 'safe',
+        icon: '🔍',
+        promptTemplate: 'Add product search and filter functionality with category filters, price range, and sorting options.',
+      },
+    ],
+    dashboard: [
+      {
+        id: 'create_page' as NextStepId,
+        title: 'Add Charts',
+        description: 'Add data visualization with charts',
+        kind: 'plan',
+        safety: 'prompt',
+        icon: '📊',
+        promptTemplate: 'Add charts and data visualization to this dashboard using Recharts. Include line, bar, and pie charts.',
+      },
+      {
+        id: 'add_database' as NextStepId,
+        title: 'Add Data API',
+        description: 'Connect to a real data source',
+        kind: 'plan',
+        safety: 'prompt',
+        icon: '🔌',
+        promptTemplate: 'Add API integration to this dashboard to fetch real data. Create API routes and data fetching hooks.',
+      },
+      {
+        id: 'add_auth' as NextStepId,
+        title: 'Add User Roles',
+        description: 'Add authentication with admin/viewer roles',
+        kind: 'plan',
+        safety: 'prompt',
+        icon: '🔐',
+        promptTemplate: 'Add role-based authentication with admin and viewer roles. Admin can edit, viewer is read-only.',
+      },
+    ],
+  };
+
+  // Try exact match, then partial match, then default
+  if (suggestionMap[appType]) {
+    return suggestionMap[appType];
+  }
+
+  // Partial match
+  for (const [key, suggestions] of Object.entries(suggestionMap)) {
+    if (appType.includes(key) || key.includes(appType)) {
+      return suggestions;
+    }
+  }
+
+  // Default feature suggestions based on what's missing
+  const defaults: NextStepSuggestion[] = [];
+
+  if (!requirements.has_database) {
+    defaults.push({
+      id: 'add_database' as NextStepId,
+      title: 'Add Data Persistence',
+      description: 'Connect a database to persist your data',
+      kind: 'plan',
+      safety: 'prompt',
+      icon: '🗄️',
+      promptTemplate: `Add database persistence to this ${requirements.app_type} app. Use Prisma with SQLite for local development.`,
+    });
+  }
+
+  if (!requirements.has_auth) {
+    defaults.push({
+      id: 'add_auth' as NextStepId,
+      title: 'Add Authentication',
+      description: 'Add user login and signup',
+      kind: 'plan',
+      safety: 'prompt',
+      icon: '🔐',
+      promptTemplate: `Add user authentication to this ${requirements.app_type} app with login and signup pages.`,
+    });
+  }
+
+  defaults.push({
+    id: 'create_page' as NextStepId,
+    title: 'Add New Feature',
+    description: `Extend your ${requirements.app_type} app with more functionality`,
+    kind: 'quick_action',
+    safety: 'safe',
+    icon: '✨',
+    promptTemplate: `Add a new feature to this ${requirements.app_type} app. The current features are: ${requirements.features.join(', ')}.`,
+  });
+
+  return defaults;
+}
+
+function adjustCommandForPM(cmd: string, pm: string): string {
+  if (pm === 'pnpm') return cmd.replace(/^npm run/, 'pnpm');
+  if (pm === 'yarn') return cmd.replace(/^npm run/, 'yarn');
+  return cmd;
 }
 
 // ============================================================================

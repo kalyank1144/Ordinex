@@ -3076,6 +3076,12 @@ export function getWebviewContent(): string {
           'design_pack_applied',
           'next_steps_shown',
           'scaffold_final_complete',
+          // Feature Intelligence events
+          'feature_extraction_started',
+          'feature_extraction_completed',
+          'feature_code_generating',
+          'feature_code_applied',
+          'feature_code_error',
           // Step 43: Preflight checks events
           'scaffold_preflight_checks_started',
           'scaffold_preflight_checks_completed',
@@ -3090,7 +3096,16 @@ export function getWebviewContent(): string {
           'scaffold_verify_step_completed',
           'scaffold_verify_completed',
           // Step 45: Settings
-          'settings_changed'
+          'settings_changed',
+          // Process management events
+          'process_started',
+          'process_ready',
+          'process_stopped',
+          'process_error',
+          // Auto-fix events
+          'scaffold_autofix_started',
+          'scaffold_autofix_applied',
+          'scaffold_autofix_failed'
         ];
         
         if (scaffoldEventTypes.includes(event.type)) {
@@ -4665,7 +4680,7 @@ export function getWebviewContent(): string {
                 // Update status based on last event
                 const lastEvent = state.events[state.events.length - 1];
                 if (lastEvent) {
-                  if (lastEvent.type === 'final') {
+                  if (lastEvent.type === 'final' || lastEvent.type === 'scaffold_final_complete') {
                     updateStatus('ready');
                   } else if (lastEvent.type === 'failure_detected') {
                     updateStatus('error');
@@ -6090,32 +6105,32 @@ export function getWebviewContent(): string {
       // and forward them to the extension via vscode.postMessage
       document.addEventListener('scaffold-action', (event) => {
         const detail = event.detail || {};
-        
+
         console.log('[ScaffoldAction] Event received:', detail);
-        
+
         const { action, scaffoldId, eventId, currentPackId, styleSourceMode, selectedPackId } = detail;
-        
+
         // Get task_id from state
         let taskId = 'unknown';
         if (state.events.length > 0) {
           taskId = state.events[0].task_id;
         }
-        
+
         // Find the decision_requested event to get the proper event_id
-        const decisionEvent = state.events.find(e => 
-          e.type === 'scaffold_decision_requested' && 
+        const decisionEvent = state.events.find(e =>
+          e.type === 'scaffold_decision_requested' &&
           e.payload?.scaffold_id === scaffoldId
         );
-        
+
         const decisionEventId = decisionEvent?.event_id || eventId;
-        
+
         console.log('[ScaffoldAction] Forwarding to extension:', {
           taskId,
           decisionEventId,
           action,
           scaffoldId
         });
-        
+
         // Send to extension
         if (typeof vscode !== 'undefined') {
           vscode.postMessage({
@@ -6133,6 +6148,52 @@ export function getWebviewContent(): string {
           });
         } else {
           console.log('[ScaffoldAction] Demo mode - would send:', { action, scaffoldId });
+        }
+      });
+
+      // ===== NEXT-STEP EVENT LISTENERS =====
+      // Listen for next-step-selected events from NextStepsCard web component
+      document.addEventListener('next-step-selected', (event) => {
+        const detail = event.detail || {};
+        const { scaffoldId, suggestionId, kind, suggestion } = detail;
+
+        console.log('[NextStep] Action selected:', suggestionId, kind);
+
+        // Get task_id from state
+        let taskId = 'unknown';
+        if (state.events.length > 0) {
+          taskId = state.events[0].task_id;
+        }
+
+        if (typeof vscode !== 'undefined') {
+          vscode.postMessage({
+            type: 'next_step_selected',
+            scaffoldId: scaffoldId,
+            suggestionId: suggestionId,
+            kind: kind,
+            suggestion: suggestion,
+            task_id: taskId
+          });
+        }
+      });
+
+      // Listen for next-step-dismissed events from NextStepsCard web component
+      document.addEventListener('next-step-dismissed', (event) => {
+        const detail = event.detail || {};
+
+        // Get task_id from state
+        let taskId = 'unknown';
+        if (state.events.length > 0) {
+          taskId = state.events[0].task_id;
+        }
+
+        if (typeof vscode !== 'undefined') {
+          vscode.postMessage({
+            type: 'next_step_dismissed',
+            scaffoldId: detail.scaffoldId,
+            reason: detail.reason,
+            task_id: taskId
+          });
         }
       });
 

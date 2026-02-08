@@ -100,7 +100,7 @@ const EXCLUSION_PATTERNS: RegExp[] = [
   // Running commands
   /\b(run|execute|start|launch)\s+(the\s+)?(dev|server|tests?|build|app|application)\b/i,
   // Fixing/modifying existing code
-  /\b(fix|debug|repair|update|modify|change|edit|refactor)\b.*\b(the|this|my|our)\b/i,
+  /\b(fix|debug|repair|update|modify|change|edit|refactor)\b.*\b(the|this|my|our|it|them|that|those|errors?|bugs?|issues?)\b/i,
   // Adding to existing
   /\b(add|implement)\b.*\b(to|in|into)\s+(the|this|my|our)\b/i,
   // Questions about existing
@@ -109,6 +109,8 @@ const EXCLUSION_PATTERNS: RegExp[] = [
   /\b(run|start)\s+the\s+(app|application|server|project)\b/i,
   // "the existing" or "my existing"
   /\b(the|my|our|this)\s+(existing|current)\b/i,
+  // References to existing scaffolded projects (never greenfield)
+  /\bscaffolded?\s+(project|app|application)\b/i,
 ];
 
 // ============================================================================
@@ -212,11 +214,13 @@ export function detectGreenfieldIntent(text: string): IntentSignal {
   const hasNewness = WEAK_SIGNAL_KEYWORDS.newness.some(w => 
     new RegExp(`\\b${w}\\b`, 'i').test(normalized)
   );
-  const hasVerb = WEAK_SIGNAL_KEYWORDS.verbs.some(v => 
+  // Only creation-specific verbs can satisfy the verb gate (not "run", "start", etc.)
+  const CREATION_VERBS = ['create', 'build', 'make', 'scaffold', 'setup', 'init', 'initialize', 'spin', 'bootstrap'];
+  const hasCreationVerb = CREATION_VERBS.some(v =>
     new RegExp(`\\b${v}(ing|e|ed|s)?\\b`, 'i').test(normalized)
   );
 
-  if (weakSignalCount >= 3 && (hasNewness || hasVerb)) {
+  if (weakSignalCount >= 3 && (hasNewness || hasCreationVerb)) {
     return {
       isMatch: true,
       confidence: 0.75,

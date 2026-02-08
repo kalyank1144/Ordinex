@@ -183,7 +183,27 @@ export type EventType =
   // Step 35.6: Next Steps
   | 'next_steps_shown'
   | 'next_step_selected'
-  | 'next_step_dismissed';
+  | 'next_step_dismissed'
+  // Feature Intelligence (LLM-Powered Feature Generation)
+  | 'feature_extraction_started'
+  | 'feature_extraction_completed'
+  | 'feature_code_generating'
+  | 'feature_code_applied'
+  | 'feature_code_error'
+  // Process Management (Dev Server)
+  | 'process_started'
+  | 'process_ready'
+  | 'process_output'
+  | 'process_stopped'
+  | 'process_error'
+  // Verification streaming
+  | 'scaffold_verify_started'
+  | 'scaffold_verify_step_completed'
+  | 'scaffold_verify_completed'
+  // Auto-fix
+  | 'scaffold_autofix_started'
+  | 'scaffold_autofix_applied'
+  | 'scaffold_autofix_failed';
 
 export interface Event {
   event_id: string;

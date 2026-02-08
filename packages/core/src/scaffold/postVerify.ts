@@ -117,7 +117,7 @@ const DEFAULT_LINT_TIMEOUT = 60_000;      // 1 minute
 const DEFAULT_TYPECHECK_TIMEOUT = 60_000; // 1 minute
 const DEFAULT_BUILD_TIMEOUT = 120_000;    // 2 minutes
 const DEFAULT_INSTALL_MAX_RETRIES = 1;
-const MAX_OUTPUT_CHARS = 2000;
+const MAX_OUTPUT_CHARS = 8000;
 
 // ============================================================================
 // MAIN PIPELINE

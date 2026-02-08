@@ -208,12 +208,14 @@ export function detectGreenfieldIntent(text: string): IntentSignal {
   const hasNewness = GREENFIELD_WEAK_KEYWORDS.newness.some(w => 
     new RegExp(`\\b${w}\\b`, 'i').test(normalized)
   );
-  const hasVerb = GREENFIELD_WEAK_KEYWORDS.verbs.some(v => 
+  // Only creation-specific verbs can satisfy the verb gate (not "run", "start", etc.)
+  const CREATION_VERBS = ['create', 'build', 'make', 'scaffold', 'setup', 'init', 'initialize', 'spin', 'bootstrap'];
+  const hasCreationVerb = CREATION_VERBS.some(v =>
     new RegExp(`\\b${v}(ing|e|ed|s)?\\b`, 'i').test(normalized)
   );
 
-  // Strong combination: 3+ keywords with newness/verb
-  if (weakSignalCount >= 3 && (hasNewness || hasVerb)) {
+  // Strong combination: 3+ keywords with newness/creation verb
+  if (weakSignalCount >= 3 && (hasNewness || hasCreationVerb)) {
     return {
       isMatch: true,
       confidence: 0.75,
@@ -345,6 +347,26 @@ export function detectCommandIntent(text: string): IntentSignal {
     }
   }
 
+  // Step 2.5: Check for diagnostic/error context patterns
+  // User is describing problems, not requesting command execution
+  const DIAGNOSTIC_CONTEXT_PATTERNS = [
+    /\b(getting|having|seeing|encountering|facing)\s+(build\s+)?(errors?|issues?|problems?|failures?|warnings?)\b/i,
+    /\b(fix|resolve|debug|investigate|check|diagnose)\s+(the\s+)?(build\s+)?(errors?|issues?|problems?|failures?)\b/i,
+    /\b(broken|failing|not\s+working|not\s+compiling|won'?t\s+build)\b/i,
+    /\bbuild\s+(errors?|failures?|issues?|problems?|broken|failing)\b/i,
+    /\b(typecheck|type\s+check|typescript|compilation)\s+(errors?|failures?|issues?)\b/i,
+  ];
+  for (const pattern of DIAGNOSTIC_CONTEXT_PATTERNS) {
+    if (pattern.test(normalized)) {
+      return {
+        isMatch: false,
+        confidence: 0.9,
+        reason: 'Diagnostic/error context detected — not a command',
+        matchedKeywords: [],
+      };
+    }
+  }
+
   // Step 3: Check direct command patterns (highest confidence)
   const directCommands: string[] = [];
   for (const pattern of DIRECT_COMMAND_PATTERNS) {
@@ -394,14 +416,22 @@ export function detectCommandIntent(text: string): IntentSignal {
     };
   }
 
-  // Weak: only verb or only target
-  if (detectedVerbs.length > 0 || detectedTargets.length > 0) {
+  // Target only without verb → ambiguous, NOT a command
+  if (detectedTargets.length > 0 && detectedVerbs.length === 0) {
+    return {
+      isMatch: false,
+      confidence: 0.3,
+      reason: `Target(s) [${detectedTargets.join(', ')}] without action verb — ambiguous, not a command`,
+      matchedKeywords,
+    };
+  }
+
+  // Verb only without target → weak command signal
+  if (detectedVerbs.length > 0 && detectedTargets.length === 0) {
     return {
       isMatch: true,
-      confidence: 0.6,
-      reason: detectedVerbs.length > 0
-        ? `Action verb(s): ${detectedVerbs.join(', ')}`
-        : `Target(s): ${detectedTargets.join(', ')}`,
+      confidence: 0.5,
+      reason: `Action verb(s) [${detectedVerbs.join(', ')}] without specific target — weak command signal`,
       matchedKeywords,
     };
   }

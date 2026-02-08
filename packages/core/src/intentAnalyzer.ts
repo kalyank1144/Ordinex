@@ -1044,8 +1044,6 @@ const GREENFIELD_PATTERNS = [
   // Strong indicators
   'from scratch',
   'greenfield',
-  'scaffold',
-  'bootstrap',
   'empty folder',
   'empty directory',
   'blank project',

@@ -52,8 +52,8 @@ describe('Greenfield Detection', () => {
       expect(isGreenfieldRequest('scaffold a new component')).toBe(true);
     });
 
-    it('should detect "bootstrap" keyword', () => {
-      expect(isGreenfieldRequest('bootstrap the application')).toBe(true);
+    it('should detect "bootstrap" with framework (centralized detector)', () => {
+      expect(isGreenfieldRequest('bootstrap a new react app')).toBe(true);
     });
 
     it('should detect framework-specific patterns', () => {
@@ -610,8 +610,8 @@ describe('GREENFIELD_PATTERNS Coverage', () => {
       'start a new app',
       'from scratch',
       'greenfield',
-      'scaffold',
-      'bootstrap',
+      // 'scaffold' and 'bootstrap' removed - over-broad bare substrings;
+      // centralized greenfieldDetector handles these with proper regex patterns
       'new nextjs app',
       'new next app',
       'new vite app',

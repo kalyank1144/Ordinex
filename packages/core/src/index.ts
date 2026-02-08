@@ -687,6 +687,7 @@ export type {
 // Step 35.6: Next Steps (Post-scaffold suggestions)
 export {
   getNextStepsForRecipe,
+  getFeatureAwareNextSteps,
   buildNextStepsShownPayload,
 } from './scaffold/nextSteps';
 
@@ -694,6 +695,25 @@ export type {
   NextStepSuggestion,
   NextStepsContext,
 } from './scaffold/nextSteps';
+
+// Scaffold Feature Intelligence (LLM-Powered Feature Generation)
+export {
+  extractFeatureRequirements,
+  hasSpecificFeature,
+  createFeatureLLMClient,
+} from './scaffold/featureExtractor';
+
+export type {
+  FeatureLLMClient,
+} from './scaffold/featureExtractor';
+
+export {
+  generateFeatureCode,
+} from './scaffold/featureCodeGenerator';
+
+export {
+  applyFeatureCode,
+} from './scaffold/featureApplicator';
 
 // ============================================================================
 // Step 40.5: Intelligence Layer (Context Enricher)

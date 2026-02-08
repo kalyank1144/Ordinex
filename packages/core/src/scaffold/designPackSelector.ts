@@ -128,9 +128,12 @@ export function computeSelectionSeed(input: DesignPackSelectionInput): string {
     input.targetDir,
     input.appName,
     input.recipeId,
-    'v1', // Version marker for future seed algorithm changes
+    // Include date so different scaffold sessions get variety
+    // Same day + same inputs = same pack (deterministic within a session)
+    new Date().toISOString().slice(0, 13), // YYYY-MM-DDTHH (hourly variety)
+    'v2', // Version marker — bumped for seed algorithm change
   ].join('|');
-  
+
   const hash = createHash('sha256');
   hash.update(seedInput);
   return hash.digest('hex').slice(0, 8);

@@ -143,6 +143,25 @@ export function detectCommandIntent(
     }
   }
 
+  // Check for diagnostic/error context patterns — user is describing problems, not requesting commands
+  const DIAGNOSTIC_CONTEXT_PATTERNS = [
+    /\b(getting|having|seeing|encountering|facing)\s+(build\s+)?(errors?|issues?|problems?|failures?|warnings?)\b/i,
+    /\b(fix|resolve|debug|investigate|check|diagnose)\s+(the\s+)?(build\s+)?(errors?|issues?|problems?|failures?)\b/i,
+    /\b(broken|failing|not\s+working|not\s+compiling|won'?t\s+build)\b/i,
+    /\bbuild\s+(errors?|failures?|issues?|problems?|broken|failing)\b/i,
+    /\b(typecheck|type\s+check|typescript|compilation)\s+(errors?|failures?|issues?)\b/i,
+  ];
+  for (const pattern of DIAGNOSTIC_CONTEXT_PATTERNS) {
+    if (pattern.test(lowerPrompt)) {
+      return {
+        isCommandIntent: false,
+        confidence: 0.9,
+        detectedKeywords: [],
+        reasoning: 'Diagnostic/error context detected — user is describing problems, not requesting command execution',
+      };
+    }
+  }
+
   // Check for direct command patterns (highest confidence)
   const directCommands: string[] = [];
   for (const pattern of DIRECT_COMMAND_PATTERNS) {
@@ -207,15 +226,24 @@ export function detectCommandIntent(
     };
   }
 
-  // Weak signal: only verb or only target
-  if (detectedVerbs.length > 0 || detectedTargets.length > 0) {
+  // Target only without verb → ambiguous, NOT a command
+  // "build errors" has a target but no command verb — this is diagnostic, not an action
+  if (detectedTargets.length > 0 && detectedVerbs.length === 0) {
+    return {
+      isCommandIntent: false,
+      confidence: 0.3,
+      detectedKeywords,
+      reasoning: `Target(s) [${detectedTargets.join(', ')}] without action verb — ambiguous, not a command`,
+    };
+  }
+
+  // Verb only without target → weak command signal
+  if (detectedVerbs.length > 0 && detectedTargets.length === 0) {
     return {
       isCommandIntent: true,
-      confidence: 0.6,
+      confidence: 0.5,
       detectedKeywords,
-      reasoning: detectedVerbs.length > 0
-        ? `Detected action verb(s): ${detectedVerbs.join(', ')}`
-        : `Detected target(s): ${detectedTargets.join(', ')}`,
+      reasoning: `Action verb(s) [${detectedVerbs.join(', ')}] without specific target — weak command signal`,
     };
   }
 

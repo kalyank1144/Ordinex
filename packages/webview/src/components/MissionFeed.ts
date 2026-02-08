@@ -1038,6 +1038,122 @@ export const EVENT_CARD_MAP: Record<EventType, EventCardConfig> = {
       const stepId = e.payload.step_id as string || '';
       return stepId ? `Skipped: ${stepId}` : 'Action dismissed';
     }
+  },
+
+  // ========== Feature Intelligence Events ==========
+  feature_extraction_started: {
+    icon: '🧠',
+    title: 'Extracting Features',
+    color: 'var(--vscode-charts-blue)',
+    getSummary: (e) => {
+      return `Analyzing prompt for feature requirements...`;
+    }
+  },
+  feature_extraction_completed: {
+    icon: '✅',
+    title: 'Features Extracted',
+    color: 'var(--vscode-charts-green)',
+    getSummary: (e) => {
+      const appType = e.payload.app_type as string || 'app';
+      const count = e.payload.features_count as number || 0;
+      return `Detected ${appType}: ${count} feature(s)`;
+    }
+  },
+  feature_code_generating: {
+    icon: '🔨',
+    title: 'Generating Code',
+    color: 'var(--vscode-charts-blue)',
+    getSummary: (e) => {
+      const message = e.payload.message as string || '';
+      return message || 'Generating feature components...';
+    }
+  },
+  feature_code_applied: {
+    icon: '✨',
+    title: 'Feature Code Applied',
+    color: 'var(--vscode-charts-green)',
+    getSummary: (e) => {
+      const total = e.payload.total_files as number || 0;
+      const summary = e.payload.summary as string || '';
+      return summary || `${total} file(s) generated`;
+    }
+  },
+  feature_code_error: {
+    icon: '⚠️',
+    title: 'Feature Generation Skipped',
+    color: 'var(--vscode-charts-orange)',
+    getSummary: (e) => {
+      return (e.payload.error as string) || 'Falling back to generic scaffold';
+    }
+  },
+  // Process Management
+  process_started: {
+    icon: '🚀',
+    title: 'Dev Server Starting',
+    color: 'var(--vscode-charts-blue)',
+    getSummary: (e) => `Running: ${e.payload.command || ''}`
+  },
+  process_ready: {
+    icon: '✅',
+    title: 'Dev Server Ready',
+    color: 'var(--vscode-charts-green)',
+    getSummary: (e) => `Server ready${e.payload.port ? ' on port ' + e.payload.port : ''}`
+  },
+  process_stopped: {
+    icon: '⏹️',
+    title: 'Dev Server Stopped',
+    color: 'var(--vscode-charts-yellow)',
+    getSummary: (e) => (e.payload.reason as string) || 'Process stopped'
+  },
+  process_error: {
+    icon: '❌',
+    title: 'Dev Server Error',
+    color: 'var(--vscode-charts-red)',
+    getSummary: (e) => (e.payload.error as string) || 'Unknown error'
+  },
+  process_output: {
+    icon: '📝',
+    title: 'Process Output',
+    color: 'var(--vscode-charts-blue)',
+    getSummary: (e) => (e.payload.output as string) || ''
+  },
+  // Auto-fix
+  scaffold_autofix_started: {
+    icon: '🔧',
+    title: 'Auto-Fixing',
+    color: 'var(--vscode-charts-blue)',
+    getSummary: () => 'Analyzing errors and generating fixes...'
+  },
+  scaffold_autofix_applied: {
+    icon: '✅',
+    title: 'Auto-Fix Applied',
+    color: 'var(--vscode-charts-green)',
+    getSummary: (e) => `Fixed ${e.payload.files_fixed || 0} file(s)`
+  },
+  scaffold_autofix_failed: {
+    icon: '⚠️',
+    title: 'Auto-Fix Failed',
+    color: 'var(--vscode-charts-orange)',
+    getSummary: (e) => (e.payload.error as string) || 'Could not fix automatically'
+  },
+  // Streaming Verification
+  scaffold_verify_started: {
+    icon: '🔍',
+    title: 'Verification Started',
+    color: 'var(--vscode-charts-blue)',
+    getSummary: () => 'Running post-scaffold verification...'
+  },
+  scaffold_verify_step_completed: {
+    icon: '✔️',
+    title: 'Verify Step',
+    color: 'var(--vscode-charts-blue)',
+    getSummary: (e) => (e.payload.message as string) || `${e.payload.step_name}: ${e.payload.step_status}`
+  },
+  scaffold_verify_completed: {
+    icon: '📋',
+    title: 'Verification Complete',
+    color: 'var(--vscode-charts-green)',
+    getSummary: (e) => (e.payload.message as string) || `Outcome: ${e.payload.outcome}`
   }
 };
 

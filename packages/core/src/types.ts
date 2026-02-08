@@ -178,7 +178,13 @@ export type EventType =
   | 'scaffold_verify_step_completed'
   | 'scaffold_verify_completed'
   // Step 45: Settings Panel
-  | 'settings_changed';
+  | 'settings_changed'
+  // Scaffold Feature Intelligence (LLM-Powered Feature Generation)
+  | 'feature_extraction_started'
+  | 'feature_extraction_completed'
+  | 'feature_code_generating'
+  | 'feature_code_applied'
+  | 'feature_code_error';
 
 export const CANONICAL_EVENT_TYPES: readonly EventType[] = [
   'intent_received',
@@ -343,6 +349,12 @@ export const CANONICAL_EVENT_TYPES: readonly EventType[] = [
   'scaffold_verify_completed',
   // Step 45: Settings Panel
   'settings_changed',
+  // Scaffold Feature Intelligence (LLM-Powered Feature Generation)
+  'feature_extraction_started',
+  'feature_extraction_completed',
+  'feature_code_generating',
+  'feature_code_applied',
+  'feature_code_error',
 ] as const;
 
 export type Mode = 'ANSWER' | 'PLAN' | 'MISSION';
@@ -1649,5 +1661,187 @@ export interface ScaffoldQualityGatesFailedPayload {
   failed_gates: string[];
   /** Total duration in ms */
   total_duration_ms: number;
+}
+
+// ============================================================================
+// SCAFFOLD FEATURE INTELLIGENCE (LLM-Powered Feature Generation)
+// ============================================================================
+
+/**
+ * Data entity in the feature data model
+ */
+export interface DataEntity {
+  name: string;
+  fields: Array<{ name: string; type: string; required: boolean }>;
+}
+
+/**
+ * Page requirement for the feature
+ */
+export interface PageRequirement {
+  path: string;
+  description: string;
+  components: string[];
+}
+
+/**
+ * Structured feature requirements extracted from user prompt via LLM
+ */
+export interface FeatureRequirements {
+  /** App type detected (e.g., "todo", "blog", "ecommerce") */
+  app_type: string;
+  /** Feature list (e.g., ["task list", "add task", "mark complete"]) */
+  features: string[];
+  /** Data model entities */
+  data_model: DataEntity[];
+  /** Page/route requirements */
+  pages: PageRequirement[];
+  /** Whether auth is needed */
+  has_auth: boolean;
+  /** Whether database is needed */
+  has_database: boolean;
+  /** Styling preference */
+  styling_preference?: string;
+}
+
+/**
+ * File kind in generated feature code
+ */
+export type GeneratedFileKind = 'component' | 'page' | 'type' | 'hook' | 'util' | 'api' | 'config';
+
+/**
+ * A single generated file from LLM feature code generation
+ */
+export interface GeneratedFile {
+  /** Relative path (e.g., "src/components/TodoList.tsx") */
+  path: string;
+  /** Full file content */
+  content: string;
+  /** Human-readable description */
+  description: string;
+  /** File kind classification */
+  kind: GeneratedFileKind;
+}
+
+/**
+ * A file modification (patch) to an existing scaffolded file
+ */
+export interface ModifiedFileEntry {
+  /** Relative path to existing file */
+  path: string;
+  /** New full content for the file */
+  content: string;
+  /** Description of what changed */
+  description: string;
+}
+
+/**
+ * Result of LLM feature code generation
+ */
+export interface FeatureGenerationResult {
+  /** New files to create */
+  files: GeneratedFile[];
+  /** Existing files to modify */
+  modified_files: ModifiedFileEntry[];
+  /** Human-readable summary */
+  summary: string;
+}
+
+/**
+ * Result of applying feature code to project
+ */
+export interface FeatureApplyResult {
+  /** Files created */
+  created_files: string[];
+  /** Files modified */
+  modified_files: string[];
+  /** Errors encountered */
+  errors: Array<{ file: string; error: string }>;
+  /** Whether apply succeeded overall */
+  success: boolean;
+}
+
+/**
+ * Feature extraction started event payload
+ */
+export interface FeatureExtractionStartedPayload {
+  /** Scaffold operation ID */
+  scaffold_id: string;
+  /** Run ID */
+  run_id: string;
+  /** Original user prompt */
+  user_prompt: string;
+  /** Recipe being used */
+  recipe_id: string;
+}
+
+/**
+ * Feature extraction completed event payload
+ */
+export interface FeatureExtractionCompletedPayload {
+  /** Scaffold operation ID */
+  scaffold_id: string;
+  /** Run ID */
+  run_id: string;
+  /** Detected app type */
+  app_type: string;
+  /** Number of features detected */
+  features_count: number;
+  /** Number of pages planned */
+  pages_count: number;
+  /** Duration in ms */
+  duration_ms: number;
+}
+
+/**
+ * Feature code generating event payload
+ */
+export interface FeatureCodeGeneratingPayload {
+  /** Scaffold operation ID */
+  scaffold_id: string;
+  /** Run ID */
+  run_id: string;
+  /** App type being generated */
+  app_type: string;
+  /** Number of files planned */
+  planned_files_count: number;
+  /** Current status message */
+  message: string;
+}
+
+/**
+ * Feature code applied event payload
+ */
+export interface FeatureCodeAppliedPayload {
+  /** Scaffold operation ID */
+  scaffold_id: string;
+  /** Run ID */
+  run_id: string;
+  /** Files created */
+  created_files: string[];
+  /** Files modified */
+  modified_files: string[];
+  /** Total files affected */
+  total_files: number;
+  /** Summary of what was generated */
+  summary: string;
+  /** Duration in ms */
+  duration_ms: number;
+}
+
+/**
+ * Feature code error event payload
+ */
+export interface FeatureCodeErrorPayload {
+  /** Scaffold operation ID */
+  scaffold_id: string;
+  /** Run ID */
+  run_id: string;
+  /** Error message */
+  error: string;
+  /** Phase where error occurred */
+  phase: 'extraction' | 'generation' | 'application';
+  /** Whether this is recoverable (falls back to generic scaffold) */
+  recoverable: boolean;
 }
 

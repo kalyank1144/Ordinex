@@ -118,7 +118,13 @@ import {
   enrichUserInput,
   getSessionContextManager,
   DEFAULT_INTELLIGENCE_SETTINGS,
+  // Step 41: ProcessManager
+  getProcessManager,
+  generateProcessId,
+  detectProcessType,
+  getDefaultDevCommand,
 } from 'core';
+import type { ProcessStatusEvent, ProcessOutputEvent } from 'core';
 import type { PreflightChecksInput, PreflightOrchestratorCtx, VerifyRecipeInfo, VerifyConfig, VerifyEventCtx } from 'core';
 import type { EnrichedInput, EditorContext, DiagnosticEntry } from 'core';
 
@@ -144,6 +150,7 @@ class MissionControlViewProvider implements vscode.WebviewViewProvider {
   private pendingVerifyRecipe: VerifyRecipeInfo | null = null; // Step 44: Recipe info for verification retry
   private pendingVerifyScaffoldId: string | null = null; // Step 44: Scaffold ID for verification retry
   private settingsPanel: vscode.WebviewPanel | null = null; // Step 45: Settings panel
+  private scaffoldProjectPath: string | null = null; // Store scaffold project path for follow-up context
 
   constructor(
     private readonly _extensionUri: vscode.Uri,
@@ -341,6 +348,7 @@ class MissionControlViewProvider implements vscode.WebviewViewProvider {
         break;
 
       case 'ordinex:stopAutonomy':
+      case 'ordinex:stopExecution':
         await this.handleStopAutonomy(message, webview);
         break;
 
@@ -421,6 +429,11 @@ class MissionControlViewProvider implements vscode.WebviewViewProvider {
 
       case 'verification_continue':
         await this.handleVerificationContinue(message, webview);
+        break;
+
+      // Post-scaffold: Next step action selected by user
+      case 'next_step_selected':
+        await this.handleNextStepSelected(message, webview);
         break;
 
       default:
@@ -515,6 +528,29 @@ class MissionControlViewProvider implements vscode.WebviewViewProvider {
         console.warn('[Step40.5] No workspace root, skipping enrichment');
       }
 
+      // Intent analysis must see RAW user text, NOT enriched prompt with [Project: ...] metadata
+      // that adds framework/noun keywords and triggers false greenfield detection
+      const promptForIntent = text;
+
+      // 2.5: Enrich follow-up prompt with scaffold context if available
+      if (this.scaffoldProjectPath && this.eventStore && this.currentTaskId) {
+        const recentEvents = this.eventStore.getEventsByTaskId(this.currentTaskId);
+        const verifyErrors = recentEvents
+          .filter((e: Event) => e.type === 'scaffold_verify_step_completed' && e.payload.step_status === 'fail')
+          .map((e: Event) => `[${e.payload.step_name}] ${e.payload.message || ''}`)
+          .join('\n');
+
+        if (verifyErrors) {
+          const scaffoldContext = `[Context: The scaffolded project at "${this.scaffoldProjectPath}" has build errors:\n${verifyErrors}\n]\n\n`;
+          effectivePrompt = scaffoldContext + effectivePrompt;
+          console.log('[ScaffoldContext] Enriched follow-up prompt with scaffold error context');
+        } else {
+          const scaffoldContext = `[Context: Working on scaffolded project at "${this.scaffoldProjectPath}"]\n\n`;
+          effectivePrompt = scaffoldContext + effectivePrompt;
+          console.log('[ScaffoldContext] Enriched follow-up prompt with scaffold path context');
+        }
+      }
+
       // 2a. Handle out-of-scope requests
       if (enrichedInput?.outOfScope) {
         console.log('[Step40.5] Out-of-scope request detected, sending redirect');
@@ -585,15 +621,15 @@ class MissionControlViewProvider implements vscode.WebviewViewProvider {
       console.log('[Step33] Analysis context:', analysisContext);
 
       // 4. STEP 33: Analyze intent using ENRICHED prompt (behavior-first) with flow_kind detection
-      const commandDetection = detectCommandIntent(effectivePrompt);
+      const commandDetection = detectCommandIntent(promptForIntent);
       console.log('[Step33] Command detection:', commandDetection);
 
       // Use analyzeIntentWithFlow to get flow_kind for greenfield detection
-      let analysisWithFlow = analyzeIntentWithFlow(effectivePrompt, analysisContext);
+      let analysisWithFlow = analyzeIntentWithFlow(promptForIntent, analysisContext);
       let analysis = analysisWithFlow; // Same object, but typed to include flow_kind
 
       console.log('[Step35] Flow kind:', analysisWithFlow.flow_kind);
-      console.log('[Step35] Is greenfield request:', isGreenfieldRequest(effectivePrompt));
+      console.log('[Step35] Is greenfield request:', isGreenfieldRequest(promptForIntent));
 
       // If a clear command intent is detected, do not block on stale active-run state
       if (analysis.behavior === 'CONTINUE_RUN' && commandDetection.isCommandIntent && commandDetection.confidence >= 0.75) {
@@ -666,14 +702,17 @@ class MissionControlViewProvider implements vscode.WebviewViewProvider {
           console.log('>>> BEHAVIOR: QUICK_ACTION <<<');
           
           // STEP 34.5: Check if this is a command execution request
-          const commandIntent = detectCommandIntent(effectivePrompt);
+          const commandIntent = detectCommandIntent(promptForIntent);
           
-          if (commandIntent.isCommandIntent) {
-            // This is a COMMAND - route to command execution phase
+          if (commandIntent.isCommandIntent && commandIntent.confidence >= 0.75) {
+            // This is a COMMAND with high confidence - route to command execution phase
             console.log('[QUICK_ACTION] Detected command intent:', commandIntent);
             
             try {
-              const workspaceRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+              const workspaceRoot = this.scaffoldProjectPath || vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+              if (this.scaffoldProjectPath) {
+                console.log(`[QUICK_ACTION] Using scaffoldProjectPath as workspace: ${workspaceRoot}`);
+              }
               if (!workspaceRoot) {
                 throw new Error('No workspace folder open');
               }
@@ -1066,9 +1105,15 @@ class MissionControlViewProvider implements vscode.WebviewViewProvider {
         throw new Error('EventStore not initialized');
       }
 
-      const workspaceRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
-      if (!workspaceRoot) {
+      const vsCodeWorkspaceRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+      if (!vsCodeWorkspaceRoot) {
         throw new Error('No workspace folder open');
+      }
+
+      // Use scaffold project path if available (so mission operates in the scaffolded project dir)
+      const workspaceRoot = this.scaffoldProjectPath || vsCodeWorkspaceRoot;
+      if (this.scaffoldProjectPath) {
+        console.log(`[handleExecutePlan] Using scaffoldProjectPath as workspace: ${workspaceRoot}`);
       }
 
       // Get API key for LLM calls
@@ -1095,17 +1140,17 @@ class MissionControlViewProvider implements vscode.WebviewViewProvider {
         // Events are already persisted by MissionExecutor's eventBus
         // We just need to send updated events to webview in real-time
         await this.sendEventsToWebview(webview, taskId);
-        
+
         // CRITICAL: Handle mission completion to trigger next mission in breakdown
         if (event.type === 'mission_completed') {
           console.log('[handleExecutePlan] 🎉 mission_completed detected, triggering sequencing logic');
           console.log('[handleExecutePlan] Event payload:', JSON.stringify(event.payload, null, 2));
-          
+
           // CRITICAL: Clear mission executing flag so next mission can start
           this.isMissionExecuting = false;
           this.currentExecutingMissionId = null;
           console.log('[handleExecutePlan] ✓ Mission execution flag cleared');
-          
+
           await this.handleMissionCompletionSequencing(taskId, webview);
         }
       });
@@ -3082,14 +3127,45 @@ This demonstrates the diff proposal pipeline without requiring LLM integration.
               const scaffoldDecisionEvent = postScaffoldEvents.find(e => e.type === 'scaffold_decision_requested');
               const scaffoldIdForPost = (scaffoldDecisionEvent?.payload?.scaffold_id as string) || this.generateId();
               
-              // Extract design pack ID from scaffold context if available
-              const designPackIdForPost = (scaffoldContext?.design_pack_id as string) || 'minimal-light';
+              // Extract design pack ID from events (not scaffoldContext which uses wrong field names)
+              // Priority: scaffold_style_selected (user changed style) > scaffold_proposal_created (default style)
+              const styleSelectedEvent = postScaffoldEvents.find(e => e.type === 'scaffold_style_selected');
+              const proposalEvent = postScaffoldEvents.find(e => e.type === 'scaffold_proposal_created');
+              const designPackIdForPost = (styleSelectedEvent?.payload?.pack_id as string)
+                || (proposalEvent?.payload?.design_pack_id as string)
+                || 'minimal-light';
+              console.log(`[handleResolveDecisionPoint] Design pack ID: ${designPackIdForPost} (from: ${styleSelectedEvent ? 'style_selected' : proposalEvent ? 'proposal' : 'fallback'})`);
               
               // Import startPostScaffoldOrchestration from core
               const coreModule = await import('core');
               const startPostScaffoldOrchestration = coreModule.startPostScaffoldOrchestration;
               
               if (typeof startPostScaffoldOrchestration === 'function') {
+                // Build LLM client adapter for feature generation
+                const featureApiKey = await this._context.secrets.get('ordinex.apiKey');
+                let featureLLMClient: any = undefined;
+                if (featureApiKey) {
+                  try {
+                    // Use core's factory — core has @anthropic-ai/sdk as a dependency
+                    const { createFeatureLLMClient } = await import('core');
+                    featureLLMClient = await createFeatureLLMClient(featureApiKey);
+                    if (featureLLMClient) {
+                      console.log('[handleResolveDecisionPoint] ✅ Feature LLM client created successfully');
+                    } else {
+                      console.warn('[handleResolveDecisionPoint] ⚠️ createFeatureLLMClient returned null');
+                    }
+                  } catch (llmError) {
+                    console.warn('[handleResolveDecisionPoint] Could not create LLM client for feature generation:', llmError);
+                  }
+                } else {
+                  console.warn('[handleResolveDecisionPoint] ⚠️ No API key found (ordinex.apiKey) — feature generation will be skipped');
+                }
+
+                // Extract user prompt from scaffold events
+                const scaffoldIntentEvt = this.eventStore?.getEventsByTaskId(task_id)?.find((e: Event) => e.type === 'intent_received');
+                const scaffoldUserPrompt = (scaffoldIntentEvt?.payload?.prompt as string) || '';
+                console.log(`[handleResolveDecisionPoint] User prompt for feature generation: "${scaffoldUserPrompt}" (found event: ${!!scaffoldIntentEvt})`);
+
                 const postScaffoldCtx = {
                   taskId: task_id,
                   scaffoldId: scaffoldIdForPost,
@@ -3099,6 +3175,8 @@ This demonstrates the diff proposal pipeline without requiring LLM integration.
                   designPackId: designPackIdForPost,
                   eventBus: postScaffoldEventBus,
                   mode: this.currentMode,
+                  userPrompt: scaffoldUserPrompt,
+                  llmClient: featureLLMClient,
                 };
                 
                 // Subscribe to post-scaffold events for UI updates
@@ -3109,6 +3187,10 @@ This demonstrates the diff proposal pipeline without requiring LLM integration.
                 // Fire and forget - orchestrator handles polling and event emission
                 startPostScaffoldOrchestration(postScaffoldCtx).then((result: any) => {
                   console.log('[handleResolveDecisionPoint] ✅ Post-scaffold complete:', result);
+                  if (result?.projectPath) {
+                    this.scaffoldProjectPath = result.projectPath;
+                    console.log(`[handleResolveDecisionPoint] Stored scaffoldProjectPath: ${this.scaffoldProjectPath}`);
+                  }
                 }).catch((error: any) => {
                   console.error('[handleResolveDecisionPoint] ❌ Post-scaffold error:', error);
                 });
@@ -3140,9 +3222,8 @@ This demonstrates the diff proposal pipeline without requiring LLM integration.
                 `🎉 ${recipeNames[recipeSelection.recipe_id] || 'Project'} scaffold started! Follow the terminal prompts to complete setup.`
               );
 
-              // Clear task AFTER scaffold command has been sent to terminal
-              console.log('[handleResolveDecisionPoint] Scaffold apply complete, clearing currentTaskId');
-              this.currentTaskId = null;
+              // Preserve taskId for follow-up prompts (post-scaffold context)
+              console.log('[handleResolveDecisionPoint] Scaffold apply complete, preserving currentTaskId for follow-ups');
               this.currentStage = 'none';
 
             } catch (scaffoldApplyError) {
@@ -4181,19 +4262,100 @@ This demonstrates the diff proposal pipeline without requiring LLM integration.
         `${recipeNames[recipeSelection.recipe_id] || 'Project'} scaffold started! Follow the terminal prompts.`
       );
 
-      // Step 44: Store verification context for retry and trigger async verification
+      // 🚀 START POST-SCAFFOLD ORCHESTRATION (same as direct proceed path)
       const scaffoldId = message.scaffoldId || this.generateId();
-      const verifyRecipe: VerifyRecipeInfo = {
-        recipeId: recipeSelection.recipe_id,
-        recipeName: recipeNames[recipeSelection.recipe_id],
-        hasTypeScript: recipeSelection.recipe_id === 'nextjs_app_router' || recipeSelection.recipe_id === 'vite_react',
-      };
-      this.pendingVerifyTargetDir = targetDir;
-      this.pendingVerifyRecipe = verifyRecipe;
-      this.pendingVerifyScaffoldId = scaffoldId;
 
-      // Fire-and-forget: run verification after a delay to let scaffold command complete
-      this.triggerPostScaffoldVerification(targetDir, verifyRecipe, scaffoldId, taskId, webview);
+      try {
+        const coreModule = await import('core');
+        const startPostScaffoldOrchestration = coreModule.startPostScaffoldOrchestration;
+
+        if (typeof startPostScaffoldOrchestration === 'function') {
+          const postScaffoldEventBus = new EventBus(this.eventStore!);
+
+          // Extract design pack ID from events
+          // Priority: scaffold_style_selected (user changed style) > scaffold_proposal_created (default style)
+          const scaffoldStyleEvent = events.find((e: Event) => e.type === 'scaffold_style_selected');
+          const proposalEvent = events.find((e: Event) => e.type === 'scaffold_proposal_created');
+          const designPackIdForPost = (scaffoldStyleEvent?.payload?.pack_id as string)
+            || (proposalEvent?.payload?.design_pack_id as string)
+            || 'minimal-light';
+          console.log(`${LOG_PREFIX} Design pack ID: ${designPackIdForPost}`);
+
+          // Build LLM client using core's factory
+          const featureApiKey = await this._context.secrets.get('ordinex.apiKey');
+          let featureLLMClient: any = undefined;
+          if (featureApiKey) {
+            try {
+              const { createFeatureLLMClient } = coreModule;
+              featureLLMClient = await createFeatureLLMClient(featureApiKey);
+              if (featureLLMClient) {
+                console.log(`${LOG_PREFIX} ✅ Feature LLM client created successfully`);
+              } else {
+                console.warn(`${LOG_PREFIX} ⚠️ createFeatureLLMClient returned null`);
+              }
+            } catch (llmError) {
+              console.warn(`${LOG_PREFIX} Could not create LLM client:`, llmError);
+            }
+          } else {
+            console.warn(`${LOG_PREFIX} ⚠️ No API key (ordinex.apiKey) — feature generation will be skipped`);
+          }
+
+          const postScaffoldCtx = {
+            taskId: taskId,
+            scaffoldId: scaffoldId,
+            targetDirectory: targetDir,
+            appName: 'my-app',
+            recipeId: recipeSelection.recipe_id as any,
+            designPackId: designPackIdForPost,
+            eventBus: postScaffoldEventBus,
+            mode: this.currentMode,
+            userPrompt: scaffoldPrompt,
+            llmClient: featureLLMClient,
+          };
+
+          console.log(`${LOG_PREFIX} Starting post-scaffold orchestration with userPrompt: "${scaffoldPrompt}"`);
+
+          // Subscribe to post-scaffold events for UI updates
+          postScaffoldEventBus.subscribe(async () => {
+            await this.sendEventsToWebview(webview, taskId);
+          });
+
+          // Fire and forget
+          startPostScaffoldOrchestration(postScaffoldCtx).then((result: any) => {
+            console.log(`${LOG_PREFIX} ✅ Post-scaffold complete:`, result);
+            if (result?.projectPath) {
+              this.scaffoldProjectPath = result.projectPath;
+              console.log(`${LOG_PREFIX} Stored scaffoldProjectPath: ${this.scaffoldProjectPath}`);
+            }
+          }).catch((error: any) => {
+            console.error(`${LOG_PREFIX} ❌ Post-scaffold error:`, error);
+          });
+        } else {
+          console.warn(`${LOG_PREFIX} ⚠️ startPostScaffoldOrchestration not available, falling back to verification`);
+          // Fallback to old verification pipeline
+          const verifyRecipe: VerifyRecipeInfo = {
+            recipeId: recipeSelection.recipe_id,
+            recipeName: recipeNames[recipeSelection.recipe_id],
+            hasTypeScript: recipeSelection.recipe_id === 'nextjs_app_router' || recipeSelection.recipe_id === 'vite_react',
+          };
+          this.pendingVerifyTargetDir = targetDir;
+          this.pendingVerifyRecipe = verifyRecipe;
+          this.pendingVerifyScaffoldId = scaffoldId;
+          this.triggerPostScaffoldVerification(targetDir, verifyRecipe, scaffoldId, taskId, webview);
+        }
+      } catch (coreImportError) {
+        console.error(`${LOG_PREFIX} Failed to import core module:`, coreImportError);
+        // Fallback to verification
+        const verifyRecipe: VerifyRecipeInfo = {
+          recipeId: recipeSelection.recipe_id,
+          recipeName: recipeNames[recipeSelection.recipe_id],
+          hasTypeScript: recipeSelection.recipe_id === 'nextjs_app_router' || recipeSelection.recipe_id === 'vite_react',
+        };
+        this.pendingVerifyTargetDir = targetDir;
+        this.pendingVerifyRecipe = verifyRecipe;
+        this.pendingVerifyScaffoldId = scaffoldId;
+        this.triggerPostScaffoldVerification(targetDir, verifyRecipe, scaffoldId, taskId, webview);
+      }
 
     } catch (error) {
       console.error(`${LOG_PREFIX} Error in post-preflight apply:`, error);
@@ -4288,9 +4450,8 @@ This demonstrates the diff proposal pipeline without requiring LLM integration.
         },
       });
 
-      // Clear task on success
+      // Clear verification state on success (but preserve taskId for follow-ups)
       if (result.outcome === 'pass') {
-        this.currentTaskId = null;
         this.currentStage = 'none';
         this.pendingVerifyTargetDir = null;
         this.pendingVerifyRecipe = null;
@@ -4385,15 +4546,255 @@ This demonstrates the diff proposal pipeline without requiring LLM integration.
       parent_event_id: null,
     });
 
-    // Clean up state
+    // Clean up verification state (but preserve taskId for follow-ups)
     this.pendingVerifyTargetDir = null;
     this.pendingVerifyRecipe = null;
     this.pendingVerifyScaffoldId = null;
-    this.currentTaskId = null;
     this.currentStage = 'none';
 
     vscode.window.showInformationMessage('Scaffold complete! Some verification checks had warnings.');
     await this.sendEventsToWebview(webview, taskId);
+  }
+
+  // -------------------------------------------------------------------------
+  // Post-Scaffold: Next Step Action Handler + ProcessManager + Open in Browser
+  // -------------------------------------------------------------------------
+
+  /**
+   * Handle next_step_selected message from webview.
+   * Routes to the correct action based on the suggestion kind:
+   *  - 'command': Start dev server via ProcessManager
+   *  - 'browser': Open URL in external browser
+   *  - 'task': Emit event for future follow-up feature implementation
+   *  - 'info': Just show info message
+   */
+  private async handleNextStepSelected(message: any, webview: vscode.Webview): Promise<void> {
+    const LOG_PREFIX = '[Ordinex:NextStep]';
+    const { scaffoldId, suggestionId, kind, suggestion } = message;
+
+    console.log(`${LOG_PREFIX} Action selected: kind=${kind}, suggestionId=${suggestionId}`);
+
+    const taskId = this.currentTaskId || this.generateId();
+
+    try {
+      switch (kind) {
+        case 'command': {
+          // Start dev server via ProcessManager
+          const projectPath = suggestion?.projectPath || suggestion?.target_directory || this.pendingVerifyTargetDir;
+          if (!projectPath) {
+            vscode.window.showWarningMessage('No project path available to run command.');
+            return;
+          }
+
+          const commandStr = suggestion?.command || 'npm run dev';
+          console.log(`${LOG_PREFIX} Starting dev server: ${commandStr} in ${projectPath}`);
+
+          // Emit process_started event
+          await this.emitEvent({
+            event_id: this.generateId(),
+            task_id: taskId,
+            timestamp: new Date().toISOString(),
+            type: 'process_started' as any,
+            mode: this.currentMode,
+            stage: this.currentStage,
+            payload: {
+              scaffold_id: scaffoldId,
+              command: commandStr,
+              project_path: projectPath,
+              message: `Starting: ${commandStr}`,
+            },
+            evidence_ids: [],
+            parent_event_id: null,
+          });
+          await this.sendEventsToWebview(webview, taskId);
+
+          // Use ProcessManager to start the dev server
+          const pm = getProcessManager();
+          const processId = generateProcessId('devserver');
+          const processType = detectProcessType(commandStr);
+
+          // Wire ProcessManager events to Ordinex events
+          const statusHandler = async (evt: ProcessStatusEvent) => {
+            if (evt.processId !== processId) return;
+
+            if (evt.newStatus === 'ready') {
+              console.log(`${LOG_PREFIX} Dev server ready on port ${evt.port}`);
+              await this.emitEvent({
+                event_id: this.generateId(),
+                task_id: taskId,
+                timestamp: new Date().toISOString(),
+                type: 'process_ready' as any,
+                mode: this.currentMode,
+                stage: this.currentStage,
+                payload: {
+                  scaffold_id: scaffoldId,
+                  process_id: processId,
+                  port: evt.port,
+                  message: `Dev server ready${evt.port ? ` on http://localhost:${evt.port}` : ''}`,
+                },
+                evidence_ids: [],
+                parent_event_id: null,
+              });
+              await this.sendEventsToWebview(webview, taskId);
+
+              // Auto-open browser if port detected
+              if (evt.port) {
+                const url = `http://localhost:${evt.port}`;
+                const openBrowser = await vscode.window.showInformationMessage(
+                  `Dev server ready on port ${evt.port}`,
+                  'Open in Browser'
+                );
+                if (openBrowser === 'Open in Browser') {
+                  await vscode.env.openExternal(vscode.Uri.parse(url));
+                }
+              }
+            } else if (evt.newStatus === 'stopped') {
+              await this.emitEvent({
+                event_id: this.generateId(),
+                task_id: taskId,
+                timestamp: new Date().toISOString(),
+                type: 'process_stopped' as any,
+                mode: this.currentMode,
+                stage: this.currentStage,
+                payload: {
+                  scaffold_id: scaffoldId,
+                  process_id: processId,
+                  exit_code: evt.exitCode,
+                  message: `Dev server stopped${evt.exitCode !== undefined ? ` (exit code: ${evt.exitCode})` : ''}`,
+                },
+                evidence_ids: [],
+                parent_event_id: null,
+              });
+              await this.sendEventsToWebview(webview, taskId);
+              pm.removeListener('status', statusHandler);
+              pm.removeListener('output', outputHandler);
+            } else if (evt.newStatus === 'error') {
+              await this.emitEvent({
+                event_id: this.generateId(),
+                task_id: taskId,
+                timestamp: new Date().toISOString(),
+                type: 'process_error' as any,
+                mode: this.currentMode,
+                stage: this.currentStage,
+                payload: {
+                  scaffold_id: scaffoldId,
+                  process_id: processId,
+                  error: evt.error || 'Unknown error',
+                  message: `Dev server error: ${evt.error || 'Unknown'}`,
+                },
+                evidence_ids: [],
+                parent_event_id: null,
+              });
+              await this.sendEventsToWebview(webview, taskId);
+              pm.removeListener('status', statusHandler);
+              pm.removeListener('output', outputHandler);
+            }
+          };
+
+          const outputHandler = async (evt: ProcessOutputEvent) => {
+            if (evt.processId !== processId) return;
+            // Don't flood the event store — only log stderr and significant output
+            if (evt.stream === 'stderr' && evt.data.trim()) {
+              console.log(`${LOG_PREFIX} [${processId}] stderr: ${evt.data.trim().slice(0, 200)}`);
+            }
+          };
+
+          pm.on('status', statusHandler);
+          pm.on('output', outputHandler);
+
+          // Parse command into command + args
+          const parts = commandStr.split(/\s+/);
+          const cmd = parts[0];
+          const args = parts.slice(1);
+
+          try {
+            await pm.startProcess({
+              id: processId,
+              command: cmd,
+              args,
+              cwd: projectPath,
+              processType,
+              timeout: 60000,
+              runId: taskId,
+            });
+            console.log(`${LOG_PREFIX} Process started: ${processId}`);
+          } catch (err: any) {
+            console.error(`${LOG_PREFIX} Failed to start process:`, err);
+            await this.emitEvent({
+              event_id: this.generateId(),
+              task_id: taskId,
+              timestamp: new Date().toISOString(),
+              type: 'process_error' as any,
+              mode: this.currentMode,
+              stage: this.currentStage,
+              payload: {
+                scaffold_id: scaffoldId,
+                process_id: processId,
+                error: err.message || 'Failed to start process',
+                message: `Failed to start dev server: ${err.message}`,
+              },
+              evidence_ids: [],
+              parent_event_id: null,
+            });
+            await this.sendEventsToWebview(webview, taskId);
+            pm.removeListener('status', statusHandler);
+            pm.removeListener('output', outputHandler);
+          }
+          break;
+        }
+
+        case 'browser': {
+          // Open in external browser
+          const url = suggestion?.url || suggestion?.command || '';
+          if (url) {
+            console.log(`${LOG_PREFIX} Opening in browser: ${url}`);
+            await vscode.env.openExternal(vscode.Uri.parse(url));
+          } else {
+            vscode.window.showWarningMessage('No URL available to open.');
+          }
+          break;
+        }
+
+        case 'task': {
+          // Future feature suggestion — emit event and show info
+          console.log(`${LOG_PREFIX} Task suggestion selected: ${suggestion?.title || suggestionId}`);
+          vscode.window.showInformationMessage(
+            `Feature suggestion: ${suggestion?.title || 'Selected'}. This will be available in a future update.`
+          );
+
+          await this.emitEvent({
+            event_id: this.generateId(),
+            task_id: taskId,
+            timestamp: new Date().toISOString(),
+            type: 'next_step_selected' as any,
+            mode: this.currentMode,
+            stage: this.currentStage,
+            payload: {
+              scaffold_id: scaffoldId,
+              suggestion_id: suggestionId,
+              kind,
+              title: suggestion?.title || '',
+            },
+            evidence_ids: [],
+            parent_event_id: null,
+          });
+          break;
+        }
+
+        case 'info':
+        default: {
+          // Just show info
+          console.log(`${LOG_PREFIX} Info step selected: ${suggestion?.title || suggestionId}`);
+          if (suggestion?.description) {
+            vscode.window.showInformationMessage(suggestion.description);
+          }
+          break;
+        }
+      }
+    } catch (error: any) {
+      console.error(`${LOG_PREFIX} Error handling next step:`, error);
+      vscode.window.showErrorMessage(`Failed to execute action: ${error.message}`);
+    }
   }
 
   /**
