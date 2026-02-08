@@ -102,6 +102,9 @@ import {
   // Step 35: Scaffold Flow
   ScaffoldFlowCoordinator,
   isGreenfieldRequest,
+  // Step 35.8: LLM Intent Classification (ambiguity fallback)
+  llmClassifyIntent,
+  needsLlmClassification,
   // Step 35.3-35.4: Recipe Selection & Scaffold Apply
   selectRecipe,
   buildRecipePlan,
@@ -631,6 +634,60 @@ class MissionControlViewProvider implements vscode.WebviewViewProvider {
       console.log('[Step35] Flow kind:', analysisWithFlow.flow_kind);
       console.log('[Step35] Is greenfield request:', isGreenfieldRequest(promptForIntent));
 
+      // LLM classifier fallback: when heuristics are ambiguous, use Haiku for classification
+      const greenfieldSignal = isGreenfieldRequest(promptForIntent);
+      const greenfieldConfidence = greenfieldSignal ? 0.9 : 0.1;
+      const commandConfidence = commandDetection.confidence;
+      if (needsLlmClassification(greenfieldConfidence, commandConfidence, analysis.confidence)) {
+        try {
+          const apiKey = await this._context.secrets.get('ordinex.apiKey');
+          if (apiKey) {
+            console.log('[LLM Classifier] Heuristics ambiguous — calling Haiku for classification');
+            const llmResult = await llmClassifyIntent({
+              text: promptForIntent,
+              contextHint: this.scaffoldProjectPath ? 'Working in scaffolded project' : undefined,
+              llmConfig: { apiKey, model: 'claude-haiku-4-5-20251001' },
+            });
+            console.log('[LLM Classifier] Result:', llmResult);
+
+            if (llmResult.confidence >= 0.7) {
+              // Map LLM intent to behavior/flow_kind override
+              const intentToBehavior: Record<string, string> = {
+                'SCAFFOLD': 'PLAN',
+                'RUN_COMMAND': 'QUICK_ACTION',
+                'PLAN': 'PLAN',
+                'QUICK_ACTION': 'QUICK_ACTION',
+                'ANSWER': 'ANSWER',
+              };
+              const intentToFlowKind: Record<string, string> = {
+                'SCAFFOLD': 'scaffold',
+                'RUN_COMMAND': 'standard',
+                'PLAN': 'standard',
+                'QUICK_ACTION': 'standard',
+                'ANSWER': 'standard',
+              };
+
+              const mappedBehavior = intentToBehavior[llmResult.intent];
+              const mappedFlowKind = intentToFlowKind[llmResult.intent];
+
+              if (mappedBehavior) {
+                console.log(`[LLM Classifier] Overriding behavior: ${analysis.behavior} → ${mappedBehavior}, flow: ${analysisWithFlow.flow_kind} → ${mappedFlowKind}`);
+                analysis = {
+                  ...analysis,
+                  behavior: mappedBehavior as any,
+                  derived_mode: (llmResult.intent === 'ANSWER' ? 'ANSWER' : llmResult.intent === 'SCAFFOLD' ? 'SCAFFOLD' : 'MISSION') as Mode,
+                  reasoning: `LLM classifier: ${llmResult.reason}`,
+                  confidence: llmResult.confidence,
+                };
+                analysisWithFlow = { ...analysisWithFlow, flow_kind: mappedFlowKind as any };
+              }
+            }
+          }
+        } catch (llmError) {
+          console.warn('[LLM Classifier] Fallback failed (graceful degradation):', llmError);
+        }
+      }
+
       // If a clear command intent is detected, do not block on stale active-run state
       if (analysis.behavior === 'CONTINUE_RUN' && commandDetection.isCommandIntent && commandDetection.confidence >= 0.75) {
         console.log('[Step33] Overriding CONTINUE_RUN due to command intent');
@@ -672,13 +729,22 @@ class MissionControlViewProvider implements vscode.WebviewViewProvider {
       await this.sendEventsToWebview(webview, taskId);
 
       // 5. STEP 35 FIX: SCAFFOLD CHECK BEFORE BEHAVIOR SWITCH
-      // Greenfield requests MUST route to scaffold flow regardless of behavior classification
-      if (analysisWithFlow.flow_kind === 'scaffold') {
+      // Greenfield requests route to scaffold flow UNLESS a clear command intent overrides
+      const commandOverridesScaffold = commandDetection.isCommandIntent && commandDetection.confidence >= 0.75;
+
+      if (analysisWithFlow.flow_kind === 'scaffold' && !commandOverridesScaffold) {
         console.log('[Step35] 🏗️ SCAFFOLD flow detected - routing DIRECTLY to scaffold handler');
         console.log('[Step35] Bypassing behavior switch (was:', analysis.behavior, ')');
         await this.handleScaffoldFlow(effectivePrompt, taskId, modelId || 'sonnet-4.5', webview, attachments || []);
         console.log('[Step33] Behavior handling complete (scaffold flow)');
         return; // Exit early - scaffold flow handles everything
+      }
+
+      // Command intent overrides scaffold flow (e.g., "new start dev server")
+      if (commandOverridesScaffold && analysisWithFlow.flow_kind === 'scaffold') {
+        console.log('[Step35] Command intent overrides scaffold flow:', commandDetection.reasoning);
+        analysis = { ...analysis, behavior: 'QUICK_ACTION', derived_mode: 'MISSION' as Mode, reasoning: `Command override: ${commandDetection.reasoning}` };
+        analysisWithFlow = { ...analysisWithFlow, flow_kind: 'standard' };
       }
 
       // 6. STEP 33: Handle behavior-specific logic (non-scaffold)

@@ -672,6 +672,7 @@ export {
   getPacksByVibe,
   generateCssVariables,
   generateGlobalsCss,
+  generateTailwindConfig,
   DESIGN_PACKS,
 } from './scaffold/designPacks';
 

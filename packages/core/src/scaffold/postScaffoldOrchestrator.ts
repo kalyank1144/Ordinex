@@ -17,6 +17,7 @@ import type { RecipeId } from './recipeTypes';
 import {
   getDesignPackById,
   generateGlobalsCss,
+  generateTailwindConfig,
   DesignPack,
   DesignPackId
 } from './designPacks';
@@ -307,13 +308,18 @@ export async function startPostScaffoldOrchestration(
             });
           }
         } else {
-          console.warn(`${LOG_PREFIX} ⚠️ Feature code generation returned null — falling back to generic scaffold`);
+          const featureDetail = `${requirements.app_type}: ${requirements.features.length} features, ${requirements.pages.length} pages`;
+          console.warn(`${LOG_PREFIX} ⚠️ Feature code generation returned null for (${featureDetail}) — falling back to generic scaffold`);
+          console.warn(`${LOG_PREFIX} Check console logs above for truncation warnings or parse errors`);
           emitFeatureEvent(ctx, 'feature_code_error', {
             scaffold_id: ctx.scaffoldId,
             run_id: ctx.taskId,
-            error: 'Code generation returned empty result',
+            error: `Code generation failed for ${featureDetail}. Check extension output for details.`,
             phase: 'generation',
             recoverable: true,
+            app_type: requirements.app_type,
+            features_count: requirements.features.length,
+            pages_count: requirements.pages.length,
           });
         }
       } else {
@@ -410,6 +416,12 @@ export async function startPostScaffoldOrchestration(
       // Update verifySteps with final results
       verifySteps.length = 0;
       verifySteps.push(...currentVerifySteps);
+
+      // Emit final verification event so UI reflects the post-autofix state
+      const finalAutoFixOutcome = computeOutcome(verifySteps);
+      const finalAutoFixDuration = verifySteps.reduce((sum, s) => sum + s.durationMs, 0);
+      emitVerifyCompleted(ctx, finalAutoFixOutcome, verifySteps, finalAutoFixDuration, pkgManager);
+      console.log(`${LOG_PREFIX} ✓ Final verification after auto-fix: ${finalAutoFixOutcome}`);
     }
 
     const finalVerifyOutcome = computeOutcome(verifySteps);
@@ -563,9 +575,24 @@ async function applyDesignPackToProject(
       console.log(`[DesignPack] ✓ Modified: ${cssTarget.path}`);
     }
     
+    // Generate and write design-pack-aware tailwind.config.ts
+    const tailwindConfigContent = generateTailwindConfig(designPack);
+    const tailwindConfigCandidates = ['tailwind.config.ts', 'tailwind.config.js'];
+    let tailwindConfigWritten = false;
+    for (const candidate of tailwindConfigCandidates) {
+      const configPath = path.join(projectPath, candidate);
+      if (fs.existsSync(configPath) || (!tailwindConfigWritten && candidate === 'tailwind.config.ts')) {
+        fs.writeFileSync(configPath, tailwindConfigContent, 'utf-8');
+        modifiedFiles.push(candidate);
+        tailwindConfigWritten = true;
+        console.log(`[DesignPack] ✓ Generated tailwind config: ${candidate}`);
+        break;
+      }
+    }
+
     // Also try to add font links if using custom fonts
     await addFontImportsIfNeeded(projectPath, recipeId, designPack);
-    
+
     return {
       success: modifiedFiles.length > 0,
       modifiedFiles,
@@ -1111,6 +1138,15 @@ NEXT.JS APP ROUTER RULES (CRITICAL):
 - A common fix: if a file uses useState/useEffect but is missing "use client", add it as the first line
 ` : '';
 
+  const tailwindGuidance = `
+TAILWIND DESIGN TOKENS:
+This project uses CSS variables mapped to Tailwind theme. Available classes:
+- bg-primary, text-primary-foreground, bg-secondary, bg-accent, bg-muted, bg-background, text-foreground
+- border-border, font-heading, font-body
+- Do NOT strip these classes when fixing errors. They are valid Tailwind theme extensions.
+- The tailwind.config.ts extends theme.colors with var(--primary), var(--border), etc.
+`;
+
   const attemptContext = attemptNumber > 1
     ? `\nThis is auto-fix attempt ${attemptNumber}. Previous attempt(s) did not fully resolve the errors. Focus on the remaining issues.\n`
     : '';
@@ -1120,7 +1156,7 @@ NEXT.JS APP ROUTER RULES (CRITICAL):
 PACKAGE MANAGER: ${pkgManager}
 TSCONFIG: ${tsConfigContent || '(not found)'}
 PACKAGE.JSON: ${packageJsonContent || '(not found)'}
-${rscGuidance}
+${rscGuidance}${tailwindGuidance}
 ERRORS:
 ${errors}
 ${failingFileContents ? `\nFAILING FILE CONTENTS:\n${failingFileContents}` : ''}
