@@ -12,6 +12,8 @@
 
 import * as fs from 'fs';
 import * as path from 'path';
+import type { ReferenceTokens } from './types';
+import { buildCompactSummary } from './vision/referenceContextSummary';
 
 export interface PlanContextBundle {
   project_summary: string;
@@ -346,4 +348,219 @@ export function buildPlanModeSystemMessage(context: PlanContextBundle): string {
   parts.push('Now generate the plan in JSON format for the user\'s request.');
 
   return parts.join('\n');
+}
+
+// ============================================================================
+// STEP 38: REFERENCE TOKENS INTEGRATION FOR PLAN MODE
+// ============================================================================
+
+/**
+ * Extended plan context bundle with reference tokens (Step 38)
+ */
+export interface PlanContextBundleWithTokens extends PlanContextBundle {
+  /** Reference style tokens from vision analysis */
+  referenceTokens?: ReferenceTokens;
+  /** Reference tokens summary (compact string) */
+  referenceStyleSummary?: string;
+}
+
+/**
+ * Extended options with reference tokens support (Step 38)
+ */
+export interface PlanContextCollectionOptionsWithTokens extends PlanContextCollectionOptions {
+  /** Reference tokens from vision analysis */
+  referenceTokens?: ReferenceTokens;
+}
+
+/**
+ * Collect plan context with optional reference tokens (Step 38)
+ * 
+ * @param options - Collection options with optional reference tokens
+ * @returns Extended context bundle with reference info
+ */
+export async function collectPlanContextWithTokens(
+  options: PlanContextCollectionOptionsWithTokens
+): Promise<PlanContextBundleWithTokens> {
+  // Collect base context
+  const baseContext = await collectPlanContext(options);
+  
+  // If no reference tokens, return base context
+  if (!options.referenceTokens) {
+    return baseContext;
+  }
+  
+  // Build compact summary from tokens
+  const referenceStyleSummary = buildCompactSummary(options.referenceTokens);
+  
+  return {
+    ...baseContext,
+    referenceTokens: options.referenceTokens,
+    referenceStyleSummary,
+  };
+}
+
+/**
+ * Build system message with reference style hints (Step 38)
+ * 
+ * Includes a "Reference Style Hints" section if tokens are present.
+ * ~120 chars, moods + primary/accent + confidence only.
+ * NEVER includes raw images or huge text.
+ * 
+ * @param context - Extended context bundle with reference tokens
+ * @returns System message string
+ */
+export function buildPlanModeSystemMessageWithTokens(context: PlanContextBundleWithTokens): string {
+  const parts: string[] = [];
+
+  parts.push('# PLAN MODE - Project-Aware Planning');
+  parts.push('');
+  parts.push('You are analyzing a REAL, EXISTING codebase and creating a plan specific to THIS project.');
+  parts.push('');
+  
+  // Step 38: Add reference style hints if present
+  if (context.referenceStyleSummary) {
+    parts.push('## 🎨 Reference Style Hints');
+    parts.push('');
+    parts.push('The user has provided visual references to guide the design direction:');
+    parts.push('');
+    parts.push(`**${context.referenceStyleSummary}**`);
+    parts.push('');
+    parts.push('Consider these style hints when proposing UI/design-related aspects of your plan.');
+    parts.push('');
+    parts.push('---');
+    parts.push('');
+  }
+  
+  parts.push('⚠️ CRITICAL INSTRUCTIONS - READ CAREFULLY ⚠️');
+  parts.push('');
+  parts.push('YOUR PLAN MUST BE PROJECT-SPECIFIC:');
+  parts.push('1. READ the project context below carefully - this is the ACTUAL project you are planning for');
+  parts.push('2. ANALYZE the real files, technologies, and structure shown below');
+  parts.push('3. REFERENCE specific files, packages, directories, and components from the context in your plan');
+  parts.push('4. PROPOSE features/changes based on what you ACTUALLY see in the codebase');
+  parts.push('5. If the user\'s request is vague, first analyze the codebase then suggest specific improvements');
+  if (context.referenceStyleSummary) {
+    parts.push('6. For UI/design tasks, align with the reference style hints provided above');
+  }
+  parts.push('');
+  parts.push('🚫 STRICTLY FORBIDDEN:');
+  parts.push('- Generic plans that could apply to any project');
+  parts.push('- Making assumptions not supported by the project context');
+  parts.push('- Suggesting features without analyzing what already exists');
+  parts.push('- Ignoring the actual project structure and files provided');
+  parts.push('- Proposing edits or commands (PLAN mode = analysis + proposal only)');
+  parts.push('');
+  parts.push('✅ REQUIRED IN EVERY PLAN:');
+  parts.push('- Specific file paths from the project context');
+  parts.push('- Specific package names from dependencies');
+  parts.push('- Specific existing components/modules to work with');
+  parts.push('- Analysis of CURRENT state before proposing changes');
+  parts.push('- Next steps that reference actual project structure');
+  parts.push('');
+  parts.push('📋 EXAMPLE OF GOOD vs BAD:');
+  parts.push('❌ BAD: "Add user authentication to improve security"');
+  parts.push('✅ GOOD: "Add user authentication to src/components/Login.tsx using the existing AuthContext in src/contexts/AuthContext.tsx"');
+  parts.push('');
+  parts.push('❌ BAD: "Implement new features that align with project goals"');
+  parts.push('✅ GOOD: "Extend the WorkoutManager component (src/components/WorkoutManager.tsx) with exercise tracking by adding a new ExerciseLog component"');
+  parts.push('');
+  parts.push('OUTPUT FORMAT (MANDATORY):');
+  parts.push('You must output ONLY valid JSON matching this exact schema:');
+  parts.push('{');
+  parts.push('  "goal": string,');
+  parts.push('  "assumptions": string[],');
+  parts.push('  "success_criteria": string[],');
+  parts.push('  "scope_contract": {');
+  parts.push('    "max_files": number,');
+  parts.push('    "max_lines": number,');
+  parts.push('    "allowed_tools": string[]');
+  parts.push('  },');
+  parts.push('  "steps": Array<{');
+  parts.push('    "id": string,');
+  parts.push('    "description": string,');
+  parts.push('    "expected_evidence": string[]');
+  parts.push('  }>,');
+  parts.push('  "risks": string[],');
+  parts.push('  "planMeta": {                         // REQUIRED - Plan complexity metadata');
+  parts.push('    "estimatedFileTouch": number,       // Estimated files this plan will modify');
+  parts.push('    "estimatedDevHours": number,        // Estimated hours for senior developer');
+  parts.push('    "riskAreas": string[],              // e.g. ["auth", "migration", "payments"]');
+  parts.push('    "domains": string[],                // e.g. ["web", "mobile", "backend", "database"]');
+  parts.push('    "confidence": "low" | "medium" | "high"  // Your confidence in scope accuracy');
+  parts.push('  }');
+  parts.push('}');
+  parts.push('');
+  parts.push('PLANMETA GUIDANCE:');
+  parts.push('- estimatedFileTouch: Count files that will be created OR modified');
+  parts.push('- estimatedDevHours: Be realistic; complex auth = 8-16hrs, simple UI = 1-4hrs');
+  parts.push('- riskAreas: Include "auth", "payments", "migration", "security" if applicable');
+  parts.push('- domains: List all areas this plan touches (web, mobile, backend, database, infra)');
+  parts.push('- confidence: Use "low" if scope is unclear or plan may need breaking down');
+  parts.push('');
+  parts.push('---');
+  parts.push('');
+
+  // Project summary
+  if (context.project_summary) {
+    parts.push('## Project Summary');
+    parts.push(context.project_summary);
+    parts.push('');
+  }
+
+  // Stack
+  if (context.inferred_stack.length > 0) {
+    parts.push('## Technology Stack');
+    parts.push(context.inferred_stack.join(', '));
+    parts.push('');
+  }
+
+  // File tree
+  if (context.file_tree) {
+    parts.push('## Project Structure');
+    parts.push('```');
+    parts.push(context.file_tree);
+    parts.push('```');
+    parts.push('');
+  }
+
+  // Key files
+  if (context.files.length > 0) {
+    parts.push('## Key Files');
+    context.files.forEach(file => {
+      parts.push(`### ${file.path}`);
+      parts.push('```');
+      parts.push(file.excerpt);
+      parts.push('```');
+      parts.push('');
+    });
+  }
+
+  // Open files
+  if (context.open_files.length > 0) {
+    parts.push('## Currently Open Files');
+    context.open_files.forEach(file => {
+      parts.push(`### ${file.path}`);
+      parts.push('```');
+      parts.push(file.excerpt);
+      parts.push('```');
+      parts.push('');
+    });
+  }
+
+  parts.push('---');
+  parts.push('');
+  parts.push('Now generate the plan in JSON format for the user\'s request.');
+
+  return parts.join('\n');
+}
+
+/**
+ * Build a quick action style hint string from reference tokens
+ * ~120 chars max for injection into QUICK_ACTION prompts
+ * 
+ * @param tokens - Reference tokens from vision analysis
+ * @returns Compact style hint string
+ */
+export function buildQuickActionStyleHint(tokens: ReferenceTokens): string {
+  return buildCompactSummary(tokens);
 }

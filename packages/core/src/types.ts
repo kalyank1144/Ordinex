@@ -104,7 +104,87 @@ export type EventType =
   // Step 34.5: Command Execution Phase
   | 'command_proposed'
   | 'command_skipped'
-  | 'command_progress';
+  | 'command_progress'
+  // Step 35: Greenfield Scaffold Flow
+  | 'scaffold_started'
+  | 'scaffold_clarification_needed'
+  | 'scaffold_clarification_answered'
+  | 'scaffold_proposal_created'
+  | 'scaffold_decision_requested'
+  | 'scaffold_decision_resolved'
+  | 'scaffold_applied'
+  | 'scaffold_completed'
+  | 'scaffold_style_selection_requested'
+  | 'scaffold_style_selected'
+  | 'scaffold_next_steps_ready'
+  // Step 35.2: Scaffold Preflight Safety
+  | 'scaffold_preflight_started'
+  | 'scaffold_preflight_completed'
+  | 'scaffold_target_chosen'
+  | 'scaffold_blocked'
+  // Step 35.4: Scaffold Apply
+  | 'scaffold_apply_started'
+  | 'scaffold_conflict_detected'
+  | 'scaffold_apply_failed'
+  // Step 35.5: Design Pack System
+  | 'design_pack_selected'
+  | 'design_pack_picker_opened'
+  | 'design_pack_overridden'
+  // Step 35.6: Post-Scaffold Next Steps
+  | 'next_steps_shown'
+  | 'next_step_selected'
+  | 'next_step_dismissed'
+  // Post-Scaffold Orchestration (after terminal command completes)
+  | 'scaffold_progress'
+  | 'design_pack_applied'
+  | 'scaffold_final_complete'
+  // Step 35.7: Non-Empty Directory + Monorepo Targeting
+  | 'scaffold_preflight_decision_needed'
+  | 'scaffold_preflight_decision_taken'
+  | 'scaffold_write_blocked'
+  // Step 37: Reference-Based Enhancements
+  | 'reference_attached'
+  | 'reference_context_built'
+  | 'reference_used'
+  // Step 38: Vision + URL Reference Token Extraction
+  | 'vision_analysis_started'
+  | 'vision_analysis_completed'
+  | 'reference_tokens_extracted'
+  | 'reference_tokens_used'
+  // Step 40: Production-Grade Intent Routing
+  | 'intent_routed'
+  // Step 40.5: Intelligence Layer
+  | 'context_enriched'
+  | 'clarification_asked'
+  | 'out_of_scope_detected'
+  | 'reference_resolved'
+  // Step 41: Dev Server Lifecycle
+  | 'process_started'
+  | 'process_ready'
+  | 'process_output'
+  | 'process_stopped'
+  | 'process_error'
+  // Step 43: Scaffold Quality Gates (Preflight Checks + Resolutions + Safe Apply)
+  | 'scaffold_preflight_checks_started'
+  | 'scaffold_preflight_checks_completed'
+  | 'scaffold_preflight_resolution_selected'
+  | 'scaffold_quality_gates_passed'
+  | 'scaffold_quality_gates_failed'
+  | 'scaffold_checkpoint_created'
+  | 'scaffold_checkpoint_restored'
+  | 'scaffold_apply_completed'
+  // Step 44: Post-Scaffold Verification Pipeline
+  | 'scaffold_verify_started'
+  | 'scaffold_verify_step_completed'
+  | 'scaffold_verify_completed'
+  // Step 45: Settings Panel
+  | 'settings_changed'
+  // Scaffold Feature Intelligence (LLM-Powered Feature Generation)
+  | 'feature_extraction_started'
+  | 'feature_extraction_completed'
+  | 'feature_code_generating'
+  | 'feature_code_applied'
+  | 'feature_code_error';
 
 export const CANONICAL_EVENT_TYPES: readonly EventType[] = [
   'intent_received',
@@ -195,6 +275,86 @@ export const CANONICAL_EVENT_TYPES: readonly EventType[] = [
   'command_proposed',
   'command_skipped',
   'command_progress',
+  // Step 35: Greenfield Scaffold Flow
+  'scaffold_started',
+  'scaffold_clarification_needed',
+  'scaffold_clarification_answered',
+  'scaffold_proposal_created',
+  'scaffold_decision_requested',
+  'scaffold_decision_resolved',
+  'scaffold_applied',
+  'scaffold_completed',
+  'scaffold_style_selection_requested',
+  'scaffold_style_selected',
+  'scaffold_next_steps_ready',
+  // Step 35.2: Scaffold Preflight Safety
+  'scaffold_preflight_started',
+  'scaffold_preflight_completed',
+  'scaffold_target_chosen',
+  'scaffold_blocked',
+  // Step 35.4: Scaffold Apply
+  'scaffold_apply_started',
+  'scaffold_conflict_detected',
+  'scaffold_apply_failed',
+  // Step 35.5: Design Pack System
+  'design_pack_selected',
+  'design_pack_picker_opened',
+  'design_pack_overridden',
+  // Step 35.6: Post-Scaffold Next Steps
+  'next_steps_shown',
+  'next_step_selected',
+  'next_step_dismissed',
+  // Post-Scaffold Orchestration (after terminal command completes)
+  'scaffold_progress',
+  'design_pack_applied',
+  'scaffold_final_complete',
+  // Step 35.7: Non-Empty Directory + Monorepo Targeting
+  'scaffold_preflight_decision_needed',
+  'scaffold_preflight_decision_taken',
+  'scaffold_write_blocked',
+  // Step 37: Reference-Based Enhancements
+  'reference_attached',
+  'reference_context_built',
+  'reference_used',
+  // Step 38: Vision + URL Reference Token Extraction
+  'vision_analysis_started',
+  'vision_analysis_completed',
+  'reference_tokens_extracted',
+  'reference_tokens_used',
+  // Step 40: Production-Grade Intent Routing
+  'intent_routed',
+  // Step 40.5: Intelligence Layer
+  'context_enriched',
+  'clarification_asked',
+  'out_of_scope_detected',
+  'reference_resolved',
+  // Step 41: Dev Server Lifecycle
+  'process_started',
+  'process_ready',
+  'process_output',
+  'process_stopped',
+  'process_error',
+  // Step 43: Scaffold Quality Gates
+  'scaffold_preflight_checks_started',
+  'scaffold_preflight_checks_completed',
+  'scaffold_preflight_resolution_selected',
+  'scaffold_quality_gates_passed',
+  'scaffold_quality_gates_failed',
+  'scaffold_checkpoint_created',
+  'scaffold_checkpoint_restored',
+  'scaffold_apply_completed',
+  // Step 44: Post-Scaffold Verification Pipeline
+  'scaffold_verify_started',
+  'scaffold_verify_step_completed',
+  'scaffold_verify_completed',
+  // Step 45: Settings Panel
+  'settings_changed',
+  // Scaffold Feature Intelligence (LLM-Powered Feature Generation)
+  'feature_extraction_started',
+  'feature_extraction_completed',
+  'feature_code_generating',
+  'feature_code_applied',
+  'feature_code_error',
 ] as const;
 
 export type Mode = 'ANSWER' | 'PLAN' | 'MISSION';
@@ -271,6 +431,20 @@ export interface IntentAnalysis {
   
   /** Whether user override was used */
   user_override?: string;
+  
+  // =========================================================================
+  // Step 37: Reference Modifier Fields (NOT a new behavior)
+  // These are modifiers that SCAFFOLD/QUICK_ACTION/PLAN read downstream
+  // =========================================================================
+  
+  /** Whether user provided image/URL references (Step 37) */
+  has_references?: boolean;
+  
+  /** Detected intent for reference usage (Step 37) */
+  reference_intent?: ReferenceIntent;
+  
+  /** User's selected mode for how references influence output (Step 37) */
+  reference_mode?: StyleSourceMode;
 }
 
 /**
@@ -669,5 +843,1005 @@ export function isPrimitiveEventType(type: string): type is PrimitiveEventType {
     'unknown_event'
   ];
   return primitives.includes(type as PrimitiveEventType);
+}
+
+// ============================================================================
+// STEP 35: GREENFIELD SCAFFOLD FLOW TYPES
+// ============================================================================
+
+/**
+ * Flow kind for routing (Step 35.1)
+ * 
+ * Determines whether to use standard PLAN/MISSION flow or SCAFFOLD flow.
+ * This is orthogonal to behavior - a PLAN behavior can route to either flow.
+ */
+export type FlowKind = 'standard' | 'scaffold';
+
+/**
+ * Scaffold reference type (how user specified what they want)
+ */
+export type ScaffoldReferenceType = 'description' | 'screenshot' | 'url';
+
+/**
+ * Scaffold proposal status
+ */
+export type ScaffoldProposalStatus = 'pending' | 'approved' | 'cancelled';
+
+/**
+ * Scaffold completion status
+ */
+export type ScaffoldCompletionStatus = 'cancelled' | 'ready_for_step_35_2';
+
+/**
+ * Scaffold started event payload (V1 minimal)
+ */
+export interface ScaffoldStartedPayload {
+  /** Stable ID for this scaffold attempt */
+  scaffold_id: string;
+  /** Associated run ID */
+  run_id: string;
+  /** Target directory for scaffold (optional in 35.1) */
+  target_directory?: string;
+  /** How user specified what they want */
+  reference_type?: ScaffoldReferenceType;
+  /** Original user prompt */
+  user_prompt: string;
+  /** ISO timestamp */
+  created_at_iso: string;
+}
+
+/**
+ * Scaffold proposal created event payload (V1 minimal)
+ */
+export interface ScaffoldProposalCreatedPayload {
+  /** Stable ID for this scaffold attempt */
+  scaffold_id: string;
+  /** Recipe identifier (placeholder in 35.1) */
+  recipe?: string;
+  /** Design pack identifier (placeholder in 35.1) */
+  design_pack?: string;
+  /** Number of files to create (placeholder in 35.1) */
+  files_count: number;
+  /** Number of directories to create (placeholder in 35.1) */
+  directories_count: number;
+  /** Commands to run after scaffolding (placeholder in 35.1) */
+  commands_to_run: string[];
+  /** Human-readable summary */
+  summary: string;
+  
+  // Step 37: Reference Enhancement Fields
+  /** Reference context (if user provided images/URLs) */
+  reference_context?: ReferenceContext;
+  /** Selected style source mode */
+  reference_mode?: StyleSourceMode;
+}
+
+/**
+ * Scaffold applied event payload (V1 minimal)
+ */
+export interface ScaffoldAppliedPayload {
+  /** Stable ID for this scaffold attempt */
+  scaffold_id: string;
+  /** Status - always 'noop' in 35.1 */
+  status: 'noop';
+  /** Files created (empty in 35.1) */
+  files_created: string[];
+  /** Evidence reference (undefined in 35.1) */
+  evidence_ref?: string;
+}
+
+/**
+ * Scaffold completed event payload (V1 minimal)
+ */
+export interface ScaffoldCompletedPayload {
+  /** Stable ID for this scaffold attempt */
+  scaffold_id: string;
+  /** Completion status */
+  status: ScaffoldCompletionStatus;
+  /** Optional reason for status */
+  reason?: string;
+}
+
+/**
+ * Extended IntentAnalysis with flow_kind for Step 35
+ * 
+ * When flow_kind === 'scaffold', the router should use ScaffoldFlow
+ * instead of standard PLAN/MISSION pipelines.
+ */
+export interface IntentAnalysisWithFlow extends IntentAnalysis {
+  /** Flow kind for routing (Step 35) */
+  flow_kind: FlowKind;
+}
+
+// ============================================================================
+// STEP 35.2: SCAFFOLD PREFLIGHT SAFETY TYPES
+// ============================================================================
+
+/**
+ * Monorepo type detection
+ */
+export type MonorepoType = 'pnpm' | 'turbo' | 'nx' | 'lerna' | 'yarn_workspaces' | 'unknown';
+
+/**
+ * Reason for target directory selection
+ */
+export type TargetChoiceReason = 'default' | 'monorepo_choice' | 'user_selected' | 'workspace_root';
+
+/**
+ * Preflight conflict type
+ */
+export type PreflightConflictType = 'NON_EMPTY_DIR' | 'EXISTING_PACKAGE_JSON' | 'MONOREPO_AMBIGUOUS';
+
+/**
+ * Preflight conflict record
+ */
+export interface PreflightConflict {
+  type: PreflightConflictType;
+  message: string;
+}
+
+/**
+ * Recommended location for scaffold in monorepo
+ */
+export interface RecommendedLocation {
+  label: string;
+  path: string;
+  recommended: boolean;
+}
+
+/**
+ * Scaffold preflight started event payload (V1)
+ */
+export interface ScaffoldPreflightStartedPayload {
+  scaffold_id: string;
+  workspace_root: string;
+  created_at_iso: string;
+}
+
+/**
+ * Scaffold target chosen event payload (V1)
+ */
+export interface ScaffoldTargetChosenPayload {
+  scaffold_id: string;
+  target_directory: string;
+  reason: TargetChoiceReason;
+  app_name?: string;
+}
+
+/**
+ * Scaffold preflight completed event payload (V1)
+ */
+export interface ScaffoldPreflightCompletedPayload {
+  scaffold_id: string;
+  target_directory: string;
+  is_empty_dir: boolean;
+  has_package_json: boolean;
+  detected_monorepo: boolean;
+  monorepo_type?: MonorepoType;
+  recommended_locations?: RecommendedLocation[];
+  conflicts?: PreflightConflict[];
+}
+
+/**
+ * Scaffold blocked event payload (V1)
+ */
+export interface ScaffoldBlockedPayload {
+  scaffold_id: string;
+  target_directory: string;
+  reason: 'non_empty_dir' | 'monorepo_ambiguous' | 'user_cancelled';
+  message: string;
+}
+
+// ============================================================================
+// STEP 37: REFERENCE-BASED ENHANCEMENTS TYPES
+// ============================================================================
+
+/**
+ * Reference attachment (image or URL provided by user)
+ * Max 10 images allowed; URLs are design references, not scraped yet
+ */
+export type ReferenceAttachment =
+  | { type: 'image'; id: string; path: string; mime: string }
+  | { type: 'url'; id: string; url: string };
+
+/**
+ * Reference intent classification
+ * Describes what the user intends to use the reference for
+ */
+export type ReferenceIntent = 'visual_style' | 'layout' | 'branding' | 'unknown';
+
+/**
+ * Reference context bundle - normalized container for all references
+ * Attached to scaffold proposals, plan creation, and quick actions
+ * 
+ * CRITICAL: Do NOT interpret yet — just pass through
+ */
+export interface ReferenceContext {
+  /** Image references (screenshots, design mockups) */
+  images: ReferenceAttachment[];
+  /** URL references (design systems, component libraries) */
+  urls: ReferenceAttachment[];
+  /** Source of references */
+  source: 'user_upload';
+  /** Detected intent for reference usage */
+  intent: ReferenceIntent;
+}
+
+/**
+ * Style source mode for reference usage
+ * Used in scaffold approval UI to let user choose how references influence output
+ */
+export type StyleSourceMode = 'use_reference' | 'ignore_reference' | 'combine_with_design_pack';
+
+/**
+ * reference_attached event payload
+ */
+export interface ReferenceAttachedPayload {
+  ref_ids: string[];
+  types: ('image' | 'url')[];
+}
+
+/**
+ * reference_context_built event payload
+ */
+export interface ReferenceContextBuiltPayload {
+  intent: ReferenceIntent;
+  ref_count: number;
+}
+
+/**
+ * reference_used event payload
+ */
+export interface ReferenceUsedPayload {
+  scope: 'scaffold' | 'quick_action' | 'plan';
+  mode: 'combined' | 'exclusive';
+}
+
+/**
+ * Vision tokens (legacy stub - kept for backward compatibility)
+ * @deprecated Use ReferenceTokens instead
+ */
+export interface VisionTokens {
+  status: 'pending' | 'analyzed';
+  reason?: string;
+  colors?: string[];
+  layout?: string;
+  components?: string[];
+}
+
+/**
+ * Vision analyzer interface (legacy stub - kept for backward compatibility)
+ * @deprecated Use RealVisionAnalyzer instead
+ */
+export interface VisionAnalyzer {
+  analyze(refs: ReferenceContext): Promise<VisionTokens>;
+}
+
+// ============================================================================
+// STEP 38: VISION + URL REFERENCE TOKEN EXTRACTION TYPES
+// ============================================================================
+
+/**
+ * Reference Tokens - Structured style/layout hints extracted from user-provided references
+ * 
+ * This is the canonical output of vision analysis. It contains extracted design tokens
+ * that can influence scaffold design pack selection and style overrides.
+ * 
+ * CRITICAL: Never store raw base64 or full OCR text in this structure.
+ * Only derived/summarized tokens are stored.
+ */
+export interface ReferenceTokens {
+  /** Source counts for traceability */
+  source: {
+    images_count: number;
+    urls_count: number;
+  };
+  
+  /** Style tokens extracted from references */
+  style: {
+    /** Color palette extracted from references */
+    palette?: {
+      primary?: string;    // Hex color, e.g., "#3B82F6"
+      secondary?: string;  // Hex color
+      accent?: string;     // Hex color
+      neutrals?: string[]; // Array of neutral colors
+    };
+    /** Mood/vibe descriptors */
+    mood?: string[];         // e.g., ["minimal", "enterprise", "vibrant", "modern"]
+    /** Typography hints */
+    typography?: {
+      heading?: string;    // Font family suggestion, e.g., "Inter"
+      body?: string;       // Font family suggestion
+    };
+    /** Content density */
+    density?: 'compact' | 'default' | 'relaxed';
+    /** Border radius style */
+    radius?: 'none' | 'sm' | 'md' | 'lg' | 'full';
+    /** Shadow intensity */
+    shadows?: 'none' | 'subtle' | 'medium' | 'dramatic';
+  };
+  
+  /** Layout structure hints */
+  layout?: {
+    structure?: string[];   // e.g., ["sidebar", "header", "grid", "cards"]
+    components?: string[];  // e.g., ["nav", "hero", "footer", "form"]
+  };
+  
+  /** UI framework/system hints */
+  uiHints?: {
+    component_system_preference?: 'shadcn' | 'mui' | 'chakra' | 'tailwind-plain';
+  };
+  
+  /** Confidence score 0..1 */
+  confidence: number;
+  
+  /** Warnings about extraction quality */
+  warnings?: string[];
+}
+
+/**
+ * Vision analysis status
+ */
+export type VisionAnalysisStatus = 'complete' | 'skipped' | 'error';
+
+/**
+ * Vision analyze result - output from RealVisionAnalyzer
+ */
+export interface VisionAnalyzeResult {
+  /** Analysis status */
+  status: VisionAnalysisStatus;
+  /** Extracted tokens (only if status === 'complete') */
+  tokens?: ReferenceTokens;
+  /** Evidence reference for tokens file */
+  tokensEvidenceRef?: string;
+  /** Reason for skip/error */
+  reason?: string;
+  /** Whether error is retryable */
+  retryable?: boolean;
+  /** Duration of analysis in milliseconds */
+  durationMs?: number;
+}
+
+/**
+ * Vision mode configuration
+ */
+export type VisionMode = 'off' | 'prompt' | 'on';
+
+/**
+ * Vision provider selection (independent from chat model dropdown)
+ */
+export type VisionProvider = 'anthropic' | 'openai' | 'backend-default';
+
+/**
+ * Vision configuration - workspace settings
+ */
+export interface VisionConfig {
+  /** Vision analysis mode (enterprise-safe: default 'off') */
+  visionMode: VisionMode;
+  /** Vision provider (independent from chat model) */
+  visionProvider: VisionProvider;
+  /** Maximum number of images to analyze (capped at 10) */
+  maxImages: number;
+  /** Maximum dimension for resized images (e.g., 1024) */
+  maxPixels: number;
+  /** Maximum total upload size in MB (e.g., 15) */
+  maxTotalUploadMB: number;
+}
+
+/**
+ * Vision analysis started event payload
+ */
+export interface VisionAnalysisStartedPayload {
+  /** Associated run ID */
+  run_id: string;
+  /** Reference context ID for correlation */
+  reference_context_id: string;
+  /** Number of images to analyze */
+  images_count: number;
+  /** Number of URLs (for context hints) */
+  urls_count: number;
+}
+
+/**
+ * Vision analysis completed event payload
+ */
+export interface VisionAnalysisCompletedPayload {
+  /** Associated run ID */
+  run_id: string;
+  /** Reference context ID for correlation */
+  reference_context_id: string;
+  /** Analysis status */
+  status: VisionAnalysisStatus;
+  /** Reason for skip/error */
+  reason?: string;
+  /** Duration in milliseconds */
+  duration_ms?: number;
+}
+
+/**
+ * Reference tokens extracted event payload
+ * 
+ * IMPORTANT: Never include raw base64 or full JSON here.
+ * Only include summarized/compact info for mission feed display.
+ */
+export interface ReferenceTokensExtractedPayload {
+  /** Associated run ID */
+  run_id: string;
+  /** Reference context ID for correlation */
+  reference_context_id: string;
+  /** Evidence reference path for tokens file */
+  evidence_ref: string;
+  /** Short palette summary for UI display, e.g., "#3B82F6, #10B981" */
+  palette_summary?: string;
+  /** Mood tags for UI display */
+  moods?: string[];
+  /** Confidence score 0..1 */
+  confidence: number;
+}
+
+/**
+ * Reference tokens used event payload
+ * 
+ * Emitted when tokens are actually applied to influence scaffold/plan/quick action.
+ */
+export interface ReferenceTokensUsedPayload {
+  /** Associated run ID */
+  run_id: string;
+  /** Reference context ID for correlation */
+  reference_context_id: string;
+  /** Where tokens were used */
+  used_in: 'scaffold_proposal' | 'quick_action' | 'plan';
+  /** Design pack ID if scaffold context */
+  design_pack_id?: string;
+  /** Reference mode used */
+  mode: 'use_reference' | 'combine' | 'ignore';
+  /** Whether style overrides were applied */
+  overrides_applied: boolean;
+}
+
+/**
+ * Run context for vision analysis (for replay detection)
+ */
+export interface VisionRunContext {
+  /** Run/task ID */
+  runId: string;
+  /** Whether this is a replay/audit run */
+  isReplay: boolean;
+  /** Workspace root path */
+  workspaceRoot: string;
+  /** Reference context ID */
+  referenceContextId: string;
+}
+
+/**
+ * Image data for vision provider
+ */
+export interface VisionImageData {
+  /** MIME type */
+  mime: string;
+  /** Base64-encoded image data */
+  base64: string;
+  /** Original attachment ID */
+  attachmentId: string;
+}
+
+/**
+ * Vision consent decision from user
+ */
+export type VisionConsentDecision = 'analyze_once' | 'enable_always' | 'skip';
+
+// ============================================================================
+// STEP 40.5: INTELLIGENCE LAYER TYPES
+// ============================================================================
+
+/**
+ * Context enriched event payload
+ */
+export interface ContextEnrichedPayload {
+  /** Associated run ID */
+  run_id: string;
+  /** Original user input */
+  original_input: string;
+  /** Detected project type */
+  project_type: string;
+  /** Whether TypeScript is used */
+  has_typescript: boolean;
+  /** Detected component library */
+  component_library: string;
+  /** Number of references resolved */
+  references_resolved: number;
+  /** Whether clarification is needed */
+  needs_clarification: boolean;
+  /** Enrichment duration in ms */
+  duration_ms: number;
+}
+
+/**
+ * Clarification asked event payload
+ */
+export interface ClarificationAskedPayload {
+  /** Associated run ID */
+  run_id: string;
+  /** Clarification question */
+  question: string;
+  /** Available options (if any) */
+  options?: string[];
+  /** Reason for clarification */
+  reason: 'ambiguous_reference' | 'missing_context' | 'vague_input';
+}
+
+/**
+ * Out of scope detected event payload
+ */
+export interface OutOfScopeDetectedPayload {
+  /** Associated run ID */
+  run_id: string;
+  /** Original user input */
+  original_input: string;
+  /** Generated response */
+  response: string;
+  /** Detected category */
+  category: 'weather' | 'general_knowledge' | 'entertainment' | 'personal' | 'other';
+}
+
+/**
+ * Reference resolved event payload
+ */
+export interface ReferenceResolvedPayload {
+  /** Associated run ID */
+  run_id: string;
+  /** Original reference text (e.g., "the button") */
+  original: string;
+  /** Resolved path/entity */
+  resolved: string;
+  /** Resolution source */
+  source: 'session_history' | 'codebase_scan' | 'open_files' | 'recent_error';
+  /** Confidence score (0-1) */
+  confidence: number;
+}
+
+// ============================================================================
+// STEP 41: DEV SERVER LIFECYCLE TYPES
+// ============================================================================
+
+/**
+ * Process status lifecycle
+ */
+export type ProcessStatus = 'starting' | 'running' | 'ready' | 'stopped' | 'error';
+
+/**
+ * Process started event payload
+ */
+export interface ProcessStartedPayload {
+  /** Associated run ID */
+  run_id: string;
+  /** Process ID */
+  process_id: string;
+  /** Command that was run */
+  command: string;
+  /** Command arguments */
+  args: string[];
+  /** Working directory */
+  cwd: string;
+  /** OS process ID */
+  pid?: number;
+}
+
+/**
+ * Process ready event payload
+ */
+export interface ProcessReadyPayload {
+  /** Associated run ID */
+  run_id: string;
+  /** Process ID */
+  process_id: string;
+  /** Detected port (if applicable) */
+  port?: number;
+  /** Time to ready in ms */
+  time_to_ready_ms: number;
+}
+
+/**
+ * Process output event payload
+ */
+export interface ProcessOutputPayload {
+  /** Associated run ID */
+  run_id: string;
+  /** Process ID */
+  process_id: string;
+  /** Output stream (stdout/stderr) */
+  stream: 'stdout' | 'stderr';
+  /** Output data */
+  data: string;
+  /** Whether output was truncated */
+  truncated: boolean;
+}
+
+/**
+ * Process stopped event payload
+ */
+export interface ProcessStoppedPayload {
+  /** Associated run ID */
+  run_id: string;
+  /** Process ID */
+  process_id: string;
+  /** Exit code */
+  exit_code?: number;
+  /** Stop reason */
+  reason: 'user_stopped' | 'extension_deactivate' | 'error' | 'completed';
+  /** Runtime duration in ms */
+  duration_ms: number;
+}
+
+/**
+ * Process error event payload
+ */
+export interface ProcessErrorPayload {
+  /** Associated run ID */
+  run_id: string;
+  /** Process ID */
+  process_id: string;
+  /** Error message */
+  error: string;
+  /** Whether error is recoverable */
+  recoverable: boolean;
+}
+
+// ============================================================================
+// STEP 43: SCAFFOLD QUALITY GATES (PREFLIGHT CHECKS + RESOLUTIONS + SAFE APPLY)
+// ============================================================================
+
+/**
+ * Preflight check status
+ */
+export type PreflightCheckStatus = 'pass' | 'warn' | 'block';
+
+/**
+ * Resolution option action
+ */
+export type ResolutionAction = 'proceed' | 'modify' | 'cancel';
+
+/**
+ * Merge mode for scaffold apply when target is non-empty
+ */
+export type ScaffoldMergeMode = 'abort' | 'skip_conflicts' | 'replace_all';
+
+/**
+ * Monorepo placement option
+ */
+export type MonorepoPlacement = 'apps' | 'packages' | 'root';
+
+/**
+ * Resolution option presented to the user for a preflight check
+ */
+export interface ResolutionOption {
+  /** Unique option identifier */
+  id: string;
+  /** Display label */
+  label: string;
+  /** Description of what this option does */
+  description: string;
+  /** Action type */
+  action: ResolutionAction;
+  /** Modifications to apply if selected */
+  modifications?: {
+    targetDir?: string;
+    mergeMode?: ScaffoldMergeMode;
+    monorepoPlacement?: MonorepoPlacement;
+  };
+}
+
+/**
+ * Single preflight check result
+ */
+export interface PreflightCheck {
+  /** Unique check identifier */
+  id: string;
+  /** Human-readable check name */
+  name: string;
+  /** Check status */
+  status: PreflightCheckStatus;
+  /** Human-readable message */
+  message: string;
+  /** Resolution options (for warn/block) */
+  resolution?: {
+    options: ResolutionOption[];
+  };
+}
+
+/**
+ * Complete preflight result
+ */
+export interface PreflightResult {
+  /** Whether scaffold can proceed (no unresolved blockers) */
+  canProceed: boolean;
+  /** All checks that were run */
+  checks: PreflightCheck[];
+  /** Checks with status 'block' */
+  blockers: PreflightCheck[];
+  /** Checks with status 'warn' */
+  warnings: PreflightCheck[];
+  /** User-selected resolutions (populated after user interaction) */
+  selectedResolutions?: Record<string, string>;
+}
+
+/**
+ * Scaffold preflight config (merge/placement policy)
+ */
+export interface ScaffoldPreflightConfig {
+  /** Merge mode for non-empty directories */
+  mergeMode: ScaffoldMergeMode;
+  /** Override target directory */
+  targetDirOverride?: string;
+  /** Monorepo placement if detected */
+  monorepoPlacement?: MonorepoPlacement;
+}
+
+/**
+ * Scaffold preflight checks started event payload
+ */
+export interface ScaffoldPreflightChecksStartedPayload {
+  /** Scaffold operation ID */
+  scaffold_id: string;
+  /** Run ID */
+  run_id: string;
+  /** Target directory being checked */
+  target_directory: string;
+  /** Planned files count */
+  planned_files_count: number;
+  /** ISO timestamp */
+  created_at_iso: string;
+}
+
+/**
+ * Scaffold preflight checks completed event payload
+ */
+export interface ScaffoldPreflightChecksCompletedPayload {
+  /** Scaffold operation ID */
+  scaffold_id: string;
+  /** Run ID */
+  run_id: string;
+  /** Whether scaffold can proceed */
+  can_proceed: boolean;
+  /** Total checks run */
+  total_checks: number;
+  /** Number of blockers */
+  blockers_count: number;
+  /** Number of warnings */
+  warnings_count: number;
+  /** Check summaries for audit */
+  check_summaries: Array<{ id: string; status: PreflightCheckStatus; message: string }>;
+  /** Duration in ms */
+  duration_ms: number;
+}
+
+/**
+ * Scaffold preflight resolution selected event payload
+ */
+export interface ScaffoldPreflightResolutionSelectedPayload {
+  /** Scaffold operation ID */
+  scaffold_id: string;
+  /** Run ID */
+  run_id: string;
+  /** Check ID the resolution applies to */
+  check_id: string;
+  /** Selected option ID */
+  option_id: string;
+  /** Resulting target directory (if modified) */
+  resolved_target_dir?: string;
+  /** Resulting merge mode (if modified) */
+  resolved_merge_mode?: ScaffoldMergeMode;
+  /** Resulting monorepo placement (if modified) */
+  resolved_monorepo_placement?: MonorepoPlacement;
+}
+
+/**
+ * Scaffold quality gates passed event payload
+ */
+export interface ScaffoldQualityGatesPassedPayload {
+  /** Scaffold operation ID */
+  scaffold_id: string;
+  /** Run ID */
+  run_id: string;
+  /** Number of gates passed */
+  gates_passed: number;
+  /** Total duration in ms */
+  total_duration_ms: number;
+}
+
+/**
+ * Scaffold quality gates failed event payload
+ */
+export interface ScaffoldQualityGatesFailedPayload {
+  /** Scaffold operation ID */
+  scaffold_id: string;
+  /** Run ID */
+  run_id: string;
+  /** Failed gate names */
+  failed_gates: string[];
+  /** Total duration in ms */
+  total_duration_ms: number;
+}
+
+// ============================================================================
+// SCAFFOLD FEATURE INTELLIGENCE (LLM-Powered Feature Generation)
+// ============================================================================
+
+/**
+ * Data entity in the feature data model
+ */
+export interface DataEntity {
+  name: string;
+  fields: Array<{ name: string; type: string; required: boolean }>;
+}
+
+/**
+ * Page requirement for the feature
+ */
+export interface PageRequirement {
+  path: string;
+  description: string;
+  components: string[];
+}
+
+/**
+ * Structured feature requirements extracted from user prompt via LLM
+ */
+export interface FeatureRequirements {
+  /** App type detected (e.g., "todo", "blog", "ecommerce") */
+  app_type: string;
+  /** Feature list (e.g., ["task list", "add task", "mark complete"]) */
+  features: string[];
+  /** Data model entities */
+  data_model: DataEntity[];
+  /** Page/route requirements */
+  pages: PageRequirement[];
+  /** Whether auth is needed */
+  has_auth: boolean;
+  /** Whether database is needed */
+  has_database: boolean;
+  /** Styling preference */
+  styling_preference?: string;
+}
+
+/**
+ * File kind in generated feature code
+ */
+export type GeneratedFileKind = 'component' | 'page' | 'type' | 'hook' | 'util' | 'api' | 'config';
+
+/**
+ * A single generated file from LLM feature code generation
+ */
+export interface GeneratedFile {
+  /** Relative path (e.g., "src/components/TodoList.tsx") */
+  path: string;
+  /** Full file content */
+  content: string;
+  /** Human-readable description */
+  description: string;
+  /** File kind classification */
+  kind: GeneratedFileKind;
+}
+
+/**
+ * A file modification (patch) to an existing scaffolded file
+ */
+export interface ModifiedFileEntry {
+  /** Relative path to existing file */
+  path: string;
+  /** New full content for the file */
+  content: string;
+  /** Description of what changed */
+  description: string;
+}
+
+/**
+ * Result of LLM feature code generation
+ */
+export interface FeatureGenerationResult {
+  /** New files to create */
+  files: GeneratedFile[];
+  /** Existing files to modify */
+  modified_files: ModifiedFileEntry[];
+  /** Human-readable summary */
+  summary: string;
+}
+
+/**
+ * Result of applying feature code to project
+ */
+export interface FeatureApplyResult {
+  /** Files created */
+  created_files: string[];
+  /** Files modified */
+  modified_files: string[];
+  /** Errors encountered */
+  errors: Array<{ file: string; error: string }>;
+  /** Whether apply succeeded overall */
+  success: boolean;
+}
+
+/**
+ * Feature extraction started event payload
+ */
+export interface FeatureExtractionStartedPayload {
+  /** Scaffold operation ID */
+  scaffold_id: string;
+  /** Run ID */
+  run_id: string;
+  /** Original user prompt */
+  user_prompt: string;
+  /** Recipe being used */
+  recipe_id: string;
+}
+
+/**
+ * Feature extraction completed event payload
+ */
+export interface FeatureExtractionCompletedPayload {
+  /** Scaffold operation ID */
+  scaffold_id: string;
+  /** Run ID */
+  run_id: string;
+  /** Detected app type */
+  app_type: string;
+  /** Number of features detected */
+  features_count: number;
+  /** Number of pages planned */
+  pages_count: number;
+  /** Duration in ms */
+  duration_ms: number;
+}
+
+/**
+ * Feature code generating event payload
+ */
+export interface FeatureCodeGeneratingPayload {
+  /** Scaffold operation ID */
+  scaffold_id: string;
+  /** Run ID */
+  run_id: string;
+  /** App type being generated */
+  app_type: string;
+  /** Number of files planned */
+  planned_files_count: number;
+  /** Current status message */
+  message: string;
+}
+
+/**
+ * Feature code applied event payload
+ */
+export interface FeatureCodeAppliedPayload {
+  /** Scaffold operation ID */
+  scaffold_id: string;
+  /** Run ID */
+  run_id: string;
+  /** Files created */
+  created_files: string[];
+  /** Files modified */
+  modified_files: string[];
+  /** Total files affected */
+  total_files: number;
+  /** Summary of what was generated */
+  summary: string;
+  /** Duration in ms */
+  duration_ms: number;
+}
+
+/**
+ * Feature code error event payload
+ */
+export interface FeatureCodeErrorPayload {
+  /** Scaffold operation ID */
+  scaffold_id: string;
+  /** Run ID */
+  run_id: string;
+  /** Error message */
+  error: string;
+  /** Phase where error occurred */
+  phase: 'extraction' | 'generation' | 'application';
+  /** Whether this is recoverable (falls back to generic scaffold) */
+  recoverable: boolean;
 }
 

@@ -24,6 +24,7 @@ import {
 import { EventBus } from './eventBus';
 import { analyzeIntent, IntentAnalysisContext } from './intentAnalyzer';
 import { detectCommandIntent } from './userCommandDetector';
+import { detectGreenfieldIntent } from './intent/greenfieldDetector';
 
 // ============================================================================
 // BEHAVIOR HANDLER INTERFACES

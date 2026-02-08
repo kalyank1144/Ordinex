@@ -1,4 +1,32 @@
+import { readFileSync } from 'fs';
+import { join } from 'path';
+
+export { getSettingsPanelContent } from './settingsPanel';
+
+let scaffoldCardScriptCache: string | null = null;
+
+function getScaffoldCardScript(): string {
+  if (scaffoldCardScriptCache !== null) {
+    return scaffoldCardScriptCache;
+  }
+
+  try {
+    const scriptPath = join(__dirname, 'components', 'ScaffoldCard.js');
+    const rawScript = readFileSync(scriptPath, 'utf8');
+    const sanitizedScript = rawScript
+      .replace(/<\/script>/g, '<\\/script>')
+      .replace(/\/\/# sourceMappingURL=.*$/gm, '');
+    scaffoldCardScriptCache = `(function(){ const exports = {}; ${sanitizedScript} })();`;
+  } catch (error) {
+    console.warn('[webview] Failed to load ScaffoldCard script:', error);
+    scaffoldCardScriptCache = '';
+  }
+
+  return scaffoldCardScriptCache;
+}
+
 export function getWebviewContent(): string {
+  const scaffoldCardScript = getScaffoldCardScript();
   return `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -1157,6 +1185,158 @@ export function getWebviewContent(): string {
       color: var(--vscode-foreground);
     }
 
+    .attach-btn.has-attachments {
+      color: var(--vscode-charts-blue);
+    }
+
+    /* ===== ATTACHMENT PREVIEWS ===== */
+    .attachments-container {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      padding: 8px 0;
+      margin-top: 4px;
+    }
+
+    .attachment-chip {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      background: var(--vscode-input-background);
+      border: 1px solid var(--vscode-panel-border);
+      border-radius: 8px;
+      padding: 4px 8px;
+      max-width: 140px;
+      position: relative;
+      animation: fadeIn 0.2s ease-in;
+    }
+
+    .attachment-chip.uploading {
+      opacity: 0.6;
+      border-color: var(--vscode-charts-blue);
+    }
+
+    .attachment-chip.uploaded {
+      border-color: var(--vscode-charts-green);
+    }
+
+    .attachment-chip.error {
+      border-color: var(--vscode-charts-red);
+      background: var(--vscode-inputValidation-errorBackground);
+    }
+
+    .attachment-thumb {
+      width: 32px;
+      height: 32px;
+      border-radius: 4px;
+      object-fit: cover;
+      flex-shrink: 0;
+    }
+
+    .attachment-info {
+      flex: 1;
+      min-width: 0;
+      overflow: hidden;
+    }
+
+    .attachment-name {
+      font-size: 10px;
+      color: var(--vscode-foreground);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      display: block;
+    }
+
+    .attachment-size {
+      font-size: 9px;
+      color: var(--vscode-descriptionForeground);
+    }
+
+    .attachment-status {
+      font-size: 10px;
+    }
+
+    .attachment-status.uploading {
+      color: var(--vscode-charts-blue);
+    }
+
+    .attachment-status.error {
+      color: var(--vscode-charts-red);
+    }
+
+    .attachment-remove {
+      position: absolute;
+      top: -4px;
+      right: -4px;
+      width: 16px;
+      height: 16px;
+      border-radius: 50%;
+      background: var(--vscode-charts-red);
+      color: #fff;
+      border: none;
+      font-size: 10px;
+      line-height: 1;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      opacity: 0;
+      transition: opacity 0.15s ease;
+    }
+
+    .attachment-chip:hover .attachment-remove {
+      opacity: 1;
+    }
+
+    .attachment-remove:hover {
+      background: #dc3545;
+      transform: scale(1.1);
+    }
+
+    .attachments-count {
+      font-size: 10px;
+      color: var(--vscode-descriptionForeground);
+      padding: 4px 8px;
+      background: var(--vscode-editor-inactiveSelectionBackground);
+      border-radius: 10px;
+      display: flex;
+      align-items: center;
+      gap: 4px;
+    }
+
+    .attachments-count.at-limit {
+      color: var(--vscode-charts-yellow);
+    }
+
+    /* Toast notification for errors */
+    .toast {
+      position: fixed;
+      bottom: 80px;
+      left: 50%;
+      transform: translateX(-50%);
+      background: var(--vscode-inputValidation-errorBackground);
+      border: 1px solid var(--vscode-inputValidation-errorBorder);
+      color: var(--vscode-foreground);
+      padding: 10px 16px;
+      border-radius: 6px;
+      font-size: 12px;
+      z-index: 9999;
+      animation: slideUp 0.3s ease-out, fadeOut 0.3s ease-in 2.7s forwards;
+      max-width: 300px;
+      text-align: center;
+    }
+
+    .toast.warning {
+      background: var(--vscode-inputValidation-warningBackground);
+      border-color: var(--vscode-inputValidation-warningBorder);
+    }
+
+    @keyframes fadeOut {
+      from { opacity: 1; }
+      to { opacity: 0; visibility: hidden; }
+    }
+
     .composer-input-wrapper {
       position: relative;
       display: flex;
@@ -1797,6 +1977,7 @@ export function getWebviewContent(): string {
       border: 1px solid var(--vscode-charts-green);
     }
   </style>
+  ${scaffoldCardScript ? `<script>${scaffoldCardScript}</script>` : ''}
 </head>
 <body>
   <!-- Header Bar -->
@@ -1924,6 +2105,18 @@ export function getWebviewContent(): string {
     const vscode = acquireVsCodeApi();
     
     (function() {
+      // ===== ATTACHMENT CONSTANTS =====
+      const ATTACHMENT_CONFIG = {
+        MAX_FILES: 10, // Step 37: Increased from 5 to support reference-based enhancements
+        MAX_SIZE_BYTES: 5 * 1024 * 1024, // 5 MB per file
+        ALLOWED_MIME_TYPES: [
+          'image/png', 'image/jpeg', 'image/gif', 'image/webp',
+          'text/plain', 'application/json', 'application/pdf',
+          'text/markdown', 'text/csv'
+        ],
+        ALLOWED_EXTENSIONS: ['.png', '.jpg', '.jpeg', '.gif', '.webp', '.txt', '.json', '.pdf', '.md', '.csv']
+      };
+
       // State
       const state = {
         activeTab: 'mission',
@@ -1931,6 +2124,8 @@ export function getWebviewContent(): string {
         currentStage: 'none',
         currentMode: 'ANSWER',
         narrationCards: [],
+        // PHASE 1: Pending Attachments State
+        pendingAttachments: [], // { id, file, name, size, mimeType, status: 'pending'|'uploading'|'uploaded'|'error', thumbnailUrl?, evidenceId?, errorMsg? }
         scopeSummary: {
           contract: {
             max_files: 10,
@@ -2039,7 +2234,7 @@ export function getWebviewContent(): string {
       // Update Status Pill
       function updateStatus(status) {
         state.taskStatus = status;
-        statusPill.className = \`status-pill \${status}\`;
+        statusPill.className = 'status-pill ' + status;
         const labels = {
           ready: 'Ready',
           running: 'Running',
@@ -2053,7 +2248,7 @@ export function getWebviewContent(): string {
       // Update Stage Label
       function updateStage(stage) {
         state.currentStage = stage;
-        stageLabel.textContent = stage === 'none' ? '' : \`Stage: \${stage}\`;
+        stageLabel.textContent = stage === 'none' ? '' : 'Stage: ' + stage;
       }
 
       // Tab Switching
@@ -2244,9 +2439,27 @@ export function getWebviewContent(): string {
         \`;
       }
 
+      function hydrateScaffoldCards() {
+        const cards = missionTab.querySelectorAll('scaffold-card[data-event]');
+        cards.forEach((card) => {
+          try {
+            if (!customElements.get('scaffold-card')) {
+              return;
+            }
+            const eventJson = card.getAttribute('data-event');
+            if (!eventJson) return;
+            card.event = JSON.parse(decodeURIComponent(eventJson));
+            card.removeAttribute('data-event');
+          } catch (error) {
+            console.error('[ScaffoldCard] Failed to parse event data:', error);
+          }
+        });
+      }
+
       // Render Mission Tab - Event Timeline
       function renderMission() {
         missionTab.innerHTML = renderMissionTimeline(state.events);
+        hydrateScaffoldCards();
         updateUIGating(); // Update UI gating whenever mission is rendered
         updateExportButtonVisibility(); // Update export button visibility
         updateMissionControlBar(); // Update compact bottom bar for mission progress
@@ -2842,6 +3055,70 @@ export function getWebviewContent(): string {
 
       // Render Event Card
       function renderEventCard(event) {
+        // SCAFFOLD EVENTS: Use ScaffoldCard web component (PRIORITY CHECK)
+        const scaffoldEventTypes = [
+'scaffold_started',
+'scaffold_preflight_started',
+          'scaffold_preflight_completed',
+          'scaffold_target_chosen',
+          'scaffold_proposal_created',
+          'scaffold_decision_requested',
+          'scaffold_decision_resolved',
+          'scaffold_style_selection_requested',
+          'scaffold_style_selected',
+          'scaffold_apply_started',
+          'scaffold_applied',
+          'scaffold_blocked',
+          'scaffold_completed',
+          'scaffold_cancelled',
+          // Post-scaffold orchestration events
+          'scaffold_progress',
+          'design_pack_applied',
+          'next_steps_shown',
+          'scaffold_final_complete',
+          // Feature Intelligence events
+          'feature_extraction_started',
+          'feature_extraction_completed',
+          'feature_code_generating',
+          'feature_code_applied',
+          'feature_code_error',
+          // Step 43: Preflight checks events
+          'scaffold_preflight_checks_started',
+          'scaffold_preflight_checks_completed',
+          'scaffold_preflight_resolution_selected',
+          'scaffold_quality_gates_passed',
+          'scaffold_quality_gates_failed',
+          'scaffold_checkpoint_created',
+          'scaffold_checkpoint_restored',
+          'scaffold_apply_completed',
+          // Step 44: Post-scaffold verification events
+          'scaffold_verify_started',
+          'scaffold_verify_step_completed',
+          'scaffold_verify_completed',
+          // Step 45: Settings
+          'settings_changed',
+          // Process management events
+          'process_started',
+          'process_ready',
+          'process_stopped',
+          'process_error',
+          // Auto-fix events
+          'scaffold_autofix_started',
+          'scaffold_autofix_applied',
+          'scaffold_autofix_failed'
+        ];
+        
+        if (scaffoldEventTypes.includes(event.type)) {
+          // Use the ScaffoldCard custom element (already defined globally in ScaffoldCard.ts)
+          const eventId = event.event_id || 'evt_' + Date.now();
+          const cardId = 'scaffold-' + escapeHtml(eventId);
+          const eventJson = encodeURIComponent(JSON.stringify(event));
+
+          // Attach event JSON as a data attribute to avoid inline scripts in HTML.
+          // Use double quotes for the attribute value to avoid template literal issues
+          return '<scaffold-card id="' + cardId + '" data-event="' + eventJson + '"></scaffold-card>';
+        }
+        
         // Special handling for clarification_presented - render interactive card
         if (event.type === 'clarification_presented') {
           return renderClarificationCard(event);
@@ -3529,12 +3806,263 @@ export function getWebviewContent(): string {
             title: 'Repair Policy',
             color: 'var(--vscode-charts-purple)',
             getSummary: (e) => \`Max \${e.payload.max_attempts || 0} attempts\`
+          },
+          // Step 35 Scaffold Events
+          scaffold_started: {
+            icon: '🏗️',
+            title: 'Scaffold Started',
+            color: 'var(--vscode-charts-purple)',
+            getSummary: (e) => {
+              const userPrompt = e.payload.user_prompt || '';
+              // Truncate prompt for display
+              if (userPrompt.length > 50) {
+                return userPrompt.substring(0, 50) + '...';
+              }
+              return userPrompt || 'Greenfield project setup';
+            }
+          },
+          scaffold_proposal_created: {
+            icon: '📋',
+            title: 'Scaffold Proposal Ready',
+            color: 'var(--vscode-charts-green)',
+            getSummary: (e) => {
+              const summary = e.payload.summary || '';
+              // Use the generated summary from scaffoldFlow.ts
+              if (summary) {
+                return summary.length > 60 ? summary.substring(0, 60) + '...' : summary;
+              }
+              // Fallback
+              const recipe = e.payload.recipe_id || e.payload.recipe || 'TBD';
+              const designPack = e.payload.design_pack_id || e.payload.design_pack || '';
+              if (recipe === 'TBD' && designPack === 'TBD') {
+                return 'Ready for approval';
+              }
+              return designPack ? \`\${recipe} + \${designPack}\` : recipe;
+            }
+          },
+          scaffold_decision_resolved: {
+            icon: '✅',
+            title: 'Scaffold Decision',
+            color: 'var(--vscode-charts-green)',
+            getSummary: (e) => {
+              const decision = e.payload.decision || 'proceed';
+              const recipe = e.payload.recipe_id || e.payload.recipe || 'auto';
+              const nextSteps = e.payload.next_steps || [];
+              if (decision === 'cancel') return 'User cancelled scaffold';
+              if (decision === 'change_style') return 'Style customization requested';
+              return \`Approved • Recipe: \${recipe}\${nextSteps.length ? ' • Next: ' + nextSteps[0] : ''}\`;
+            }
+          },
+          scaffold_approved: {
+            icon: '✅',
+            title: 'Scaffold Approved',
+            color: 'var(--vscode-charts-green)',
+            getSummary: () => 'User approved scaffold'
+          },
+          scaffold_cancelled: {
+            icon: '❌',
+            title: 'Scaffold Cancelled',
+            color: 'var(--vscode-charts-red)',
+            getSummary: () => 'User cancelled scaffold'
+          },
+          scaffold_completed: {
+            icon: '🎉',
+            title: 'Scaffold Completed',
+            color: 'var(--vscode-charts-green)',
+            getSummary: (e) => {
+              const status = e.payload.status || 'completed';
+              const reason = e.payload.reason || '';
+              if (status === 'cancelled') return reason || 'Scaffold cancelled';
+              if (status === 'ready_for_step_35_2') return 'Scaffold approved — setting up project';
+              return reason || 'Scaffold completed';
+            }
+          },
+          scaffold_applied: {
+            icon: '🎉',
+            title: 'Scaffold Applied',
+            color: 'var(--vscode-charts-green)',
+            getSummary: (e) => {
+              const filesCount = (e.payload.files_created || []).length;
+              return \`\${filesCount} files created\`;
+            }
+          },
+          scaffold_failed: {
+            icon: '❌',
+            title: 'Scaffold Failed',
+            color: 'var(--vscode-charts-red)',
+            getSummary: (e) => e.payload.error || 'Scaffold failed'
+          },
+          // Vision Analysis Events (Step 38)
+          vision_analysis_started: {
+            icon: '👁️',
+            title: 'Analyzing References',
+            color: 'var(--vscode-charts-blue)',
+            getSummary: (e) => {
+              const imagesCount = e.payload.images_count || 0;
+              const urlsCount = e.payload.urls_count || 0;
+              return \`\${imagesCount} images, \${urlsCount} URLs\`;
+            }
+          },
+          vision_analysis_completed: {
+            icon: '✅',
+            title: 'Reference Analysis Complete',
+            color: 'var(--vscode-charts-green)',
+            getSummary: (e) => {
+              const status = e.payload.status || 'complete';
+              if (status === 'skipped') return 'Skipped: ' + (e.payload.reason || 'disabled');
+              if (status === 'error') return 'Error: ' + (e.payload.reason || 'failed');
+              return 'Analysis complete';
+            }
+          },
+          reference_tokens_extracted: {
+            icon: '🎨',
+            title: 'Style Tokens Extracted',
+            color: 'var(--vscode-charts-purple)',
+            getSummary: (e) => {
+              const confidence = e.payload.confidence || 0;
+              const moods = (e.payload.moods || []).slice(0, 2).join(', ');
+              return \`\${Math.round(confidence * 100)}% confidence\${moods ? ' • ' + moods : ''}\`;
+            }
+          },
+          reference_tokens_used: {
+            icon: '✨',
+            title: 'Tokens Applied',
+            color: 'var(--vscode-charts-green)',
+            getSummary: (e) => {
+              const usedIn = e.payload.used_in || 'scaffold';
+              const overridesApplied = e.payload.overrides_applied;
+              return \`Applied to \${usedIn}\${overridesApplied ? ' (with overrides)' : ''}\`;
+            }
           }
         };
         return eventCardMap[type];
       }
 
       // Escape HTML
+      // ===== PREFLIGHT CARD ACTIONS (Step 43) =====
+      // Defined at top level so onclick handlers work when HTML is injected via innerHTML
+      window.selectResolution = function(btn) {
+        var mods = {};
+        try { mods = JSON.parse(btn.dataset.modifications || '{}'); } catch(e) {}
+        if (typeof vscode !== 'undefined') {
+          vscode.postMessage({
+            type: 'preflight_resolution_selected',
+            scaffoldId: btn.dataset.scaffoldId,
+            checkId: btn.dataset.checkId,
+            optionId: btn.dataset.optionId,
+            modifications: mods,
+          });
+        }
+        // Visual feedback
+        var container = btn.closest('[style]');
+        if (container) {
+          container.querySelectorAll('button').forEach(function(b) { b.disabled = true; });
+          btn.style.fontWeight = 'bold';
+        }
+      };
+
+      window.proceedWithScaffold = function(btn) {
+        if (typeof vscode !== 'undefined') {
+          vscode.postMessage({
+            type: 'preflight_proceed',
+            scaffoldId: btn.dataset.scaffoldId,
+          });
+        }
+        btn.disabled = true;
+        btn.textContent = 'Proceeding...';
+      };
+
+      // ===== PREFLIGHT CARD INLINE RENDERER (Step 43) =====
+      function renderPreflightCardInline(payload) {
+        const esc = (s) => String(s || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+        const checks = payload.checks || [];
+        const blockers = checks.filter(c => c.status === 'block');
+        const warnings = checks.filter(c => c.status === 'warn');
+        const passed = checks.filter(c => c.status === 'pass');
+        const statusIcon = payload.can_proceed ? '\\u2705' : '\\u26D4';
+        const statusText = payload.can_proceed
+          ? 'All checks passed'
+          : payload.blockers_count + ' blocker(s) must be resolved';
+
+        let html = '<div style="background:var(--vscode-editor-background);border:1px solid var(--vscode-panel-border,#444);border-radius:8px;padding:16px;margin:8px 0;">';
+        html += '<div style="display:flex;align-items:center;gap:10px;margin-bottom:12px;">';
+        html += '<span style="font-size:20px;">' + statusIcon + '</span>';
+        html += '<div><strong style="font-size:14px;">Preflight Checks</strong><br><span style="font-size:12px;color:var(--vscode-descriptionForeground);">' + esc(statusText) + '</span></div>';
+        html += '</div>';
+        html += '<div style="font-size:12px;color:var(--vscode-descriptionForeground);margin-bottom:12px;">Target: <code>' + esc(payload.target_directory) + '</code></div>';
+
+        // Render blockers
+        blockers.forEach(function(check) {
+          html += '<div style="background:rgba(220,53,69,0.1);border-left:3px solid var(--vscode-errorForeground,#f44);padding:10px 12px;margin:6px 0;border-radius:4px;">';
+          html += '<div style="font-weight:600;color:var(--vscode-errorForeground,#f44);">\\u26D4 ' + esc(check.name) + '</div>';
+          html += '<div style="font-size:12px;margin-top:4px;">' + esc(check.message) + '</div>';
+          if (check.resolution && check.resolution.options) {
+            html += '<div style="margin-top:8px;display:flex;gap:6px;flex-wrap:wrap;">';
+            check.resolution.options.forEach(function(opt) {
+              const mods = JSON.stringify(opt.modifications || {}).replace(/"/g, '&quot;');
+              html += '<button onclick="selectResolution(this)" data-scaffold-id="' + esc(payload.scaffold_id) + '" data-check-id="' + esc(check.id) + '" data-option-id="' + esc(opt.id) + '" data-modifications="' + mods + '" ';
+              html += 'style="padding:4px 10px;font-size:11px;border:1px solid var(--vscode-button-background);background:transparent;color:var(--vscode-button-background);border-radius:4px;cursor:pointer;" ';
+              html += 'title="' + esc(opt.description) + '">' + esc(opt.label) + '</button>';
+            });
+            html += '</div>';
+          }
+          html += '</div>';
+        });
+
+        // Render warnings
+        warnings.forEach(function(check) {
+          html += '<div style="background:rgba(255,165,0,0.1);border-left:3px solid var(--vscode-charts-orange,#e8a317);padding:10px 12px;margin:6px 0;border-radius:4px;">';
+          html += '<div style="font-weight:600;color:var(--vscode-charts-orange,#e8a317);">\\u26A0\\uFE0F ' + esc(check.name) + '</div>';
+          html += '<div style="font-size:12px;margin-top:4px;">' + esc(check.message) + '</div>';
+          html += '</div>';
+        });
+
+        // Render passed (collapsed)
+        if (passed.length > 0) {
+          html += '<details style="margin:6px 0;"><summary style="cursor:pointer;font-size:12px;color:var(--vscode-charts-green,#28a745);">\\u2705 ' + passed.length + ' check(s) passed</summary>';
+          passed.forEach(function(check) {
+            html += '<div style="padding:4px 12px;font-size:12px;color:var(--vscode-descriptionForeground);">' + esc(check.name) + '</div>';
+          });
+          html += '</details>';
+        }
+
+        // Proceed button (only if can_proceed)
+        if (payload.can_proceed) {
+          html += '<div style="margin-top:12px;"><button onclick="proceedWithScaffold(this)" data-scaffold-id="' + esc(payload.scaffold_id) + '" ';
+          html += 'style="padding:6px 16px;background:var(--vscode-button-background);color:var(--vscode-button-foreground);border:none;border-radius:4px;cursor:pointer;font-weight:600;">Proceed with Scaffold</button></div>';
+        }
+
+        html += '</div>';
+
+        return html;
+      }
+
+      // ===== VERIFICATION CARD INLINE RENDERER (Step 44) =====
+      function renderVerificationCardInline(payload) {
+        const esc = (s) => String(s || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+        const steps = payload.steps || [];
+        const outcomeIcon = payload.outcome === 'pass' ? '\\u2705' : payload.outcome === 'partial' ? '\\u26A0\\uFE0F' : '\\u274C';
+        const outcomeText = payload.outcome === 'pass' ? 'All checks passed' : payload.outcome === 'partial' ? 'Passed with warnings' : 'Verification failed';
+
+        let html = '<div style="background:var(--vscode-editor-background);border:1px solid var(--vscode-panel-border,#444);border-radius:8px;padding:16px;margin:8px 0;">';
+        html += '<div style="display:flex;align-items:center;gap:10px;margin-bottom:12px;">';
+        html += '<span style="font-size:20px;">' + outcomeIcon + '</span>';
+        html += '<div><strong style="font-size:14px;">Post-Scaffold Verification</strong><br><span style="font-size:12px;color:var(--vscode-descriptionForeground);">' + esc(outcomeText) + '</span></div>';
+        html += '</div>';
+
+        steps.forEach(function(step) {
+          const icon = step.status === 'pass' ? '\\u2705' : step.status === 'warn' ? '\\u26A0\\uFE0F' : step.status === 'fail' ? '\\u274C' : step.status === 'skipped' ? '\\u23ED' : '\\u23F3';
+          html += '<div style="padding:6px 0;border-bottom:1px solid var(--vscode-panel-border,#333);display:flex;align-items:center;gap:8px;">';
+          html += '<span>' + icon + '</span>';
+          html += '<span style="flex:1;">' + esc(step.label) + '</span>';
+          html += '<span style="font-size:11px;color:var(--vscode-descriptionForeground);">' + esc(step.message) + '</span>';
+          html += '</div>';
+        });
+
+        html += '</div>';
+        return html;
+      }
+
       function escapeHtml(text) {
         return text
           .replace(/&/g, '&amp;')
@@ -3955,7 +4483,7 @@ export function getWebviewContent(): string {
       }
 
       // Handle Send - Send to backend extension
-      sendBtn.addEventListener('click', () => {
+      sendBtn.addEventListener('click', async () => {
         const prompt = promptInput.value.trim();
         if (!prompt) return;
 
@@ -3966,20 +4494,44 @@ export function getWebviewContent(): string {
         // Clear previous streaming answer when starting new task
         state.streamingAnswer = null;
 
+        // PHASE 4: Upload all pending attachments BEFORE sending prompt
+        let attachmentRefs = [];
+        if (state.pendingAttachments.length > 0) {
+          console.log('[Attachments] Uploading', state.pendingAttachments.length, 'pending attachments...');
+          updateStatus('running'); // Show running while uploading
+          
+          const uploadResult = await uploadAllPendingAttachments();
+          
+          if (!uploadResult.success) {
+            console.error('[Attachments] Some uploads failed:', uploadResult.failed);
+            // Continue with successfully uploaded attachments
+          }
+          
+          // Get refs for all successfully uploaded attachments
+          attachmentRefs = getAttachmentRefs();
+          console.log('[Attachments] Attachment refs to send:', attachmentRefs.length);
+        }
+
         // Send to extension backend - it will emit all events
         if (typeof vscode !== 'undefined') {
           vscode.postMessage({
             type: 'ordinex:submitPrompt',
             text: prompt,
             userSelectedMode: state.currentMode,
-            modelId: state.selectedModel
+            modelId: state.selectedModel,
+            // PHASE 4: Include attachment references in submit payload
+            attachments: attachmentRefs
           });
+          
+          // Clear attachments after successful send
+          clearAttachments();
           
           // Update UI to show we're processing
           updateStatus('running');
         } else {
           // Fallback for standalone testing
-          console.log('Demo mode: would submit', { prompt, mode: state.currentMode, model: state.selectedModel });
+          console.log('Demo mode: would submit', { prompt, mode: state.currentMode, model: state.selectedModel, attachments: attachmentRefs });
+          clearAttachments();
           alert('Extension backend not available. Running in demo mode.');
         }
       });
@@ -4128,7 +4680,7 @@ export function getWebviewContent(): string {
                 // Update status based on last event
                 const lastEvent = state.events[state.events.length - 1];
                 if (lastEvent) {
-                  if (lastEvent.type === 'final') {
+                  if (lastEvent.type === 'final' || lastEvent.type === 'scaffold_final_complete') {
                     updateStatus('ready');
                   } else if (lastEvent.type === 'failure_detected') {
                     updateStatus('error');
@@ -4183,6 +4735,71 @@ export function getWebviewContent(): string {
                 console.log('Export completed:', message.zipPath);
               } else {
                 console.error('Export failed:', message.error);
+              }
+              break;
+
+            case 'ordinex:attachmentUploaded':
+              // Attachment upload completed successfully
+              console.log('Attachment uploaded:', message.attachmentId, message.evidenceId);
+              {
+                const pendingUpload = window.__pendingAttachmentUploads && window.__pendingAttachmentUploads[message.attachmentId];
+                if (pendingUpload) {
+                  const { resolve, attachment } = pendingUpload;
+                  attachment.status = 'uploaded';
+                  attachment.evidenceId = message.evidenceId;
+                  renderAttachments();
+                  resolve({ success: true, evidenceId: message.evidenceId });
+                  delete window.__pendingAttachmentUploads[message.attachmentId];
+                }
+              }
+              break;
+
+            case 'ordinex:attachmentError':
+              // Attachment upload failed
+              console.error('Attachment upload error:', message.attachmentId, message.error);
+              {
+                const pendingUpload = window.__pendingAttachmentUploads && window.__pendingAttachmentUploads[message.attachmentId];
+                if (pendingUpload) {
+                  const { resolve, attachment } = pendingUpload;
+                  attachment.status = 'error';
+                  attachment.errorMsg = message.error || 'Upload failed';
+                  renderAttachments();
+                  showToast(attachment.errorMsg);
+                  resolve({ success: false, error: attachment.errorMsg });
+                  delete window.__pendingAttachmentUploads[message.attachmentId];
+                }
+              }
+              break;
+
+            case 'ordinex:preflightCard':
+              // Step 43: Render PreflightCard inline in mission tab
+              console.log('[PREFLIGHT] Received preflight card data:', message.payload);
+              {
+                const payload = message.payload;
+                if (payload && missionTab) {
+                  const cardHtml = renderPreflightCardInline(payload);
+                  const cardContainer = document.createElement('div');
+                  cardContainer.className = 'preflight-card-container';
+                  cardContainer.innerHTML = cardHtml;
+                  missionTab.appendChild(cardContainer);
+                  // Scroll to the card
+                  cardContainer.scrollIntoView({ behavior: 'smooth', block: 'end' });
+                }
+              }
+              break;
+
+            case 'ordinex:verificationCard':
+              // Step 44: Render VerificationCard inline in mission tab
+              console.log('[VERIFY] Received verification card data:', message.payload);
+              {
+                const vPayload = message.payload;
+                if (vPayload && missionTab) {
+                  const vCardContainer = document.createElement('div');
+                  vCardContainer.className = 'verification-card-container';
+                  vCardContainer.innerHTML = renderVerificationCardInline(vPayload);
+                  missionTab.appendChild(vCardContainer);
+                  vCardContainer.scrollIntoView({ behavior: 'smooth', block: 'end' });
+                }
               }
               break;
 
@@ -5130,12 +5747,344 @@ export function getWebviewContent(): string {
         });
       }
 
-      // Handle attach button click (placeholder)
+      // ===== ATTACHMENT SYSTEM (MVP) =====
+      
+      // Format file size for display
+      function formatFileSize(bytes) {
+        if (bytes === 0) return '0 B';
+        const k = 1024;
+        const sizes = ['B', 'KB', 'MB', 'GB'];
+        const i = Math.floor(Math.log(bytes) / Math.log(k));
+        return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i];
+      }
+      
+      // Show toast notification
+      function showToast(message, type = 'error') {
+        // Remove existing toasts
+        document.querySelectorAll('.toast').forEach(t => t.remove());
+        
+        const toast = document.createElement('div');
+        toast.className = 'toast' + (type === 'warning' ? ' warning' : '');
+        toast.textContent = message;
+        document.body.appendChild(toast);
+        
+        // Auto-remove after animation completes
+        setTimeout(() => toast.remove(), 3000);
+      }
+      
+      // Validate file for attachment
+      function validateFile(file) {
+        // Check count limit
+        if (state.pendingAttachments.length >= ATTACHMENT_CONFIG.MAX_FILES) {
+          return { valid: false, error: \`Maximum \${ATTACHMENT_CONFIG.MAX_FILES} files allowed\` };
+        }
+        
+        // Check file size
+        if (file.size > ATTACHMENT_CONFIG.MAX_SIZE_BYTES) {
+          return { valid: false, error: \`File too large. Maximum \${formatFileSize(ATTACHMENT_CONFIG.MAX_SIZE_BYTES)}\` };
+        }
+        
+        // Check file type
+        const ext = '.' + file.name.split('.').pop().toLowerCase();
+        const isAllowedType = ATTACHMENT_CONFIG.ALLOWED_MIME_TYPES.includes(file.type) ||
+                             ATTACHMENT_CONFIG.ALLOWED_EXTENSIONS.includes(ext);
+        if (!isAllowedType) {
+          return { valid: false, error: \`File type not supported: \${ext}\` };
+        }
+        
+        // Check for duplicate (same name and size)
+        const isDuplicate = state.pendingAttachments.some(
+          a => a.name === file.name && a.size === file.size
+        );
+        if (isDuplicate) {
+          return { valid: false, error: 'File already attached' };
+        }
+        
+        return { valid: true };
+      }
+      
+      // Generate thumbnail for image files
+      function generateThumbnail(file) {
+        return new Promise((resolve) => {
+          if (!file.type.startsWith('image/')) {
+            // Return placeholder icon for non-images
+            const iconMap = {
+              'application/json': '📄',
+              'application/pdf': '📕',
+              'text/plain': '📝',
+              'text/markdown': '📝',
+              'text/csv': '📊'
+            };
+            resolve({ type: 'icon', icon: iconMap[file.type] || '📎' });
+            return;
+          }
+          
+          const reader = new FileReader();
+          reader.onload = (e) => {
+            resolve({ type: 'image', url: e.target.result });
+          };
+          reader.onerror = () => {
+            resolve({ type: 'icon', icon: '🖼️' });
+          };
+          reader.readAsDataURL(file);
+        });
+      }
+      
+      // Add file to pending attachments
+      async function addAttachment(file) {
+        const validation = validateFile(file);
+        if (!validation.valid) {
+          showToast(validation.error);
+          return;
+        }
+        
+        const id = generateId();
+        const thumbnail = await generateThumbnail(file);
+        
+        const attachment = {
+          id,
+          file,
+          name: file.name,
+          size: file.size,
+          mimeType: file.type,
+          status: 'pending',
+          thumbnailUrl: thumbnail.type === 'image' ? thumbnail.url : null,
+          thumbnailIcon: thumbnail.type === 'icon' ? thumbnail.icon : null,
+          evidenceId: null,
+          errorMsg: null
+        };
+        
+        state.pendingAttachments.push(attachment);
+        renderAttachments();
+        updateAttachButtonState();
+      }
+      
+      // Remove attachment from pending list
+      function removeAttachment(attachmentId) {
+        state.pendingAttachments = state.pendingAttachments.filter(a => a.id !== attachmentId);
+        renderAttachments();
+        updateAttachButtonState();
+      }
+      
+      // Update attach button visual state
+      function updateAttachButtonState() {
+        if (!attachBtn) return;
+        
+        if (state.pendingAttachments.length > 0) {
+          attachBtn.classList.add('has-attachments');
+          attachBtn.title = \`\${state.pendingAttachments.length} file(s) attached\`;
+        } else {
+          attachBtn.classList.remove('has-attachments');
+          attachBtn.title = 'Attach files';
+        }
+      }
+      
+      // Render attachment previews
+      function renderAttachments() {
+        // Find or create attachments container
+        let container = document.getElementById('attachmentsContainer');
+        if (!container) {
+          container = document.createElement('div');
+          container.id = 'attachmentsContainer';
+          container.className = 'attachments-container';
+          // Insert before the input wrapper
+          const inputWrapper = document.querySelector('.composer-input-wrapper');
+          if (inputWrapper) {
+            inputWrapper.parentNode.insertBefore(container, inputWrapper);
+          }
+        }
+        
+        if (state.pendingAttachments.length === 0) {
+          container.style.display = 'none';
+          return;
+        }
+        
+        container.style.display = 'flex';
+        
+        const chipsHtml = state.pendingAttachments.map(att => {
+          const statusClass = att.status === 'uploading' ? 'uploading' : 
+                             att.status === 'uploaded' ? 'uploaded' :
+                             att.status === 'error' ? 'error' : '';
+          
+          const thumbHtml = att.thumbnailUrl 
+            ? \`<img class="attachment-thumb" src="\${att.thumbnailUrl}" alt="\${escapeHtml(att.name)}">\`
+            : \`<div class="attachment-thumb" style="display: flex; align-items: center; justify-content: center; font-size: 20px; background: var(--vscode-input-background);">\${att.thumbnailIcon || '📎'}</div>\`;
+          
+          const statusHtml = att.status === 'uploading' 
+            ? '<span class="attachment-status uploading">⏳</span>'
+            : att.status === 'error' 
+            ? \`<span class="attachment-status error" title="\${escapeHtml(att.errorMsg || 'Error')}"">⚠️</span>\`
+            : '';
+          
+          return \`
+            <div class="attachment-chip \${statusClass}" data-attachment-id="\${att.id}">
+              \${thumbHtml}
+              <div class="attachment-info">
+                <span class="attachment-name" title="\${escapeHtml(att.name)}">\${escapeHtml(att.name)}</span>
+                <span class="attachment-size">\${formatFileSize(att.size)}</span>
+              </div>
+              \${statusHtml}
+              <button class="attachment-remove" onclick="event.stopPropagation(); removeAttachmentById('\${att.id}')" title="Remove">×</button>
+            </div>
+          \`;
+        }).join('');
+        
+        // Add count badge if near limit
+        const countHtml = state.pendingAttachments.length >= ATTACHMENT_CONFIG.MAX_FILES - 1
+          ? \`<div class="attachments-count \${state.pendingAttachments.length >= ATTACHMENT_CONFIG.MAX_FILES ? 'at-limit' : ''}">
+              📎 \${state.pendingAttachments.length}/\${ATTACHMENT_CONFIG.MAX_FILES}
+            </div>\`
+          : '';
+        
+        container.innerHTML = chipsHtml + countHtml;
+      }
+      
+      // Global function to remove attachment (called from onclick)
+      window.removeAttachmentById = function(attachmentId) {
+        removeAttachment(attachmentId);
+      };
+      
+      // Create hidden file input
+      const fileInput = document.createElement('input');
+      fileInput.type = 'file';
+      fileInput.multiple = true;
+      fileInput.accept = ATTACHMENT_CONFIG.ALLOWED_EXTENSIONS.join(',') + ',' + ATTACHMENT_CONFIG.ALLOWED_MIME_TYPES.join(',');
+      fileInput.style.display = 'none';
+      document.body.appendChild(fileInput);
+      
+      // Handle file selection
+      fileInput.addEventListener('change', async (e) => {
+        const files = Array.from(e.target.files || []);
+        for (const file of files) {
+          await addAttachment(file);
+        }
+        // Reset input so same file can be selected again
+        fileInput.value = '';
+      });
+      
+      // Handle attach button click
       if (attachBtn) {
         attachBtn.addEventListener('click', () => {
-          console.log('Attach clicked (coming soon)');
-          // TODO: Implement file attachment in future version
+          // Check if at limit
+          if (state.pendingAttachments.length >= ATTACHMENT_CONFIG.MAX_FILES) {
+            showToast(\`Maximum \${ATTACHMENT_CONFIG.MAX_FILES} files reached\`, 'warning');
+            return;
+          }
+          fileInput.click();
         });
+      }
+      
+      // Handle drag and drop on composer
+      const composer = document.querySelector('.composer');
+      if (composer) {
+        composer.addEventListener('dragover', (e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          composer.style.borderColor = 'var(--vscode-focusBorder)';
+        });
+        
+        composer.addEventListener('dragleave', (e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          composer.style.borderColor = '';
+        });
+        
+        composer.addEventListener('drop', async (e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          composer.style.borderColor = '';
+          
+          const files = Array.from(e.dataTransfer?.files || []);
+          for (const file of files) {
+            await addAttachment(file);
+          }
+        });
+      }
+      
+      // Clear attachments when prompt is sent
+      function clearAttachments() {
+        state.pendingAttachments = [];
+        renderAttachments();
+        updateAttachButtonState();
+      }
+      
+      // Get attachment references for sending with prompt
+      function getAttachmentRefs() {
+        return state.pendingAttachments
+          .filter(a => a.status === 'uploaded' && a.evidenceId)
+          .map(a => ({
+            evidence_id: a.evidenceId,
+            name: a.name,
+            mime_type: a.mimeType,
+            size: a.size
+          }));
+      }
+      
+      // Upload a single attachment to the extension
+      async function uploadAttachment(attachment) {
+        // Mark as uploading
+        attachment.status = 'uploading';
+        renderAttachments();
+        
+        return new Promise((resolve) => {
+          // Read file as base64
+          const reader = new FileReader();
+          reader.onload = () => {
+            const base64Data = reader.result.split(',')[1]; // Remove data:... prefix
+            
+            // Send to extension
+            if (typeof vscode !== 'undefined') {
+              // Store callback reference for this attachment
+              window.__pendingAttachmentUploads = window.__pendingAttachmentUploads || {};
+              window.__pendingAttachmentUploads[attachment.id] = {
+                resolve,
+                attachment
+              };
+              
+              vscode.postMessage({
+                type: 'ordinex:uploadAttachment',
+                attachment: {
+                  id: attachment.id,
+                  name: attachment.name,
+                  mimeType: attachment.mimeType,
+                  data: base64Data
+                }
+              });
+            } else {
+              // Demo mode: simulate successful upload
+              setTimeout(() => {
+                attachment.status = 'uploaded';
+                attachment.evidenceId = 'demo_' + attachment.id.substring(0, 8);
+                renderAttachments();
+                resolve({ success: true, evidenceId: attachment.evidenceId });
+              }, 500);
+            }
+          };
+          reader.onerror = () => {
+            attachment.status = 'error';
+            attachment.errorMsg = 'Failed to read file';
+            renderAttachments();
+            resolve({ success: false, error: 'Failed to read file' });
+          };
+          reader.readAsDataURL(attachment.file);
+        });
+      }
+      
+      // Upload all pending attachments before sending prompt
+      async function uploadAllPendingAttachments() {
+        const pendingUploads = state.pendingAttachments.filter(a => a.status === 'pending');
+        
+        if (pendingUploads.length === 0) {
+          return { success: true, failed: [] };
+        }
+        
+        const results = await Promise.all(pendingUploads.map(uploadAttachment));
+        const failed = results.filter(r => !r.success);
+        
+        return {
+          success: failed.length === 0,
+          failed: failed.map(r => r.error)
+        };
       }
 
       // Update send/stop button when textarea changes
@@ -5150,6 +6099,103 @@ export function getWebviewContent(): string {
         originalUpdateStatus(status);
         updateSendStopButton();
       };
+
+      // ===== SCAFFOLD-ACTION EVENT LISTENER =====
+      // Listen for scaffold-action events from ScaffoldCard web component
+      // and forward them to the extension via vscode.postMessage
+      document.addEventListener('scaffold-action', (event) => {
+        const detail = event.detail || {};
+
+        console.log('[ScaffoldAction] Event received:', detail);
+
+        const { action, scaffoldId, eventId, currentPackId, styleSourceMode, selectedPackId } = detail;
+
+        // Get task_id from state
+        let taskId = 'unknown';
+        if (state.events.length > 0) {
+          taskId = state.events[0].task_id;
+        }
+
+        // Find the decision_requested event to get the proper event_id
+        const decisionEvent = state.events.find(e =>
+          e.type === 'scaffold_decision_requested' &&
+          e.payload?.scaffold_id === scaffoldId
+        );
+
+        const decisionEventId = decisionEvent?.event_id || eventId;
+
+        console.log('[ScaffoldAction] Forwarding to extension:', {
+          taskId,
+          decisionEventId,
+          action,
+          scaffoldId
+        });
+
+        // Send to extension
+        if (typeof vscode !== 'undefined') {
+          vscode.postMessage({
+            type: 'ordinex:resolveDecisionPoint',
+            task_id: taskId,
+            decision_event_id: decisionEventId,
+            action: action,
+            // Include extra context for scaffold actions
+            scaffold_context: {
+              scaffold_id: scaffoldId,
+              current_pack_id: currentPackId,
+              style_source_mode: styleSourceMode,
+              selected_pack_id: selectedPackId
+            }
+          });
+        } else {
+          console.log('[ScaffoldAction] Demo mode - would send:', { action, scaffoldId });
+        }
+      });
+
+      // ===== NEXT-STEP EVENT LISTENERS =====
+      // Listen for next-step-selected events from NextStepsCard web component
+      document.addEventListener('next-step-selected', (event) => {
+        const detail = event.detail || {};
+        const { scaffoldId, suggestionId, kind, suggestion } = detail;
+
+        console.log('[NextStep] Action selected:', suggestionId, kind);
+
+        // Get task_id from state
+        let taskId = 'unknown';
+        if (state.events.length > 0) {
+          taskId = state.events[0].task_id;
+        }
+
+        if (typeof vscode !== 'undefined') {
+          vscode.postMessage({
+            type: 'next_step_selected',
+            scaffoldId: scaffoldId,
+            suggestionId: suggestionId,
+            kind: kind,
+            suggestion: suggestion,
+            task_id: taskId
+          });
+        }
+      });
+
+      // Listen for next-step-dismissed events from NextStepsCard web component
+      document.addEventListener('next-step-dismissed', (event) => {
+        const detail = event.detail || {};
+
+        // Get task_id from state
+        let taskId = 'unknown';
+        if (state.events.length > 0) {
+          taskId = state.events[0].task_id;
+        }
+
+        if (typeof vscode !== 'undefined') {
+          vscode.postMessage({
+            type: 'next_step_dismissed',
+            scaffoldId: detail.scaffoldId,
+            reason: detail.reason,
+            task_id: taskId
+          });
+        }
+      });
 
       // Initialize
       updateStatus('ready');

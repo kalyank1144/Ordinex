@@ -10,6 +10,46 @@ export const version = '0.0.0';
 // Export types
 export * from './types';
 
+// Step 35.8: Greenfield Intent Detection (Single Source of Truth)
+export {
+  detectGreenfieldIntent,
+  isDefinitelyGreenfield,
+  isAmbiguousGreenfield,
+  IntentSignal,
+} from './intent/greenfieldDetector';
+
+export {
+  llmClassifyIntent,
+  needsLlmClassification,
+  LlmIntent,
+  LlmIntentResult,
+  LlmClassifyArgs,
+} from './intent/llmIntentClassifier';
+
+// Step 40: Production-Grade Intent Routing (Unified Router)
+export {
+  detectGreenfieldIntent as detectGreenfieldSignal,
+  detectCommandIntent as detectCommandSignal,
+  detectEditScale,
+  detectSlashOverride,
+  normalizeUserInput,
+} from './intent/intentSignals';
+
+export {
+  routeIntent,
+  routeUserInput,
+  isDefinitelyScaffold,
+  isDefinitelyRunCommand,
+  shouldCallLLM,
+  generateClarificationQuestion,
+} from './intent/intentRouter';
+
+export type {
+  RoutedIntent,
+  RoutingContext,
+  IntentRoutingResult,
+} from './intent/intentRouter';
+
 // Export event-sourcing components
 export { EventStore } from './eventStore';
 export { EventBus, EventSubscriber, PrimitiveEventInput, createPrimitiveInput } from './eventBus';
@@ -455,13 +495,17 @@ export type {
 // Step 33: Mode Behavior Refinement (Pre-execution Intelligence Layer)
 export {
   analyzeIntent,
+  analyzeIntentWithFlow,
   detectActiveRun,
+  detectFlowKind,
+  isGreenfieldRequest,
   isPureQuestion,
   resolveReferences,
   detectScope,
   extractReferencedFiles,
   INTENT_ANALYZER_CONFIG,
   USER_OVERRIDES,
+  GREENFIELD_PATTERNS,
 } from './intentAnalyzer';
 
 export type {
@@ -546,3 +590,314 @@ export {
 export type {
   CommandIntentResult,
 } from './userCommandDetector';
+
+// Step 35: Greenfield Scaffold Flow (Decision-Point-Based Scaffolding)
+export {
+  ScaffoldFlowCoordinator,
+  isScaffoldDecisionPoint,
+  extractScaffoldId,
+  deriveScaffoldFlowState,
+  generatePlaceholderSummary,
+  buildScaffoldDecisionOptions,
+} from './scaffoldFlow';
+
+export type {
+  ScaffoldFlowState,
+  ScaffoldDecisionOptions,
+} from './scaffoldFlow';
+
+// Step 35.3: Recipe Selection (Deterministic, No-LLM Framework Detection)
+export {
+  selectRecipe,
+  detectCharacteristics,
+  detectPackageManager,
+  getInstallCommand,
+  getRunCommand,
+  getExecCommand,
+} from './scaffold/recipeSelector';
+
+// Step 35.3: Recipe Registry (Plan Building)
+export {
+  getRecipe,
+  buildRecipePlan,
+  getRecipeName,
+  getRecipeDescription,
+  buildFileTreePreview,
+  countFilesAndDirs,
+  summarizeCommands,
+} from './scaffold/recipeRegistry';
+
+// Step 35.4: Scaffold Apply (File Creation)
+export {
+  applyScaffoldPlan,
+} from './scaffold/scaffoldApplyExecutor';
+
+export type {
+  ScaffoldApplyContext,
+  ScaffoldApplyResult,
+  ConflictMode,
+  ApplyStage,
+} from './scaffold/scaffoldApplyExecutor';
+
+// Step 35.3: Recipe Types
+export type {
+  RecipeId,
+  RecipeContext,
+  RecipePlan,
+  FilePlanItem,
+  CommandPlanItem,
+  RecipeSelection,
+  RecipeDetection,
+  PackageManager,
+} from './scaffold/recipeTypes';
+
+// Step 35.X: Post-Scaffold Orchestrator (Design Pack Application + Next Steps)
+export {
+  startPostScaffoldOrchestration,
+  pollForCompletion,
+  applyDesignPackToProject,
+  DEFAULT_POLLING_CONFIG,
+} from './scaffold/postScaffoldOrchestrator';
+
+export type {
+  PostScaffoldContext,
+  PostScaffoldResult,
+  PostScaffoldPollingConfig,
+} from './scaffold/postScaffoldOrchestrator';
+
+// Step 35.5: Design Packs
+export {
+  getDesignPackById,
+  getDefaultPacksForPicker,
+  getPacksByVibe,
+  generateCssVariables,
+  generateGlobalsCss,
+  DESIGN_PACKS,
+} from './scaffold/designPacks';
+
+export type {
+  DesignPack,
+  DesignPackId,
+  DesignVibe,
+  DesignTokens,
+  ColorTokens,
+  FontTokens,
+} from './scaffold/designPacks';
+
+// Step 35.6: Next Steps (Post-scaffold suggestions)
+export {
+  getNextStepsForRecipe,
+  getFeatureAwareNextSteps,
+  buildNextStepsShownPayload,
+} from './scaffold/nextSteps';
+
+export type {
+  NextStepSuggestion,
+  NextStepsContext,
+} from './scaffold/nextSteps';
+
+// Scaffold Feature Intelligence (LLM-Powered Feature Generation)
+export {
+  extractFeatureRequirements,
+  hasSpecificFeature,
+  createFeatureLLMClient,
+} from './scaffold/featureExtractor';
+
+export type {
+  FeatureLLMClient,
+} from './scaffold/featureExtractor';
+
+export {
+  generateFeatureCode,
+} from './scaffold/featureCodeGenerator';
+
+export {
+  applyFeatureCode,
+} from './scaffold/featureApplicator';
+
+// ============================================================================
+// Step 40.5: Intelligence Layer (Context Enricher)
+// ============================================================================
+
+export {
+  // Main enricher
+  enrichUserInput,
+  isOutOfScope,
+  generateOutOfScopeResponse,
+  shouldClarify,
+  resolveReferences as resolveContextReferences,
+  buildEnrichedPrompt as buildContextEnrichedPrompt,
+  redactSecrets as redactIntelligenceSecrets,
+  // Codebase context
+  gatherCodebaseContext,
+  detectProjectType,
+  detectTypeScript,
+  detectPackageManager as detectPkgManager,
+  detectAuth,
+  detectDatabase,
+  detectComponentLibrary,
+  detectSrcStructure,
+  detectMonorepo,
+  getRecentlyModifiedFiles,
+  getDependencies,
+  // New detection functions (Step 40.5 Enhancement)
+  detectTestingFramework,
+  detectCICD,
+  detectContainerTool,
+  detectCloudProvider,
+  DEFAULT_INTELLIGENCE_SETTINGS,
+  // Session context
+  getSessionContextManager,
+  resetSessionContextManager,
+  getSessionContext,
+  SessionContextManager,
+  COMPONENT_TYPES,
+} from './intelligence';
+
+export type {
+  // Enricher types
+  EnrichedInput,
+  EnricherOptions,
+  ResolvedReference,
+  EditorContext,
+  DiagnosticEntry,
+  // Codebase context types
+  CodebaseContext,
+  ProjectType,
+  PackageManager as CodebasePackageManager,
+  SrcStructure,
+  ComponentLibrary,
+  TestingFramework,
+  CICDProvider,
+  ContainerTool,
+  CloudProvider,
+  IntelligenceSettings,
+  // Session context types
+  SessionContext,
+  TopicEntry,
+  FileMention,
+  DecisionEntry,
+  PendingClarification,
+  ErrorMention,
+} from './intelligence';
+
+// ============================================================================
+// Step 41: Dev Server Lifecycle + Long-Running Command UX
+// ============================================================================
+
+export {
+  ProcessManager,
+  getProcessManager,
+  resetProcessManager,
+  generateProcessId,
+  detectProcessType,
+  getDefaultDevCommand,
+  PROCESS_READY_SIGNALS,
+} from './processManager';
+
+export type {
+  ProcessStatus as DevProcessStatus,
+  ProcessReadySignal,
+  LongRunningProcess,
+  StartProcessOpts,
+  ProcessOutputEvent,
+  ProcessStatusEvent,
+} from './processManager';
+
+// ============================================================================
+// Step 46: Enhanced Checkpoint System (#1 Differentiator)
+// ============================================================================
+
+export {
+  CheckpointManagerV2,
+  initCheckpointManagerV2,
+  getCheckpointManagerV2,
+  createPreScaffoldCheckpoint,
+  createPreMissionCheckpoint,
+  createPreEditCheckpoint,
+} from './checkpointManagerV2';
+
+export type {
+  CheckpointReason,
+  CheckpointV2,
+  CheckpointFileInfo,
+  GitStateInfo,
+  RestorePreview,
+  CreateCheckpointOptions,
+} from './checkpointManagerV2';
+
+// ============================================================================
+// Step 43: Scaffold Quality Gates
+// ============================================================================
+
+export {
+  runPreApplyQualityGates,
+  runPostApplyValidation,
+  checkCheckpointReady,
+  atomicApplyScaffold,
+  DEFAULT_MIN_DISK_SPACE,
+  DEFAULT_MIN_MEMORY,
+  DEFAULT_NETWORK_TIMEOUT,
+} from './scaffold/qualityGates';
+
+export type {
+  GateStatus,
+  GateResult,
+  QualityCheckResult,
+  QualityGate,
+  GateConfig,
+  AtomicApplyContext,
+  ScaffoldAtomicApplyResult,
+  PostApplyValidation,
+} from './scaffold/qualityGates';
+
+// ============================================================================
+// Step 43: Scaffold Preflight Checks (Preflight Engine + Resolutions)
+// ============================================================================
+
+export {
+  runPreflightChecks,
+  runPreflightChecksWithEvents,
+  emitPreflightResolutionSelected,
+  checkDirectoryEmpty,
+  checkMonorepo,
+  checkWritePermissions,
+  checkDiskSpace,
+  checkGitDirty,
+  checkConflictingFiles,
+  applyResolutions,
+} from './scaffold/preflightChecks';
+
+export type {
+  PreflightChecksInput,
+  PreflightOrchestratorCtx,
+} from './scaffold/preflightChecks';
+
+// ============================================================================
+// Step 44: Post-Scaffold Verification Pipeline
+// ============================================================================
+
+export {
+  runPostVerification,
+  runPostVerificationWithEvents,
+  verifyPackageJson,
+  runInstallStep,
+  runLintStep,
+  runTypecheckStep,
+  runBuildStep,
+  detectPackageManager as detectScaffoldPackageManager,
+  detectTypeScript as detectScaffoldTypeScript,
+  hasScript,
+  runScriptCmd,
+  computeOutcome,
+} from './scaffold/postVerify';
+
+export type {
+  VerifyStepStatus,
+  VerifyOutcome,
+  VerifyStepResult,
+  VerifyResult,
+  VerifyConfig,
+  VerifyRecipeInfo,
+  VerifyEventCtx,
+} from './scaffold/postVerify';

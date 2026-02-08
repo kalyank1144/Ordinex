@@ -164,6 +164,21 @@ export class EventBus {
   }
 
   /**
+   * EventEmitter-compatible emit method.
+   * Fire-and-forget wrapper around publish() for code that uses the
+   * EventEmitter pattern: eventBus.emit('event', event)
+   */
+  emit(eventName: string, event: Event): boolean {
+    if (eventName === 'event') {
+      this.publish(event).catch(err => {
+        console.error('[EventBus] emit/publish error:', err);
+      });
+      return true;
+    }
+    return false;
+  }
+
+  /**
    * Subscribe to events
    * Returns unsubscribe function
    */

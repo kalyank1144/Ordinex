@@ -1,5 +1,6 @@
 /**
  * Step 34.5: User Command Intent Detection
+ * Step 35.8: Updated to prevent false positives on greenfield requests
  * 
  * Detects when user wants to execute terminal commands like:
  * - "run the tests"
@@ -7,8 +8,12 @@
  * - "build the project"
  * - "npm install"
  * 
+ * CRITICAL: Must NOT trigger on greenfield/scaffold requests!
+ * 
  * This is used by QUICK_ACTION behavior to route to command execution.
  */
+
+import { detectGreenfieldIntent } from './intent/greenfieldDetector';
 
 /**
  * Command intent detection result
@@ -41,25 +46,28 @@ export interface CommandIntentResult {
 }
 
 /**
- * Command-related action verbs
+ * Command-related action verbs (explicit command execution)
+ * Step 35.8: Removed ambiguous verbs, kept explicit command verbs
  */
 const COMMAND_VERBS = [
   'run',
   'execute',
-  'start',
   'launch',
-  'build',
+  'serve',
   'test',
   'deploy',
   'install',
   'compile',
   'bundle',
-  'serve',
   'watch',
+  'lint',
+  'typecheck',
 ];
 
 /**
  * Command-related nouns/targets
+ * Step 35.8: Removed 'app', 'application', 'project' to prevent false positives
+ * These words are too ambiguous and trigger on "create a new app"
  */
 const COMMAND_TARGETS = [
   'tests',
@@ -68,9 +76,6 @@ const COMMAND_TARGETS = [
   'dev',
   'development',
   'build',
-  'project',
-  'app',
-  'application',
   'script',
   'command',
   'task',
@@ -98,6 +103,9 @@ const EXPLANATION_PATTERNS = [
 /**
  * Detect if user prompt indicates command execution intent
  * 
+ * Step 35.8: Greenfield check happens FIRST - if greenfield confidence >= 0.65,
+ * this is NOT a command intent.
+ * 
  * @param prompt - User's input prompt
  * @param workspaceRoot - Workspace directory (for context)
  * @returns Command intent detection result
@@ -109,6 +117,20 @@ export function detectCommandIntent(
   const lowerPrompt = prompt.toLowerCase().trim();
   const detectedKeywords: string[] = [];
 
+  // =========================================================================
+  // STEP 35.8: Check greenfield FIRST - greenfield requests are NOT commands
+  // =========================================================================
+  const greenfieldResult = detectGreenfieldIntent(prompt);
+  if (greenfieldResult.isMatch && greenfieldResult.confidence >= 0.65) {
+    console.log('[userCommandDetector] Greenfield detected with confidence', greenfieldResult.confidence, '- NOT a command');
+    return {
+      isCommandIntent: false,
+      confidence: 0.1,
+      detectedKeywords: [],
+      reasoning: `Greenfield project request detected (${greenfieldResult.reason}) - not a command`,
+    };
+  }
+
   // Check for explanation/discussion patterns first (these override command intent)
   for (const pattern of EXPLANATION_PATTERNS) {
     if (pattern.test(lowerPrompt)) {
@@ -117,6 +139,25 @@ export function detectCommandIntent(
         confidence: 0.9,
         detectedKeywords: [],
         reasoning: 'Prompt appears to be a question or request for explanation',
+      };
+    }
+  }
+
+  // Check for diagnostic/error context patterns — user is describing problems, not requesting commands
+  const DIAGNOSTIC_CONTEXT_PATTERNS = [
+    /\b(getting|having|seeing|encountering|facing)\s+(build\s+)?(errors?|issues?|problems?|failures?|warnings?)\b/i,
+    /\b(fix|resolve|debug|investigate|check|diagnose)\s+(the\s+)?(build\s+)?(errors?|issues?|problems?|failures?)\b/i,
+    /\b(broken|failing|not\s+working|not\s+compiling|won'?t\s+build)\b/i,
+    /\bbuild\s+(errors?|failures?|issues?|problems?|broken|failing)\b/i,
+    /\b(typecheck|type\s+check|typescript|compilation)\s+(errors?|failures?|issues?)\b/i,
+  ];
+  for (const pattern of DIAGNOSTIC_CONTEXT_PATTERNS) {
+    if (pattern.test(lowerPrompt)) {
+      return {
+        isCommandIntent: false,
+        confidence: 0.9,
+        detectedKeywords: [],
+        reasoning: 'Diagnostic/error context detected — user is describing problems, not requesting command execution',
       };
     }
   }
@@ -185,15 +226,24 @@ export function detectCommandIntent(
     };
   }
 
-  // Weak signal: only verb or only target
-  if (detectedVerbs.length > 0 || detectedTargets.length > 0) {
+  // Target only without verb → ambiguous, NOT a command
+  // "build errors" has a target but no command verb — this is diagnostic, not an action
+  if (detectedTargets.length > 0 && detectedVerbs.length === 0) {
+    return {
+      isCommandIntent: false,
+      confidence: 0.3,
+      detectedKeywords,
+      reasoning: `Target(s) [${detectedTargets.join(', ')}] without action verb — ambiguous, not a command`,
+    };
+  }
+
+  // Verb only without target → weak command signal
+  if (detectedVerbs.length > 0 && detectedTargets.length === 0) {
     return {
       isCommandIntent: true,
-      confidence: 0.6,
+      confidence: 0.5,
       detectedKeywords,
-      reasoning: detectedVerbs.length > 0
-        ? `Detected action verb(s): ${detectedVerbs.join(', ')}`
-        : `Detected target(s): ${detectedTargets.join(', ')}`,
+      reasoning: `Action verb(s) [${detectedVerbs.join(', ')}] without specific target — weak command signal`,
     };
   }
 
