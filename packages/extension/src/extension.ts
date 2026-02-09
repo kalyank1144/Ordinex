@@ -11,9 +11,11 @@ import {
   AttachmentStoreResult 
 } from './attachmentEvidenceStore';
 import { 
-  EventStore, 
-  Event, 
-  Mode, 
+  EventStore,
+  Event,
+  Mode,
+  StateReducer,
+  ScopeManager,
   classifyPrompt, 
   classifyPromptV2,
   modeConfirmationPolicy,
@@ -102,6 +104,9 @@ import {
   // Step 35: Scaffold Flow
   ScaffoldFlowCoordinator,
   isGreenfieldRequest,
+  // Step 35.8: LLM Intent Classification (ambiguity fallback)
+  llmClassifyIntent,
+  needsLlmClassification,
   // Step 35.3-35.4: Recipe Selection & Scaffold Apply
   selectRecipe,
   buildRecipePlan,
@@ -123,10 +128,44 @@ import {
   generateProcessId,
   detectProcessType,
   getDefaultDevCommand,
+  // V2-V5: Project Memory
+  ProjectMemoryManager,
+  detectSolutionCandidate,
+  // V6-V8: Generated Tools
+  GeneratedToolManager,
+  // V9: Agent Mode Policy
+  isEscalation,
+  isDowngrade,
+  // Step 47: Resume After Crash
+  analyzeRecoveryOptions,
+  // Step 48: Undo System
+  UndoStack,
+  extractDiffFilePaths,
+  getDiffCorrelationId,
+  buildUndoGroup,
+  // Step 49: Error Recovery UX
+  matchErrorPattern,
+  errorDescriptorToRecoveryActions,
+  mergeRecoveryActions,
+  isSafeRecoveryCommand,
 } from 'core';
+import type { FileReadResult } from 'core';
+import type { ModeTransitionResult } from 'core';
+import type { ToolRegistryService, ToolExecutionPolicy } from 'core';
 import type { ProcessStatusEvent, ProcessOutputEvent } from 'core';
 import type { PreflightChecksInput, PreflightOrchestratorCtx, VerifyRecipeInfo, VerifyConfig, VerifyEventCtx } from 'core';
 import type { EnrichedInput, EditorContext, DiagnosticEntry } from 'core';
+import type { SolutionCaptureContext } from 'core';
+import type { ActiveTaskMetadata } from 'core';
+import { FsMemoryService } from './fsMemoryService';
+import { FsToolRegistryService } from './fsToolRegistryService';
+import { runGeneratedTool, scanForBlockedPatterns } from './generatedToolRunner';
+import { FsTaskPersistenceService } from './fsTaskPersistenceService';
+import { FsUndoService } from './fsUndoService';
+
+// Step 47: Module-level ref for deactivate() access (synchronous, can't use lazy init)
+let globalTaskPersistenceService: FsTaskPersistenceService | null = null;
+let globalCurrentTaskId: string | null = null;
 
 class MissionControlViewProvider implements vscode.WebviewViewProvider {
   public static readonly viewType = 'ordinex.missionControl';
@@ -151,6 +190,20 @@ class MissionControlViewProvider implements vscode.WebviewViewProvider {
   private pendingVerifyScaffoldId: string | null = null; // Step 44: Scaffold ID for verification retry
   private settingsPanel: vscode.WebviewPanel | null = null; // Step 45: Settings panel
   private scaffoldProjectPath: string | null = null; // Store scaffold project path for follow-up context
+  // V2-V5: Project Memory
+  private _memoryService: FsMemoryService | null = null;
+  private _projectMemoryManager: ProjectMemoryManager | null = null;
+  private recentEventsWindow: Event[] = []; // V3: Sliding window for solution capture
+  // V6-V8: Generated Tools
+  private _toolRegistryService: FsToolRegistryService | null = null;
+  private _generatedToolManager: GeneratedToolManager | null = null;
+  // Step 47: Resume After Crash
+  private _taskPersistenceService: FsTaskPersistenceService | null = null;
+  // Step 48: Undo System
+  private _undoStack: UndoStack | null = null;
+  private _fsUndoService: FsUndoService | null = null;
+  private _undoBeforeCache: Map<string, Map<string, FileReadResult>> = new Map();
+  private _currentWebview: vscode.Webview | null = null; // Stored for Cmd+Shift+Z command
 
   constructor(
     private readonly _extensionUri: vscode.Uri,
@@ -227,6 +280,581 @@ class MissionControlViewProvider implements vscode.WebviewViewProvider {
     editorCtx.workspaceDiagnostics = wsErrors;
 
     return editorCtx;
+  }
+
+  // -------------------------------------------------------------------------
+  // V2-V5: Project Memory - Lazy initialization
+  // -------------------------------------------------------------------------
+
+  private getWorkspaceRoot(): string | undefined {
+    return this.selectedWorkspaceRoot
+      || this.scaffoldProjectPath
+      || vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+  }
+
+  private getProjectMemoryManager(): ProjectMemoryManager | null {
+    const workspaceRoot = this.getWorkspaceRoot();
+    if (!workspaceRoot) return null;
+
+    if (!this._projectMemoryManager) {
+      const memoryRoot = path.join(workspaceRoot, '.ordinex', 'memory');
+      this._memoryService = new FsMemoryService(memoryRoot);
+
+      // Create a lightweight EventPublisher that delegates to emitEvent
+      const publisher = {
+        publish: (event: Event) => this.emitEvent(event),
+      };
+      this._projectMemoryManager = new ProjectMemoryManager(this._memoryService, publisher);
+    }
+    return this._projectMemoryManager;
+  }
+
+  // -------------------------------------------------------------------------
+  // V6-V8: Generated Tools - Lazy initialization
+  // -------------------------------------------------------------------------
+
+  private getGeneratedToolManager(): GeneratedToolManager | null {
+    const workspaceRoot = this.getWorkspaceRoot();
+    if (!workspaceRoot) return null;
+
+    if (!this._generatedToolManager) {
+      const toolsRoot = path.join(workspaceRoot, '.ordinex', 'tools', 'generated');
+      this._toolRegistryService = new FsToolRegistryService(toolsRoot);
+
+      const publisher = {
+        publish: (event: Event) => this.emitEvent(event),
+      };
+      this._generatedToolManager = new GeneratedToolManager(this._toolRegistryService, publisher);
+
+      // Rebuild pending proposals from event history (survives extension reloads)
+      if (this.eventStore && this.currentTaskId) {
+        const events = this.eventStore.getEventsByTaskId(this.currentTaskId);
+        this._generatedToolManager.rebuildPendingProposals(events);
+      }
+    }
+    return this._generatedToolManager;
+  }
+
+  /**
+   * V7: Get the generated tool execution policy from settings.
+   */
+  private getGeneratedToolPolicy(): ToolExecutionPolicy {
+    const config = vscode.workspace.getConfiguration('ordinex.generatedTools');
+    return config.get<ToolExecutionPolicy>('policy', 'prompt');
+  }
+
+  // -------------------------------------------------------------------------
+  // Step 47: Task Persistence - Lazy initialization
+  // -------------------------------------------------------------------------
+
+  private getTaskPersistenceService(): FsTaskPersistenceService | null {
+    const workspaceRoot = this.getWorkspaceRoot();
+    if (!workspaceRoot) return null;
+
+    if (!this._taskPersistenceService) {
+      this._taskPersistenceService = new FsTaskPersistenceService(workspaceRoot);
+      // Set module-level reference for deactivate() access
+      globalTaskPersistenceService = this._taskPersistenceService;
+    }
+    return this._taskPersistenceService;
+  }
+
+  /**
+   * Step 47: Update task persistence metadata at phase boundaries.
+   * Lightweight — only updates metadata fields, not full state.
+   */
+  private async updateTaskPersistence(
+    taskId: string,
+    updates: Partial<Pick<ActiveTaskMetadata, 'mode' | 'stage' | 'last_checkpoint_id'>>,
+  ): Promise<void> {
+    const service = this.getTaskPersistenceService();
+    if (!service) return;
+
+    try {
+      const metadata: ActiveTaskMetadata = {
+        task_id: taskId,
+        mode: updates.mode || this.currentMode,
+        stage: updates.stage || this.currentStage,
+        status: 'running',
+        last_updated_at: new Date().toISOString(),
+        cleanly_exited: false,
+        last_checkpoint_id: updates.last_checkpoint_id,
+      };
+      await service.setActiveTask(metadata);
+    } catch (err) {
+      console.error('[Step47] Failed to update task persistence:', err);
+    }
+  }
+
+  /**
+   * Step 47: Clear task persistence (task completed or discarded).
+   */
+  private async clearTaskPersistence(): Promise<void> {
+    const service = this.getTaskPersistenceService();
+    if (!service) return;
+
+    try {
+      await service.clearActiveTask();
+    } catch (err) {
+      console.error('[Step47] Failed to clear task persistence:', err);
+    }
+  }
+
+  /**
+   * Step 47: Reset current task and clear persistence.
+   * Centralized helper to avoid forgetting persistence cleanup.
+   */
+  private async resetCurrentTask(): Promise<void> {
+    this.currentTaskId = null;
+    globalCurrentTaskId = null;
+    this.currentStage = 'none';
+    await this.clearTaskPersistence();
+  }
+
+  // -------------------------------------------------------------------------
+  // Step 48: Undo System - Lazy initialization + capture + execution
+  // -------------------------------------------------------------------------
+
+  private getUndoStack(): UndoStack {
+    if (!this._undoStack) {
+      this._undoStack = new UndoStack(50);
+    }
+    return this._undoStack;
+  }
+
+  private getFsUndoService(): FsUndoService | null {
+    const workspaceRoot = this.getWorkspaceRoot();
+    if (!workspaceRoot) return null;
+    if (!this._fsUndoService) {
+      this._fsUndoService = new FsUndoService(workspaceRoot);
+    }
+    return this._fsUndoService;
+  }
+
+  /**
+   * Step 48: Capture file content for undo on diff_proposed / diff_applied events.
+   * Called from emitEvent() after event is stored.
+   */
+  private async captureForUndo(event: Event): Promise<void> {
+    const fsUndo = this.getFsUndoService();
+    if (!fsUndo) return;
+
+    if (event.type === 'diff_proposed') {
+      const corrId = getDiffCorrelationId(event.payload);
+      if (!corrId) return;
+      const filePaths = extractDiffFilePaths(event.payload);
+      const beforeMap = new Map<string, FileReadResult>();
+      for (const fp of filePaths) {
+        beforeMap.set(fp, await fsUndo.readFileContent(fp));
+      }
+      this._undoBeforeCache.set(corrId, beforeMap);
+    }
+
+    if (event.type === 'diff_applied') {
+      const corrId = getDiffCorrelationId(event.payload);
+      if (!corrId) return;
+      const undoStack = this.getUndoStack();
+      const beforeMap = this._undoBeforeCache.get(corrId);
+
+      if (!beforeMap) {
+        // Concern #6: No before cache → mark entire group non-undoable
+        const filePaths = extractDiffFilePaths(event.payload);
+        const emptyBefore = new Map<string, FileReadResult>();
+        const afterMap = new Map<string, FileReadResult>();
+        for (const fp of filePaths) {
+          afterMap.set(fp, await fsUndo.readFileContent(fp));
+        }
+        const group = buildUndoGroup(event, emptyBefore, afterMap);
+        undoStack.push(group);
+      } else {
+        const afterMap = new Map<string, FileReadResult>();
+        for (const fp of beforeMap.keys()) {
+          afterMap.set(fp, await fsUndo.readFileContent(fp));
+        }
+        // Check applied_files for any files not in before cache
+        const appliedFiles = extractDiffFilePaths(event.payload);
+        for (const fp of appliedFiles) {
+          if (!beforeMap.has(fp)) {
+            afterMap.set(fp, await fsUndo.readFileContent(fp));
+          }
+        }
+        const group = buildUndoGroup(event, beforeMap, afterMap);
+        undoStack.push(group);
+      }
+      this._undoBeforeCache.delete(corrId);
+    }
+  }
+
+  /** Step 48: Sync undo state to webview. */
+  private syncUndoStateToWebview(webview: vscode.Webview): void {
+    const undoStack = this._undoStack;
+    if (!undoStack) return;
+    webview.postMessage({
+      type: 'updateUndoState',
+      undoable_group_ids: undoStack.getUndoableGroupIds(),
+      top_undoable_group_id: undoStack.topUndoableGroupId(),
+    });
+  }
+
+  /** Step 48: Handle undo action from webview or VS Code command. */
+  private async handleUndoAction(message: any, webview: vscode.Webview): Promise<void> {
+    const { group_id } = message;
+    const undoStack = this._undoStack;
+    const fsUndo = this.getFsUndoService();
+    if (!undoStack || !fsUndo) return;
+    const taskId = this.currentTaskId || 'unknown';
+
+    // V9: Enforce MISSION mode for undo (writes to disk)
+    if (!await this.enforceMissionMode('undo_edit', taskId)) {
+      await this.sendEventsToWebview(webview, taskId);
+      return;
+    }
+
+    const top = undoStack.peek();
+    if (!top || top.group_id !== group_id) {
+      vscode.window.showWarningMessage('Ordinex: Can only undo the most recent edit');
+      return;
+    }
+    if (!top.undoable) {
+      vscode.window.showWarningMessage('Ordinex: Undo unavailable — before state not captured');
+      return;
+    }
+
+    undoStack.pop();
+
+    // Apply undo — revert each action
+    const filesRestored: string[] = [];
+    const filesDeleted: string[] = [];
+    const filesRecreated: string[] = [];
+
+    for (const action of top.actions) {
+      try {
+        switch (action.type) {
+          case 'file_edit':
+            if (action.before_content !== null) {
+              await fsUndo.writeFileContent(action.file_path, action.before_content);
+              filesRestored.push(action.file_path);
+            }
+            break;
+          case 'file_create':
+            await fsUndo.deleteFile(action.file_path);
+            filesDeleted.push(action.file_path);
+            break;
+          case 'file_delete':
+            if (action.before_content !== null) {
+              await fsUndo.ensureDirectory(action.file_path);
+              await fsUndo.writeFileContent(action.file_path, action.before_content);
+              filesRecreated.push(action.file_path);
+            }
+            break;
+        }
+      } catch (err) {
+        console.error(`[Step48] Undo failed for ${action.file_path}:`, err);
+      }
+    }
+
+    // Emit undo_performed event
+    await this.emitEvent({
+      event_id: this.generateId(),
+      task_id: taskId,
+      timestamp: new Date().toISOString(),
+      type: 'undo_performed',
+      mode: this.currentMode,
+      stage: this.currentStage,
+      payload: {
+        group_id,
+        files_restored: filesRestored,
+        files_deleted: filesDeleted,
+        files_recreated: filesRecreated,
+        description: top.description,
+      },
+      evidence_ids: [],
+      parent_event_id: null,
+    });
+
+    // Update context key + sync webview
+    vscode.commands.executeCommand('setContext', 'ordinex.hasUndoableEdits', undoStack.canUndo());
+    this.syncUndoStateToWebview(webview);
+    await this.sendEventsToWebview(webview, taskId);
+  }
+
+  /**
+   * Step 47: Check for interrupted tasks on webview activation.
+   * Reads pointer + metadata, runs pure analysis, emits task_interrupted event.
+   */
+  private async checkForInterruptedTasks(webview: vscode.Webview): Promise<void> {
+    const service = this.getTaskPersistenceService();
+    if (!service) return;
+
+    try {
+      const task = await service.getActiveTask();
+      if (!task) return; // No active task — clean state
+
+      // Get event count for this task
+      let eventCount = 0;
+      if (this.eventStore) {
+        const events = this.eventStore.getEventsByTaskId(task.task_id);
+        eventCount = events.length;
+      }
+
+      // Check if checkpoint exists
+      const hasCheckpoint = !!task.last_checkpoint_id;
+
+      // Pure analysis (from core)
+      const analysis = analyzeRecoveryOptions(task, eventCount, hasCheckpoint);
+
+      // Emit task_interrupted event with FULL payload (stateless card)
+      const interruptedEvent: Event = {
+        event_id: this.generateId(),
+        task_id: task.task_id,
+        timestamp: new Date().toISOString(),
+        type: 'task_interrupted',
+        mode: (task.mode as Mode) || 'ANSWER',
+        stage: (task.stage as any) || 'none',
+        payload: {
+          task_id: task.task_id,
+          was_clean_exit: task.cleanly_exited,
+          is_likely_crash: !task.cleanly_exited && task.status === 'running',
+          is_stale: analysis.recommended_action === 'discard',
+          recommended_action: analysis.recommended_action,
+          options: analysis.options,
+          last_checkpoint_id: task.last_checkpoint_id || null,
+          last_updated_at: task.last_updated_at,
+          mode: task.mode,
+          stage: task.stage,
+          event_count: eventCount,
+          time_since_interruption_ms: analysis.time_since_interruption_ms,
+          reason: analysis.reason,
+        },
+        evidence_ids: [],
+        parent_event_id: null,
+      };
+
+      await this.emitEvent(interruptedEvent);
+      await this.sendEventsToWebview(webview, task.task_id);
+    } catch (err) {
+      console.error('[Step47] Error checking for interrupted tasks:', err);
+    }
+  }
+
+  /**
+   * Step 47: Handle user's recovery action choice from CrashRecoveryCard.
+   */
+  private async handleCrashRecovery(message: any, webview: vscode.Webview): Promise<void> {
+    const { task_id, action, checkpoint_id } = message;
+    const service = this.getTaskPersistenceService();
+
+    if (action === 'discard') {
+      // Emit task_discarded, clear persistence
+      await this.emitEvent({
+        event_id: this.generateId(),
+        task_id,
+        timestamp: new Date().toISOString(),
+        type: 'task_discarded',
+        mode: this.currentMode,
+        stage: this.currentStage,
+        payload: { task_id },
+        evidence_ids: [],
+        parent_event_id: null,
+      });
+      this.currentTaskId = null;
+      this.currentStage = 'none';
+      this.currentMode = 'ANSWER';
+      if (service) await service.clearActiveTask();
+      await this.sendEventsToWebview(webview, task_id);
+      return;
+    }
+
+    if (action === 'restore_checkpoint' && checkpoint_id) {
+      // Restore checkpoint first, then resume
+      await this.emitEvent({
+        event_id: this.generateId(),
+        task_id,
+        timestamp: new Date().toISOString(),
+        type: 'checkpoint_restored',
+        mode: this.currentMode,
+        stage: this.currentStage,
+        payload: { checkpoint_id },
+        evidence_ids: [],
+        parent_event_id: null,
+      });
+      // Fall through to resume flow
+    }
+
+    // Resume: full event replay
+    if (this.eventStore) {
+      const events = this.eventStore.getEventsByTaskId(task_id);
+      if (events.length > 0) {
+        // Replay through StateReducer to derive state
+        const eventBus = new EventBus(this.eventStore);
+        const scopeManager = new ScopeManager(eventBus);
+        const reducer = new StateReducer(scopeManager);
+        const state = reducer.reduceForTask(task_id, events);
+
+        // Rehydrate in-memory state
+        this.currentTaskId = task_id;
+        globalCurrentTaskId = task_id;
+        this.currentMode = state.mode;
+        this.currentStage = state.stage as any;
+
+        // Send events to webview for MissionFeed replay
+        await this.sendEventsToWebview(webview, task_id);
+      }
+    }
+
+    // Emit task_recovery_started
+    await this.emitEvent({
+      event_id: this.generateId(),
+      task_id,
+      timestamp: new Date().toISOString(),
+      type: 'task_recovery_started',
+      mode: this.currentMode,
+      stage: this.currentStage,
+      payload: {
+        task_id,
+        action,
+        checkpoint_id: checkpoint_id || null,
+      },
+      evidence_ids: [],
+      parent_event_id: null,
+    });
+
+    // Update persistence: running again
+    if (service) {
+      await service.setActiveTask({
+        task_id,
+        mode: this.currentMode,
+        stage: this.currentStage,
+        status: 'running',
+        last_updated_at: new Date().toISOString(),
+        cleanly_exited: false,
+      });
+    }
+
+    await this.sendEventsToWebview(webview, task_id);
+  }
+
+  // -------------------------------------------------------------------------
+  // V9: Mode transition wrapper — emits mode_changed event
+  // -------------------------------------------------------------------------
+
+  /**
+   * Updates currentMode and emits a mode_changed event if the mode actually changed.
+   * Pure wrapper: existing mode_set events are kept at call sites for backward compat.
+   */
+  private async setModeWithEvent(
+    newMode: Mode,
+    taskId: string,
+    opts: {
+      reason: string;
+      user_initiated: boolean;
+    },
+  ): Promise<ModeTransitionResult> {
+    const from = this.currentMode;
+
+    // V9: Block non-user-initiated escalation UP (ANSWER→PLAN, ANSWER→MISSION, PLAN→MISSION).
+    // Downgrades (MISSION→ANSWER, etc.) are always allowed automatically.
+    if (isEscalation(from, newMode) && !opts.user_initiated) {
+      console.log(`[V9] Blocked auto-escalation: ${from} → ${newMode} (reason: ${opts.reason})`);
+      await this.emitEvent({
+        event_id: this.generateId(),
+        task_id: taskId,
+        timestamp: new Date().toISOString(),
+        type: 'mode_violation',
+        mode: from,
+        stage: this.currentStage,
+        payload: {
+          from_mode: from,
+          to_mode: newMode,
+          reason: `Auto-escalation blocked: ${from} → ${newMode}. User approval required.`,
+          blocked: true,
+        },
+        evidence_ids: [],
+        parent_event_id: null,
+      });
+      return { changed: false, from_mode: from, to_mode: from };
+    }
+
+    const changed = from !== newMode;
+    this.currentMode = newMode;
+
+    // Reset stage when leaving MISSION
+    if (newMode !== 'MISSION') {
+      this.currentStage = 'none';
+    }
+
+    if (changed) {
+      await this.emitEvent({
+        event_id: this.generateId(),
+        task_id: taskId,
+        timestamp: new Date().toISOString(),
+        type: 'mode_changed',
+        mode: newMode,
+        stage: this.currentStage,
+        payload: {
+          run_id: taskId,
+          from_mode: from,
+          to_mode: newMode,
+          reason: opts.reason,
+          user_initiated: opts.user_initiated,
+        },
+        evidence_ids: [],
+        parent_event_id: null,
+      });
+    }
+
+    return { changed, from_mode: from, to_mode: newMode };
+  }
+
+  /**
+   * V9: Check if current mode allows a write/execute action.
+   * Returns true if allowed, false if blocked (emits mode_violation event).
+   */
+  private async enforceMissionMode(
+    action: string,
+    taskId: string,
+  ): Promise<boolean> {
+    if (this.currentMode === 'MISSION') {
+      return true;
+    }
+    console.log(`[V9] Mode enforcement: '${action}' blocked in ${this.currentMode} mode (requires MISSION)`);
+    await this.emitEvent({
+      event_id: this.generateId(),
+      task_id: taskId,
+      timestamp: new Date().toISOString(),
+      type: 'mode_violation',
+      mode: this.currentMode,
+      stage: this.currentStage,
+      payload: {
+        action,
+        current_mode: this.currentMode,
+        required_mode: 'MISSION',
+        reason: `Action '${action}' requires MISSION mode, current mode is ${this.currentMode}`,
+      },
+      evidence_ids: [],
+      parent_event_id: null,
+    });
+    return false;
+  }
+
+  /**
+   * V3: Check if an event triggers solution capture.
+   * Maintains a sliding window of recent events (max 50).
+   */
+  private async checkSolutionCapture(event: Event, runId: string): Promise<void> {
+    this.recentEventsWindow.push(event);
+    if (this.recentEventsWindow.length > 50) this.recentEventsWindow.shift();
+
+    const pmm = this.getProjectMemoryManager();
+    if (!pmm) return;
+
+    const candidate = detectSolutionCandidate(event, {
+      recentEvents: this.recentEventsWindow,
+      runId,
+    });
+    if (candidate) {
+      await pmm.captureSolution(candidate.solution, event.task_id, event.mode);
+    }
   }
 
   // -------------------------------------------------------------------------
@@ -307,12 +935,20 @@ class MissionControlViewProvider implements vscode.WebviewViewProvider {
 
     webviewView.webview.html = this._getHtmlForWebview(webviewView.webview);
 
+    // Step 48: Store webview reference for Cmd+Shift+Z command
+    this._currentWebview = webviewView.webview;
+
     // Set up message passing
     webviewView.webview.onDidReceiveMessage(
       async (message) => {
         await this.handleMessage(message, webviewView.webview);
       }
     );
+
+    // Step 47: Check for interrupted tasks on webview activation
+    this.checkForInterruptedTasks(webviewView.webview).catch(err => {
+      console.error('[Step47] checkForInterruptedTasks failed:', err);
+    });
   }
 
   private async handleMessage(message: any, webview: vscode.Webview) {
@@ -436,6 +1072,36 @@ class MissionControlViewProvider implements vscode.WebviewViewProvider {
         await this.handleNextStepSelected(message, webview);
         break;
 
+      // Process card actions (terminate, open browser)
+      case 'process_action':
+        await this.handleProcessAction(message);
+        break;
+
+      // V7: Generated tool run request
+      case 'generated_tool_run':
+        await this.handleGeneratedToolRun(message, webview);
+        break;
+
+      // Step 47: Crash recovery action from CrashRecoveryCard
+      case 'crash_recovery':
+        await this.handleCrashRecovery(message, webview);
+        break;
+
+      // Step 48: Undo action from DiffAppliedCard
+      case 'undo_action':
+        await this.handleUndoAction(message, webview);
+        break;
+
+      // Step 49: Recovery action from FailureCard
+      case 'recovery_action':
+        await this.handleRecoveryAction(message, webview);
+        break;
+
+      // Step 49: Open file from FailureCard
+      case 'open_file':
+        await this.handleOpenFile(message);
+        break;
+
       default:
         console.log('Unknown message type:', message.type);
     }
@@ -455,12 +1121,17 @@ class MissionControlViewProvider implements vscode.WebviewViewProvider {
     console.log('Checking currentTaskId:', this.currentTaskId);
     if (!this.currentTaskId) {
       this.currentTaskId = this.generateId();
-      this.currentMode = userSelectedMode;
       this.currentStage = 'none';
+      await this.setModeWithEvent(userSelectedMode, this.currentTaskId, {
+        reason: 'User selected mode for new task',
+        user_initiated: true,
+      });
       console.log('Created new task ID:', this.currentTaskId);
     }
 
     const taskId = this.currentTaskId;
+    // Step 47: Track currentTaskId at module level for deactivate()
+    globalCurrentTaskId = taskId;
     console.log('Using task ID:', taskId);
 
     // PHASE 4: Extract attachment evidence_ids for storing in intent_received
@@ -495,6 +1166,9 @@ class MissionControlViewProvider implements vscode.WebviewViewProvider {
       console.log('✓ intent_received event emitted');
       await this.sendEventsToWebview(webview, taskId);
 
+      // Step 47: Persist active task after intent_received
+      await this.updateTaskPersistence(taskId, { mode: userSelectedMode, stage: this.currentStage });
+
       // 2. STEP 40.5: Enrich user input with intelligence layer
       const workspaceRoot = this.selectedWorkspaceRoot
         || vscode.workspace.workspaceFolders?.[0]?.uri.fsPath
@@ -513,6 +1187,7 @@ class MissionControlViewProvider implements vscode.WebviewViewProvider {
             workspaceRoot,
             openFiles: openFilePaths,
             editorContext,
+            projectMemoryManager: this.getProjectMemoryManager() || undefined,
           });
           effectivePrompt = enrichedInput.enrichedPrompt;
           console.log('[Step40.5] Enrichment complete:', {
@@ -631,6 +1306,60 @@ class MissionControlViewProvider implements vscode.WebviewViewProvider {
       console.log('[Step35] Flow kind:', analysisWithFlow.flow_kind);
       console.log('[Step35] Is greenfield request:', isGreenfieldRequest(promptForIntent));
 
+      // LLM classifier fallback: when heuristics are ambiguous, use Haiku for classification
+      const greenfieldSignal = isGreenfieldRequest(promptForIntent);
+      const greenfieldConfidence = greenfieldSignal ? 0.9 : 0.1;
+      const commandConfidence = commandDetection.confidence;
+      if (needsLlmClassification(greenfieldConfidence, commandConfidence, analysis.confidence)) {
+        try {
+          const apiKey = await this._context.secrets.get('ordinex.apiKey');
+          if (apiKey) {
+            console.log('[LLM Classifier] Heuristics ambiguous — calling Haiku for classification');
+            const llmResult = await llmClassifyIntent({
+              text: promptForIntent,
+              contextHint: this.scaffoldProjectPath ? 'Working in scaffolded project' : undefined,
+              llmConfig: { apiKey, model: 'claude-haiku-4-5-20251001' },
+            });
+            console.log('[LLM Classifier] Result:', llmResult);
+
+            if (llmResult.confidence >= 0.7) {
+              // Map LLM intent to behavior/flow_kind override
+              const intentToBehavior: Record<string, string> = {
+                'SCAFFOLD': 'PLAN',
+                'RUN_COMMAND': 'QUICK_ACTION',
+                'PLAN': 'PLAN',
+                'QUICK_ACTION': 'QUICK_ACTION',
+                'ANSWER': 'ANSWER',
+              };
+              const intentToFlowKind: Record<string, string> = {
+                'SCAFFOLD': 'scaffold',
+                'RUN_COMMAND': 'standard',
+                'PLAN': 'standard',
+                'QUICK_ACTION': 'standard',
+                'ANSWER': 'standard',
+              };
+
+              const mappedBehavior = intentToBehavior[llmResult.intent];
+              const mappedFlowKind = intentToFlowKind[llmResult.intent];
+
+              if (mappedBehavior) {
+                console.log(`[LLM Classifier] Overriding behavior: ${analysis.behavior} → ${mappedBehavior}, flow: ${analysisWithFlow.flow_kind} → ${mappedFlowKind}`);
+                analysis = {
+                  ...analysis,
+                  behavior: mappedBehavior as any,
+                  derived_mode: (llmResult.intent === 'ANSWER' ? 'ANSWER' : llmResult.intent === 'SCAFFOLD' ? 'SCAFFOLD' : 'MISSION') as Mode,
+                  reasoning: `LLM classifier: ${llmResult.reason}`,
+                  confidence: llmResult.confidence,
+                };
+                analysisWithFlow = { ...analysisWithFlow, flow_kind: mappedFlowKind as any };
+              }
+            }
+          }
+        } catch (llmError) {
+          console.warn('[LLM Classifier] Fallback failed (graceful degradation):', llmError);
+        }
+      }
+
       // If a clear command intent is detected, do not block on stale active-run state
       if (analysis.behavior === 'CONTINUE_RUN' && commandDetection.isCommandIntent && commandDetection.confidence >= 0.75) {
         console.log('[Step33] Overriding CONTINUE_RUN due to command intent');
@@ -668,17 +1397,29 @@ class MissionControlViewProvider implements vscode.WebviewViewProvider {
         evidence_ids: [],
         parent_event_id: null,
       });
-      this.currentMode = analysis.derived_mode;
+      await this.setModeWithEvent(analysis.derived_mode, taskId, {
+        reason: `Intent analysis derived mode: ${analysis.behavior}`,
+        user_initiated: false,
+      });
       await this.sendEventsToWebview(webview, taskId);
 
       // 5. STEP 35 FIX: SCAFFOLD CHECK BEFORE BEHAVIOR SWITCH
-      // Greenfield requests MUST route to scaffold flow regardless of behavior classification
-      if (analysisWithFlow.flow_kind === 'scaffold') {
+      // Greenfield requests route to scaffold flow UNLESS a clear command intent overrides
+      const commandOverridesScaffold = commandDetection.isCommandIntent && commandDetection.confidence >= 0.75;
+
+      if (analysisWithFlow.flow_kind === 'scaffold' && !commandOverridesScaffold) {
         console.log('[Step35] 🏗️ SCAFFOLD flow detected - routing DIRECTLY to scaffold handler');
         console.log('[Step35] Bypassing behavior switch (was:', analysis.behavior, ')');
         await this.handleScaffoldFlow(effectivePrompt, taskId, modelId || 'sonnet-4.5', webview, attachments || []);
         console.log('[Step33] Behavior handling complete (scaffold flow)');
         return; // Exit early - scaffold flow handles everything
+      }
+
+      // Command intent overrides scaffold flow (e.g., "new start dev server")
+      if (commandOverridesScaffold && analysisWithFlow.flow_kind === 'scaffold') {
+        console.log('[Step35] Command intent overrides scaffold flow:', commandDetection.reasoning);
+        analysis = { ...analysis, behavior: 'QUICK_ACTION', derived_mode: 'MISSION' as Mode, reasoning: `Command override: ${commandDetection.reasoning}` };
+        analysisWithFlow = { ...analysisWithFlow, flow_kind: 'standard' };
       }
 
       // 6. STEP 33: Handle behavior-specific logic (non-scaffold)
@@ -1033,7 +1774,10 @@ class MissionControlViewProvider implements vscode.WebviewViewProvider {
       parent_event_id: null,
     });
 
-    this.currentMode = confirmedMode;
+    await this.setModeWithEvent(confirmedMode, taskId, {
+      reason: 'User confirmed mode',
+      user_initiated: true,
+    });
 
     // Now generate plan if needed
     if (confirmedMode === 'PLAN' || confirmedMode === 'MISSION') {
@@ -2467,7 +3211,10 @@ This demonstrates the diff proposal pipeline without requiring LLM integration.
           parent_event_id: null,
         });
 
-        this.currentMode = 'MISSION';
+        await this.setModeWithEvent('MISSION', task_id, {
+          reason: 'Plan approved - switching to MISSION mode',
+          user_initiated: true,
+        });
 
         // STEP 26: Check if plan is too large and needs breakdown
         const planEvents = events.filter((e: Event) => 
@@ -2650,6 +3397,13 @@ This demonstrates the diff proposal pipeline without requiring LLM integration.
 
       const approved = decision === 'approved';
 
+      // V9: Enforce MISSION mode for diff approvals (writes to disk)
+      const approvalTypeForGate = approvalRequest.payload.approval_type as string;
+      if (approved && approvalTypeForGate === 'diff' && !await this.enforceMissionMode('apply_diff', task_id)) {
+        await this.sendEventsToWebview(webview, task_id);
+        return;
+      }
+
       console.log(`[handleResolveApproval] Resolving approval: ${approval_id}, decision: ${decision}`);
 
       // Resolve via approval manager (this resolves the Promise and unblocks execution!)
@@ -2661,6 +3415,24 @@ This demonstrates the diff proposal pipeline without requiring LLM integration.
         approved ? 'approved' : 'denied',
         'once'
       );
+
+      // V6: If this is a generated_tool approval, approve/reject the tool proposal
+      const approvalType = approvalRequest.payload.approval_type as string;
+      if (approvalType === 'generated_tool') {
+        const gtm = this.getGeneratedToolManager();
+        const proposalId = approvalRequest.payload.details
+          ? (approvalRequest.payload.details as Record<string, unknown>).proposal_id as string
+          : approval_id;
+        if (gtm && proposalId) {
+          if (approved) {
+            await gtm.approveTool(proposalId, task_id, this.currentMode);
+            console.log(`[V6] Tool proposal approved and saved: ${proposalId}`);
+          } else {
+            gtm.rejectTool(proposalId);
+            console.log(`[V6] Tool proposal rejected: ${proposalId}`);
+          }
+        }
+      }
 
       // Send updated events to webview
       await this.sendEventsToWebview(webview, task_id);
@@ -2766,12 +3538,18 @@ This demonstrates the diff proposal pipeline without requiring LLM integration.
         if (action === 'run_commands') {
           // FIXED: Use VS Code terminal API to run commands visibly
           console.log('[handleResolveDecisionPoint] Running commands in VS Code terminal');
-          
+
+          // V9: Enforce MISSION mode for command execution
+          if (!await this.enforceMissionMode('execute_command', task_id)) {
+            await this.sendEventsToWebview(webview, task_id);
+            return;
+          }
+
           this.pendingCommandContexts.delete(task_id);
-          
+
           const commands = pendingContext.commands || [];
           const workspaceRoot = pendingContext.workspaceRoot;
-          
+
           for (const command of commands) {
             // Emit command_started event
             await this.emitEvent({
@@ -3108,9 +3886,15 @@ This demonstrates the diff proposal pipeline without requiring LLM integration.
               
               await this.sendEventsToWebview(webview, task_id);
               
+              // V9: Scaffold writes require MISSION mode (prompt escalation)
+              if (!await this.enforceMissionMode('scaffold_write', task_id)) {
+                await this.sendEventsToWebview(webview, task_id);
+                return;
+              }
+
               // Create terminal and RUN the scaffold command automatically
               console.log('[handleResolveDecisionPoint] 🚀 Auto-running scaffold command:', createCmd);
-              
+
               const terminal = vscode.window.createTerminal({
                 name: `Scaffold: ${recipeNames[recipeSelection.recipe_id] || 'Project'}`,
                 cwd: scaffoldWorkspaceRoot,
@@ -4230,6 +5014,12 @@ This demonstrates the diff proposal pipeline without requiring LLM integration.
 
       await this.sendEventsToWebview(webview, taskId);
 
+      // V9: Scaffold writes require MISSION mode (prompt escalation)
+      if (!await this.enforceMissionMode('scaffold_write', taskId)) {
+        await this.sendEventsToWebview(webview, taskId);
+        return;
+      }
+
       // Run scaffold in terminal
       const terminal = vscode.window.createTerminal({
         name: `Scaffold: ${recipeNames[recipeSelection.recipe_id] || 'Project'}`,
@@ -4563,7 +5353,7 @@ This demonstrates the diff proposal pipeline without requiring LLM integration.
   /**
    * Handle next_step_selected message from webview.
    * Routes to the correct action based on the suggestion kind:
-   *  - 'command': Start dev server via ProcessManager
+   *  - 'command': Run command via ProcessManager (generic — any command in cwd)
    *  - 'browser': Open URL in external browser
    *  - 'task': Emit event for future follow-up feature implementation
    *  - 'info': Just show info message
@@ -4579,15 +5369,19 @@ This demonstrates the diff proposal pipeline without requiring LLM integration.
     try {
       switch (kind) {
         case 'command': {
-          // Start dev server via ProcessManager
+          // Run command via ProcessManager (generic — any command in cwd)
           const projectPath = suggestion?.projectPath || suggestion?.target_directory || this.pendingVerifyTargetDir;
           if (!projectPath) {
             vscode.window.showWarningMessage('No project path available to run command.');
             return;
           }
 
-          const commandStr = suggestion?.command || 'npm run dev';
-          console.log(`${LOG_PREFIX} Starting dev server: ${commandStr} in ${projectPath}`);
+          const commandStr = suggestion?.command;
+          if (!commandStr) {
+            vscode.window.showWarningMessage('No command specified.');
+            return;
+          }
+          console.log(`${LOG_PREFIX} Starting process: ${commandStr} in ${projectPath}`);
 
           // Emit process_started event
           await this.emitEvent({
@@ -4608,7 +5402,7 @@ This demonstrates the diff proposal pipeline without requiring LLM integration.
           });
           await this.sendEventsToWebview(webview, taskId);
 
-          // Use ProcessManager to start the dev server
+          // Use ProcessManager to start the process
           const pm = getProcessManager();
           const processId = generateProcessId('devserver');
           const processType = detectProcessType(commandStr);
@@ -4618,7 +5412,7 @@ This demonstrates the diff proposal pipeline without requiring LLM integration.
             if (evt.processId !== processId) return;
 
             if (evt.newStatus === 'ready') {
-              console.log(`${LOG_PREFIX} Dev server ready on port ${evt.port}`);
+              console.log(`${LOG_PREFIX} Process ready${evt.port ? ` on port ${evt.port}` : ''}`);
               await this.emitEvent({
                 event_id: this.generateId(),
                 task_id: taskId,
@@ -4630,7 +5424,7 @@ This demonstrates the diff proposal pipeline without requiring LLM integration.
                   scaffold_id: scaffoldId,
                   process_id: processId,
                   port: evt.port,
-                  message: `Dev server ready${evt.port ? ` on http://localhost:${evt.port}` : ''}`,
+                  message: `Process ready${evt.port ? ` on http://localhost:${evt.port}` : ''}`,
                 },
                 evidence_ids: [],
                 parent_event_id: null,
@@ -4641,7 +5435,7 @@ This demonstrates the diff proposal pipeline without requiring LLM integration.
               if (evt.port) {
                 const url = `http://localhost:${evt.port}`;
                 const openBrowser = await vscode.window.showInformationMessage(
-                  `Dev server ready on port ${evt.port}`,
+                  `Process ready on port ${evt.port}`,
                   'Open in Browser'
                 );
                 if (openBrowser === 'Open in Browser') {
@@ -4649,6 +5443,9 @@ This demonstrates the diff proposal pipeline without requiring LLM integration.
                 }
               }
             } else if (evt.newStatus === 'stopped') {
+              // Flush any remaining buffered output before emitting stopped
+              if (outputFlushTimer) { clearTimeout(outputFlushTimer); outputFlushTimer = null; }
+              await flushOutput();
               await this.emitEvent({
                 event_id: this.generateId(),
                 task_id: taskId,
@@ -4660,7 +5457,7 @@ This demonstrates the diff proposal pipeline without requiring LLM integration.
                   scaffold_id: scaffoldId,
                   process_id: processId,
                   exit_code: evt.exitCode,
-                  message: `Dev server stopped${evt.exitCode !== undefined ? ` (exit code: ${evt.exitCode})` : ''}`,
+                  message: `Process stopped${evt.exitCode !== undefined ? ` (exit code: ${evt.exitCode})` : ''}`,
                 },
                 evidence_ids: [],
                 parent_event_id: null,
@@ -4669,18 +5466,21 @@ This demonstrates the diff proposal pipeline without requiring LLM integration.
               pm.removeListener('status', statusHandler);
               pm.removeListener('output', outputHandler);
             } else if (evt.newStatus === 'error') {
+              // Flush any remaining buffered output before emitting failed
+              if (outputFlushTimer) { clearTimeout(outputFlushTimer); outputFlushTimer = null; }
+              await flushOutput();
               await this.emitEvent({
                 event_id: this.generateId(),
                 task_id: taskId,
                 timestamp: new Date().toISOString(),
-                type: 'process_error' as any,
+                type: 'process_failed' as any,
                 mode: this.currentMode,
                 stage: this.currentStage,
                 payload: {
                   scaffold_id: scaffoldId,
                   process_id: processId,
                   error: evt.error || 'Unknown error',
-                  message: `Dev server error: ${evt.error || 'Unknown'}`,
+                  message: `Process failed: ${evt.error || 'Unknown'}`,
                 },
                 evidence_ids: [],
                 parent_event_id: null,
@@ -4691,11 +5491,47 @@ This demonstrates the diff proposal pipeline without requiring LLM integration.
             }
           };
 
+          // Debounced output forwarding — batch lines every 500ms to avoid flooding webview
+          const MAX_OUTPUT_BUFFER = 50;
+          let outputBuffer: string[] = [];
+          let outputFlushTimer: ReturnType<typeof setTimeout> | null = null;
+
+          const flushOutput = async () => {
+            if (outputBuffer.length === 0) return;
+            const lines = outputBuffer.slice(-MAX_OUTPUT_BUFFER);
+            outputBuffer = [];
+            outputFlushTimer = null;
+
+            await this.emitEvent({
+              event_id: this.generateId(),
+              task_id: taskId,
+              timestamp: new Date().toISOString(),
+              type: 'process_output' as any,
+              mode: this.currentMode,
+              stage: this.currentStage,
+              payload: {
+                scaffold_id: scaffoldId,
+                process_id: processId,
+                lines,
+                line_count: lines.length,
+              },
+              evidence_ids: [],
+              parent_event_id: null,
+            });
+            await this.sendEventsToWebview(webview, taskId);
+          };
+
           const outputHandler = async (evt: ProcessOutputEvent) => {
             if (evt.processId !== processId) return;
-            // Don't flood the event store — only log stderr and significant output
-            if (evt.stream === 'stderr' && evt.data.trim()) {
-              console.log(`${LOG_PREFIX} [${processId}] stderr: ${evt.data.trim().slice(0, 200)}`);
+            // Buffer lines, cap at MAX_OUTPUT_BUFFER
+            const newLines = evt.data.split('\n').filter((l: string) => l.trim());
+            outputBuffer.push(...newLines);
+            if (outputBuffer.length > MAX_OUTPUT_BUFFER) {
+              outputBuffer = outputBuffer.slice(-MAX_OUTPUT_BUFFER);
+            }
+            // Debounce flush at 500ms
+            if (!outputFlushTimer) {
+              outputFlushTimer = setTimeout(() => flushOutput(), 500);
             }
           };
 
@@ -4724,14 +5560,14 @@ This demonstrates the diff proposal pipeline without requiring LLM integration.
               event_id: this.generateId(),
               task_id: taskId,
               timestamp: new Date().toISOString(),
-              type: 'process_error' as any,
+              type: 'process_failed' as any,
               mode: this.currentMode,
               stage: this.currentStage,
               payload: {
                 scaffold_id: scaffoldId,
                 process_id: processId,
                 error: err.message || 'Failed to start process',
-                message: `Failed to start dev server: ${err.message}`,
+                message: `Failed to start process: ${err.message}`,
               },
               evidence_ids: [],
               parent_event_id: null,
@@ -4794,6 +5630,345 @@ This demonstrates the diff proposal pipeline without requiring LLM integration.
     } catch (error: any) {
       console.error(`${LOG_PREFIX} Error handling next step:`, error);
       vscode.window.showErrorMessage(`Failed to execute action: ${error.message}`);
+    }
+  }
+
+  /**
+   * Handle process card actions (terminate, open_browser) from webview.
+   */
+  // -------------------------------------------------------------------------
+  // V7: Generated Tool Execution
+  // -------------------------------------------------------------------------
+
+  private async handleGeneratedToolRun(message: any, webview: vscode.Webview): Promise<void> {
+    const { tool_name, input_json } = message;
+    const taskId = this.currentTaskId || 'tool_run';
+
+    // V9: Enforce MISSION mode for generated tool execution
+    if (!await this.enforceMissionMode('generated_tool_run', taskId)) {
+      await this.sendEventsToWebview(webview, taskId);
+      return;
+    }
+
+    const gtm = this.getGeneratedToolManager();
+    if (!gtm) {
+      console.error('[V7] GeneratedToolManager not available');
+      return;
+    }
+
+    const policy = this.getGeneratedToolPolicy();
+    if (policy === 'disabled') {
+      await this.emitEvent({
+        event_id: this.generateId(),
+        task_id: taskId,
+        timestamp: new Date().toISOString(),
+        type: 'generated_tool_run_failed',
+        mode: this.currentMode,
+        stage: 'edit',
+        payload: {
+          tool_name,
+          failure_type: 'policy',
+          reason: 'Generated tool execution is disabled',
+          policy_used: 'disabled',
+        },
+        evidence_ids: [],
+        parent_event_id: null,
+      });
+      await this.sendEventsToWebview(webview, taskId);
+      return;
+    }
+
+    // Load tool code and check static scan
+    const code = await gtm.getToolCode(tool_name);
+    if (!code) {
+      await this.emitEvent({
+        event_id: this.generateId(),
+        task_id: taskId,
+        timestamp: new Date().toISOString(),
+        type: 'generated_tool_run_failed',
+        mode: this.currentMode,
+        stage: 'edit',
+        payload: {
+          tool_name,
+          failure_type: 'error',
+          reason: `Tool "${tool_name}" not found in registry`,
+        },
+        evidence_ids: [],
+        parent_event_id: null,
+      });
+      await this.sendEventsToWebview(webview, taskId);
+      return;
+    }
+
+    const blockReason = scanForBlockedPatterns(code);
+    if (blockReason) {
+      await this.emitEvent({
+        event_id: this.generateId(),
+        task_id: taskId,
+        timestamp: new Date().toISOString(),
+        type: 'generated_tool_run_failed',
+        mode: this.currentMode,
+        stage: 'edit',
+        payload: {
+          tool_name,
+          failure_type: 'blocked',
+          reason: `Static scan blocked: ${blockReason}`,
+        },
+        evidence_ids: [],
+        parent_event_id: null,
+      });
+      await this.sendEventsToWebview(webview, taskId);
+      return;
+    }
+
+    // Emit run_started
+    await this.emitEvent({
+      event_id: this.generateId(),
+      task_id: taskId,
+      timestamp: new Date().toISOString(),
+      type: 'generated_tool_run_started',
+      mode: this.currentMode,
+      stage: 'edit',
+      payload: {
+        tool_name,
+        args_summary: (input_json || '').substring(0, 100),
+        policy_used: policy,
+        approved_by_user: policy === 'prompt',
+      },
+      evidence_ids: [],
+      parent_event_id: null,
+    });
+    await this.sendEventsToWebview(webview, taskId);
+
+    // Run the tool
+    const workspaceRoot = this.getWorkspaceRoot() || '.';
+    const toolsRoot = path.join(workspaceRoot, '.ordinex', 'tools', 'generated');
+    const codePath = path.join(toolsRoot, `${tool_name}.js`);
+
+    const result = await runGeneratedTool({
+      tool_name,
+      code_path: codePath,
+      cwd: workspaceRoot,
+      input_json: input_json || '{}',
+    });
+
+    if (result.success) {
+      await this.emitEvent({
+        event_id: this.generateId(),
+        task_id: taskId,
+        timestamp: new Date().toISOString(),
+        type: 'generated_tool_run_completed',
+        mode: this.currentMode,
+        stage: 'edit',
+        payload: {
+          tool_name,
+          exit_code: result.result.exit_code,
+          duration_ms: result.result.duration_ms,
+          stdout_preview: result.result.stdout.substring(0, 500),
+          stderr_preview: result.result.stderr.substring(0, 500),
+        },
+        evidence_ids: [],
+        parent_event_id: null,
+      });
+    } else {
+      await this.emitEvent({
+        event_id: this.generateId(),
+        task_id: taskId,
+        timestamp: new Date().toISOString(),
+        type: 'generated_tool_run_failed',
+        mode: this.currentMode,
+        stage: 'edit',
+        payload: {
+          tool_name,
+          failure_type: result.failure_type,
+          reason: result.reason,
+        },
+        evidence_ids: [],
+        parent_event_id: null,
+      });
+    }
+
+    await this.sendEventsToWebview(webview, taskId);
+  }
+
+  private async handleProcessAction(message: any): Promise<void> {
+    const { action, process_id, port } = message;
+    const pm = getProcessManager();
+
+    switch (action) {
+      case 'terminate': {
+        console.log(`[Ordinex:Process] Terminating process: ${process_id}`);
+        try {
+          await pm.stopProcess(process_id, 'user_terminated');
+        } catch (err: any) {
+          console.error(`[Ordinex:Process] Failed to terminate: ${err.message}`);
+          vscode.window.showWarningMessage(`Failed to terminate process: ${err.message}`);
+        }
+        break;
+      }
+
+      case 'open_browser': {
+        if (port) {
+          const url = `http://localhost:${port}`;
+          console.log(`[Ordinex:Process] Opening browser: ${url}`);
+          await vscode.env.openExternal(vscode.Uri.parse(url));
+        }
+        break;
+      }
+
+      default:
+        console.log(`[Ordinex:Process] Unknown action: ${action}`);
+    }
+  }
+
+  // -------------------------------------------------------------------------
+  // Step 49: Error Recovery UX — Action Handlers
+  // -------------------------------------------------------------------------
+
+  /**
+   * Handle recovery actions dispatched from FailureCard.
+   * Routes by action type: retry, alternative, checkpoint, command, manual.
+   * V9: Mode-gated for actions that write to disk (retry, command).
+   * Concern #4: Command actions must pass isSafeRecoveryCommand() allowlist.
+   */
+  private async handleRecoveryAction(message: any, webview: vscode.Webview): Promise<void> {
+    const { action_id, event_id, command } = message;
+    const taskId = this.currentTaskId || 'unknown';
+    console.log(`[Step49] Recovery action: ${action_id} for event ${event_id}`);
+
+    switch (action_id) {
+      case 'retry':
+      case 'retry_split': {
+        // V9: Retry writes to disk — requires MISSION mode
+        if (!await this.enforceMissionMode('recovery_retry', taskId)) {
+          await this.sendEventsToWebview(webview, taskId);
+          return;
+        }
+        // Emit decision so the autonomy controller / self-correction loop can pick it up
+        await this.emitEvent({
+          event_id: this.generateId(),
+          task_id: taskId,
+          timestamp: new Date().toISOString(),
+          type: 'recovery_action_taken',
+          mode: this.currentMode,
+          stage: this.currentStage,
+          payload: {
+            source_event_id: event_id,
+            action: action_id === 'retry_split' ? 'RETRY_SPLIT' : 'RETRY_SAME',
+            user_initiated: true,
+          },
+          evidence_ids: [],
+          parent_event_id: null,
+        });
+        await this.sendEventsToWebview(webview, taskId);
+        break;
+      }
+
+      case 'alternative': {
+        if (!await this.enforceMissionMode('recovery_alternative', taskId)) {
+          await this.sendEventsToWebview(webview, taskId);
+          return;
+        }
+        await this.emitEvent({
+          event_id: this.generateId(),
+          task_id: taskId,
+          timestamp: new Date().toISOString(),
+          type: 'recovery_action_taken',
+          mode: this.currentMode,
+          stage: this.currentStage,
+          payload: {
+            source_event_id: event_id,
+            action: 'REGENERATE_PATCH',
+            user_initiated: true,
+          },
+          evidence_ids: [],
+          parent_event_id: null,
+        });
+        await this.sendEventsToWebview(webview, taskId);
+        break;
+      }
+
+      case 'restore_checkpoint': {
+        // Checkpoint restore is handled via existing checkpoint flow
+        await this.emitEvent({
+          event_id: this.generateId(),
+          task_id: taskId,
+          timestamp: new Date().toISOString(),
+          type: 'recovery_action_taken',
+          mode: this.currentMode,
+          stage: this.currentStage,
+          payload: {
+            source_event_id: event_id,
+            action: 'RESTORE_CHECKPOINT',
+            user_initiated: true,
+          },
+          evidence_ids: [],
+          parent_event_id: null,
+        });
+        await this.sendEventsToWebview(webview, taskId);
+        break;
+      }
+
+      case 'run_command': {
+        // Concern #4: Command must pass allowlist
+        if (!command || !isSafeRecoveryCommand(command)) {
+          vscode.window.showWarningMessage(`Ordinex: Command not in recovery allowlist: "${command || '(empty)'}"`);
+          return;
+        }
+        // V9: Running a command requires MISSION mode
+        if (!await this.enforceMissionMode('recovery_command', taskId)) {
+          await this.sendEventsToWebview(webview, taskId);
+          return;
+        }
+        // Execute the safe command via terminal
+        const terminal = vscode.window.createTerminal({
+          name: `Ordinex: ${command}`,
+          cwd: this.selectedWorkspaceRoot || undefined,
+        });
+        terminal.show(false);
+        terminal.sendText(command);
+        break;
+      }
+
+      case 'fix_manually': {
+        // No-op action — user handles it. Just acknowledge.
+        vscode.window.showInformationMessage('Ordinex: Please fix the issue manually and retry.');
+        break;
+      }
+
+      default:
+        console.log(`[Step49] Unknown recovery action: ${action_id}`);
+    }
+  }
+
+  /**
+   * Handle open_file requests from FailureCard.
+   * Guard: file must be inside workspace root (Concern: path traversal).
+   */
+  private async handleOpenFile(message: any): Promise<void> {
+    const { file_path } = message;
+    if (!file_path) return;
+
+    // Guard: resolve against workspace root and check containment
+    const workspaceRoot = this.selectedWorkspaceRoot
+      || vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+    if (!workspaceRoot) {
+      vscode.window.showWarningMessage('Ordinex: No workspace open');
+      return;
+    }
+
+    const resolved = path.resolve(workspaceRoot, file_path);
+    if (!resolved.startsWith(workspaceRoot)) {
+      vscode.window.showWarningMessage('Ordinex: Cannot open files outside workspace');
+      return;
+    }
+
+    try {
+      const doc = await vscode.workspace.openTextDocument(vscode.Uri.file(resolved));
+      await vscode.window.showTextDocument(doc, { preview: true });
+    } catch (err: any) {
+      console.error(`[Step49] Failed to open file: ${err.message}`);
+      vscode.window.showWarningMessage(`Ordinex: Could not open file: ${file_path}`);
     }
   }
 
@@ -4901,6 +6076,17 @@ This demonstrates the diff proposal pipeline without requiring LLM integration.
       console.error('→ ❌ eventStore.append FAILED:', appendError);
       throw appendError;
     }
+
+    // V3: Check for solution capture (non-blocking)
+    const runId = (event.payload.run_id as string) || event.task_id;
+    this.checkSolutionCapture(event, runId).catch(err =>
+      console.warn('[V3] Solution capture check failed:', err)
+    );
+
+    // Step 48: Capture file content for undo (non-blocking)
+    this.captureForUndo(event).catch(err =>
+      console.warn('[Step48] Undo capture failed:', err)
+    );
   }
 
   private async sendEventsToWebview(webview: vscode.Webview, taskId: string) {
@@ -4913,6 +6099,9 @@ This demonstrates the diff proposal pipeline without requiring LLM integration.
       type: 'ordinex:eventsUpdate',
       events,
     });
+
+    // Step 48: Also sync undo state
+    this.syncUndoStateToWebview(webview);
   }
 
   // -------------------------------------------------------------------------
@@ -5009,6 +6198,16 @@ This demonstrates the diff proposal pipeline without requiring LLM integration.
         break;
       }
 
+      case 'ordinex:settings:setGeneratedToolPolicy': {
+        const toolPolicy = message.policy;
+        if (['disabled', 'prompt', 'auto'].includes(toolPolicy)) {
+          await vscode.workspace.getConfiguration('ordinex.generatedTools').update('policy', toolPolicy, vscode.ConfigurationTarget.Global);
+          this.emitSettingsChangedEvent('generatedToolPolicy', toolPolicy);
+          webview.postMessage({ type: 'ordinex:settings:saveResult', setting: 'Generated Tool Policy', success: true });
+        }
+        break;
+      }
+
       default:
         console.log('[Settings] Unknown message type:', message.type);
     }
@@ -5031,6 +6230,7 @@ This demonstrates the diff proposal pipeline without requiring LLM integration.
     const commandPolicy = config.get<string>('commandPolicy.mode', 'prompt');
     const autonomyLevel = config.get<string>('autonomy.level', 'conservative');
     const sessionPersistence = config.get<string>('intelligence.sessionPersistence', 'off') === 'on';
+    const generatedToolPolicy = config.get<string>('generatedTools.policy', 'prompt');
 
     // Account info
     const extensionVersion = this._context.extension?.packageJSON?.version || '0.0.0';
@@ -5054,6 +6254,7 @@ This demonstrates the diff proposal pipeline without requiring LLM integration.
       commandPolicy,
       autonomyLevel,
       sessionPersistence,
+      generatedToolPolicy,
       extensionVersion,
       workspacePath,
       eventStorePath,
@@ -5226,6 +6427,28 @@ export function activate(context: vscode.ExtensionContext) {
   );
 
   // Keep the existing command for backward compatibility
+  // Step 48: Register Undo command (Cmd+Shift+Z)
+  context.subscriptions.push(
+    vscode.commands.registerCommand('ordinex.undo', async () => {
+      const undoStack = (provider as any)._undoStack as UndoStack | null;
+      const webview = (provider as any)._currentWebview as vscode.Webview | null;
+      if (!undoStack || !webview) {
+        vscode.window.showInformationMessage('Ordinex: Nothing to undo');
+        return;
+      }
+      if (undoStack.canUndo()) {
+        const top = undoStack.peek();
+        if (top && top.undoable) {
+          await (provider as any).handleUndoAction({ group_id: top.group_id }, webview);
+        } else if (top && !top.undoable) {
+          vscode.window.showWarningMessage('Ordinex: Most recent edit cannot be undone');
+        }
+      } else {
+        vscode.window.showInformationMessage('Ordinex: Nothing to undo');
+      }
+    })
+  );
+
   const disposable = vscode.commands.registerCommand('ordinex.openPanel', () => {
     const panel = vscode.window.createWebviewPanel(
       'ordinexPanel',
@@ -5244,5 +6467,22 @@ export function activate(context: vscode.ExtensionContext) {
 }
 
 export function deactivate() {
+  console.log('Ordinex extension deactivating — stopping all processes...');
+
+  // Step 47: Mark clean exit synchronously (within VS Code's deactivate time budget)
+  if (globalTaskPersistenceService && globalCurrentTaskId) {
+    try {
+      globalTaskPersistenceService.markCleanExitSync(globalCurrentTaskId);
+      console.log(`[Step47] Marked clean exit for task ${globalCurrentTaskId}`);
+    } catch (err) {
+      console.error('[Step47] Error marking clean exit on deactivate:', err);
+    }
+  }
+
+  try {
+    getProcessManager().stopAll('extension_deactivate');
+  } catch (err) {
+    console.error('Error stopping processes on deactivate:', err);
+  }
   console.log('Ordinex extension deactivated');
 }

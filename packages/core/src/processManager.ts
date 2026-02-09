@@ -13,8 +13,10 @@
  */
 
 import { EventEmitter } from 'events';
-import { spawn, ChildProcess } from 'child_process';
+import { spawn, ChildProcess, execSync } from 'child_process';
 import * as net from 'net';
+
+const IS_WINDOWS = globalThis.process?.platform === 'win32';
 
 // ============================================================================
 // TYPES
@@ -221,6 +223,8 @@ export class ProcessManager extends EventEmitter {
         env: { ...globalThis.process.env, ...env },
         shell: true,
         stdio: ['ignore', 'pipe', 'pipe'],
+        // On Unix, create a new process group so we can kill the entire tree
+        detached: !IS_WINDOWS,
       });
 
       if (!child.pid) {
@@ -277,7 +281,7 @@ export class ProcessManager extends EventEmitter {
   }
 
   /**
-   * Stop a running process
+   * Stop a running process (kills entire process tree cross-platform)
    */
   async stopProcess(id: string, reason: string = 'user_stopped'): Promise<void> {
     const process = this.processes.get(id);
@@ -297,13 +301,13 @@ export class ProcessManager extends EventEmitter {
       this.readyTimeouts.delete(id);
     }
 
-    // Send SIGTERM first
-    child.kill('SIGTERM');
+    // Kill the entire process tree
+    this.killProcessTree(child, 'SIGTERM');
 
-    // Force kill after 5 seconds
+    // Force kill after 5 seconds if still alive
     const forceKillTimeout = setTimeout(() => {
       if (!child.killed) {
-        child.kill('SIGKILL');
+        this.killProcessTree(child, 'SIGKILL');
       }
     }, 5000);
 
@@ -321,6 +325,36 @@ export class ProcessManager extends EventEmitter {
         child.once('exit', cleanup);
       }
     });
+  }
+
+  /**
+   * Kill an entire process tree cross-platform.
+   * On Unix: sends signal to the process group (negative PID).
+   * On Windows: uses taskkill /T to kill the tree.
+   */
+  private killProcessTree(child: ChildProcess, signal: 'SIGTERM' | 'SIGKILL'): void {
+    const pid = child.pid;
+    if (!pid) {
+      return;
+    }
+
+    try {
+      if (IS_WINDOWS) {
+        // taskkill /T kills child processes, /F forces termination
+        const forceFlag = signal === 'SIGKILL' ? ' /F' : '';
+        execSync(`taskkill /pid ${pid} /T${forceFlag}`, { stdio: 'ignore' });
+      } else {
+        // Send signal to the entire process group via negative PID
+        globalThis.process.kill(-pid, signal);
+      }
+    } catch {
+      // Process may have already exited — fall back to direct kill
+      try {
+        child.kill(signal);
+      } catch {
+        // Already dead, ignore
+      }
+    }
   }
 
   /**

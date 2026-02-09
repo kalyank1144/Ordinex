@@ -33,6 +33,7 @@ export type {
   ResolvedReference,
   EditorContext,
   DiagnosticEntry,
+  MemoryContext,
 } from './contextEnricher';
 
 // Codebase context
@@ -85,3 +86,37 @@ export type {
   PendingClarification,
   ErrorMention,
 } from './sessionContext';
+
+// Project Memory (V2-V5)
+export { ProjectMemoryManager, tokenize } from './projectMemoryManager';
+
+export type {
+  MemoryService,
+  Solution,
+  SolutionEvidence,
+  SolutionMatch,
+  EventPublisher,
+} from './memoryService';
+
+// Solution Capture (V3)
+export { detectSolutionCandidate } from './solutionCaptureSubscriber';
+
+export type {
+  SolutionCaptureContext,
+  SolutionCandidate,
+} from './solutionCaptureSubscriber';
+
+// Generated Tools (V6-V8)
+export { GeneratedToolManager } from './generatedToolManager';
+
+export type {
+  ToolRegistryService,
+  ToolProposal,
+  ToolAllowPolicy,
+  ToolEntry,
+  ToolRegistry,
+  ToolMetadata,
+  ToolRunResult,
+  ToolRunFailureType,
+  ToolExecutionPolicy,
+} from './toolRegistryService';

@@ -46,6 +46,19 @@ export interface CommandIntentResult {
 }
 
 /**
+ * Command phrase patterns — specific verb+target combos that are unambiguously commands.
+ * Checked BEFORE the greenfield check to prevent "new start dev server" misrouting.
+ */
+const COMMAND_PHRASE_PATTERNS: Array<{ pattern: RegExp; commands: string[]; desc: string }> = [
+  { pattern: /\bstart\s+(the\s+)?(dev\b|server\b|development\b)/i, commands: ['npm run dev'], desc: 'start dev/server' },
+  { pattern: /\bstop\s+(the\s+)?(dev\b|server\b|process\b)/i, commands: [], desc: 'stop server' },
+  { pattern: /\brestart\s+(the\s+)?(dev\b|server\b)/i, commands: ['npm run dev'], desc: 'restart server' },
+  { pattern: /\brun\s+(the\s+)?(dev\b|server\b|build\b|tests?\b)/i, commands: ['npm run dev'], desc: 'run dev/build/test' },
+  { pattern: /\bopen\s+(the\s+)?(dev\b|server\b|browser\b)/i, commands: [], desc: 'open dev/browser' },
+  { pattern: /\binstall\s+(the\s+)?(deps?\b|dependencies\b|packages?\b)/i, commands: ['npm install'], desc: 'install deps' },
+];
+
+/**
  * Command-related action verbs (explicit command execution)
  * Step 35.8: Removed ambiguous verbs, kept explicit command verbs
  */
@@ -53,6 +66,9 @@ const COMMAND_VERBS = [
   'run',
   'execute',
   'launch',
+  'start',
+  'stop',
+  'restart',
   'serve',
   'test',
   'deploy',
@@ -66,8 +82,10 @@ const COMMAND_VERBS = [
 
 /**
  * Command-related nouns/targets
- * Step 35.8: Removed 'app', 'application', 'project' to prevent false positives
- * These words are too ambiguous and trigger on "create a new app"
+ * Note: 'app' and 'application' were previously removed to prevent false positives on
+ * greenfield requests, but now that explanation/diagnostic/command-phrase patterns run
+ * BEFORE greenfield check, and greenfield check still runs before verb+target matching,
+ * it's safe to include them again.
  */
 const COMMAND_TARGETS = [
   'tests',
@@ -79,6 +97,8 @@ const COMMAND_TARGETS = [
   'script',
   'command',
   'task',
+  'app',
+  'application',
 ];
 
 /**
@@ -101,6 +121,17 @@ const EXPLANATION_PATTERNS = [
 ];
 
 /**
+ * Diagnostic/error context patterns — user is describing problems, not requesting commands
+ */
+const DIAGNOSTIC_CONTEXT_PATTERNS = [
+  /\b(getting|having|seeing|encountering|facing)\s+(build\s+)?(errors?|issues?|problems?|failures?|warnings?)\b/i,
+  /\b(fix|resolve|debug|investigate|check|diagnose)\s+(the\s+)?(build\s+)?(errors?|issues?|problems?|failures?)\b/i,
+  /\b(broken|failing|not\s+working|not\s+compiling|won'?t\s+build)\b/i,
+  /\bbuild\s+(errors?|failures?|issues?|problems?|broken|failing)\b/i,
+  /\b(typecheck|type\s+check|typescript|compilation)\s+(errors?|failures?|issues?)\b/i,
+];
+
+/**
  * Detect if user prompt indicates command execution intent
  * 
  * Step 35.8: Greenfield check happens FIRST - if greenfield confidence >= 0.65,
@@ -118,6 +149,50 @@ export function detectCommandIntent(
   const detectedKeywords: string[] = [];
 
   // =========================================================================
+  // STEP 0a: Check for explanation/discussion patterns FIRST (questions override everything)
+  // =========================================================================
+  for (const pattern of EXPLANATION_PATTERNS) {
+    if (pattern.test(lowerPrompt)) {
+      return {
+        isCommandIntent: false,
+        confidence: 0.9,
+        detectedKeywords: [],
+        reasoning: 'Prompt appears to be a question or request for explanation',
+      };
+    }
+  }
+
+  // =========================================================================
+  // STEP 0b: Check for diagnostic/error context patterns
+  // =========================================================================
+  for (const pattern of DIAGNOSTIC_CONTEXT_PATTERNS) {
+    if (pattern.test(lowerPrompt)) {
+      return {
+        isCommandIntent: false,
+        confidence: 0.9,
+        detectedKeywords: [],
+        reasoning: 'Diagnostic/error context detected — user is describing problems, not requesting command execution',
+      };
+    }
+  }
+
+  // =========================================================================
+  // STEP 0c: Check command phrase patterns — these are unambiguous commands
+  // that bypass greenfield check entirely (fixes "new start dev server")
+  // =========================================================================
+  for (const { pattern, commands, desc } of COMMAND_PHRASE_PATTERNS) {
+    if (pattern.test(lowerPrompt)) {
+      return {
+        isCommandIntent: true,
+        confidence: 0.90,
+        detectedKeywords: [desc],
+        inferredCommands: commands.length > 0 ? commands : undefined,
+        reasoning: `Command phrase pattern matched: ${desc}`,
+      };
+    }
+  }
+
+  // =========================================================================
   // STEP 35.8: Check greenfield FIRST - greenfield requests are NOT commands
   // =========================================================================
   const greenfieldResult = detectGreenfieldIntent(prompt);
@@ -131,36 +206,7 @@ export function detectCommandIntent(
     };
   }
 
-  // Check for explanation/discussion patterns first (these override command intent)
-  for (const pattern of EXPLANATION_PATTERNS) {
-    if (pattern.test(lowerPrompt)) {
-      return {
-        isCommandIntent: false,
-        confidence: 0.9,
-        detectedKeywords: [],
-        reasoning: 'Prompt appears to be a question or request for explanation',
-      };
-    }
-  }
-
-  // Check for diagnostic/error context patterns — user is describing problems, not requesting commands
-  const DIAGNOSTIC_CONTEXT_PATTERNS = [
-    /\b(getting|having|seeing|encountering|facing)\s+(build\s+)?(errors?|issues?|problems?|failures?|warnings?)\b/i,
-    /\b(fix|resolve|debug|investigate|check|diagnose)\s+(the\s+)?(build\s+)?(errors?|issues?|problems?|failures?)\b/i,
-    /\b(broken|failing|not\s+working|not\s+compiling|won'?t\s+build)\b/i,
-    /\bbuild\s+(errors?|failures?|issues?|problems?|broken|failing)\b/i,
-    /\b(typecheck|type\s+check|typescript|compilation)\s+(errors?|failures?|issues?)\b/i,
-  ];
-  for (const pattern of DIAGNOSTIC_CONTEXT_PATTERNS) {
-    if (pattern.test(lowerPrompt)) {
-      return {
-        isCommandIntent: false,
-        confidence: 0.9,
-        detectedKeywords: [],
-        reasoning: 'Diagnostic/error context detected — user is describing problems, not requesting command execution',
-      };
-    }
-  }
+  // (Explanation and diagnostic checks already done in STEP 0a/0b above)
 
   // Check for direct command patterns (highest confidence)
   const directCommands: string[] = [];

@@ -6,9 +6,10 @@
 import { Event } from '../types';
 
 /**
- * Render a diff applied card showing successful application
+ * Render a diff applied card showing successful application.
+ * @param undoGroupId If provided and truthy, render an [Undo] button.
  */
-export function renderDiffAppliedCard(event: Event): string {
+export function renderDiffAppliedCard(event: Event, undoGroupId?: string): string {
   const diffId = event.payload.diff_id as string || '';
   
   // FIX: files_changed can be either string[] or object[]
@@ -128,7 +129,22 @@ export function renderDiffAppliedCard(event: Event): string {
         gap: 6px;
       ">
         <span>💾</span>
-        <span>Changes have been written to disk</span>
+        <span>Changes written to disk</span>
+        ${undoGroupId ? `
+          <button onclick="handleUndoAction('${escapeHtml(undoGroupId)}')" style="
+            margin-left: auto;
+            padding: 3px 10px;
+            font-size: 11px;
+            background: var(--vscode-button-secondaryBackground);
+            color: var(--vscode-button-secondaryForeground);
+            border: 1px solid var(--vscode-button-border, transparent);
+            border-radius: 3px;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            gap: 4px;
+          ">↶ Undo</button>
+        ` : ''}
       </div>
     </div>
   `;

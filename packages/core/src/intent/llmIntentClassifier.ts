@@ -68,6 +68,12 @@ Output: {"intent":"RUN_COMMAND","confidence":0.98,"reason":"Explicit command exe
 Input: "make the button blue"
 Output: {"intent":"QUICK_ACTION","confidence":0.9,"reason":"Small visual change"}
 
+Input: "new start dev server"
+Output: {"intent":"RUN_COMMAND","confidence":0.92,"reason":"Start dev server command despite 'new' prefix"}
+
+Input: "i am getting build errors fix it"
+Output: {"intent":"QUICK_ACTION","confidence":0.85,"reason":"Fixing existing build errors in current project"}
+
 RULES:
 - Return ONLY valid JSON, no other text
 - confidence must be 0.0-1.0
@@ -184,7 +190,7 @@ async function callLlmForClassification(
       'anthropic-version': '2023-06-01',
     },
     body: JSON.stringify({
-      model: llmConfig.model || 'claude-3-haiku-20240307', // Use Haiku for speed
+      model: llmConfig.model || 'claude-haiku-4-5-20251001', // Use Haiku 4.5 for speed
       max_tokens: 256, // Small budget for classification
       system: systemPrompt,
       messages: [

@@ -143,6 +143,8 @@ export interface EnricherOptions {
   editorContext?: EditorContext;
   /** Intelligence settings overrides */
   settings?: Partial<IntelligenceSettings>;
+  /** Project Memory Manager (V2-V5) for memory context injection */
+  projectMemoryManager?: import('./projectMemoryManager').ProjectMemoryManager;
 }
 
 // ============================================================================
@@ -555,15 +557,29 @@ export function resolveReferences(
 // ============================================================================
 
 /**
+ * Memory context for prompt injection (V4)
+ */
+export interface MemoryContext {
+  facts?: string;
+  facts_line_count?: number;
+  solutions?: Array<{
+    solution: { problem: string; fix: string; verification: { command: string; type: string } };
+    score: number;
+  }>;
+}
+
+/**
  * Build enriched prompt with context injected.
- * Now includes EditorContext (active file, selection, diagnostics).
+ * Now includes EditorContext (active file, selection, diagnostics)
+ * and memory context (V4: project facts + proven solutions).
  */
 export function buildEnrichedPrompt(
   input: string,
   codebaseContext: CodebaseContext,
   resolvedReferences: ResolvedReference[],
   editorContext?: EditorContext,
-  settings?: Partial<IntelligenceSettings>
+  settings?: Partial<IntelligenceSettings>,
+  memoryContext?: MemoryContext,
 ): string {
   const maxSelected = settings?.maxSelectedTextChars ?? DEFAULT_INTELLIGENCE_SETTINGS.maxSelectedTextChars;
   const maxDiag = settings?.maxDiagnostics ?? DEFAULT_INTELLIGENCE_SETTINGS.maxDiagnostics;
@@ -621,9 +637,25 @@ export function buildEnrichedPrompt(
     parts.push(`[Open files: ${codebaseContext.openFiles.join(', ')}]`);
   }
 
+  // V4: Inject memory context (structured blocks)
+  const memoryParts: string[] = [];
+  if (memoryContext?.facts) {
+    const lineCount = memoryContext.facts_line_count ?? memoryContext.facts.split('\n').length;
+    memoryParts.push(`## Project Facts (last ${lineCount} lines)\n${memoryContext.facts}`);
+  }
+  if (memoryContext?.solutions && memoryContext.solutions.length > 0) {
+    const block = memoryContext.solutions.slice(0, 3).map((s, i) =>
+      `${i + 1}. **Problem:** ${s.solution.problem}\n   **Fix:** ${s.solution.fix}\n   **Verified by:** \`${s.solution.verification.command}\` (${s.solution.verification.type})`
+    ).join('\n');
+    memoryParts.push(`## Proven Solutions (top ${memoryContext.solutions.length})\n${block}`);
+  }
+
   // Build final prompt
-  if (parts.length > 0) {
-    return `${parts.join(' ')}\n\n${input}`;
+  const contextPrefix = parts.length > 0 ? parts.join(' ') + '\n\n' : '';
+  const memorySuffix = memoryParts.length > 0 ? '\n\n' + memoryParts.join('\n\n') : '';
+
+  if (contextPrefix || memorySuffix) {
+    return `${contextPrefix}${input}${memorySuffix}`;
   }
 
   return input;
@@ -709,8 +741,29 @@ export async function enrichUserInput(
   // Check if clarification needed
   const clarificationResult = shouldClarify(input, codebaseContext, sessionContext, referenceDetails);
 
-  // Build enriched prompt (now with editor context)
-  const enrichedPrompt = buildEnrichedPrompt(input, codebaseContext, referenceDetails, editorContext, options.settings);
+  // V4: Query project memory for context injection
+  let memoryContext: MemoryContext | undefined;
+  if (options.projectMemoryManager) {
+    try {
+      const [facts, solutions] = await Promise.all([
+        options.projectMemoryManager.getFactsSummary(30),
+        options.projectMemoryManager.queryRelevantSolutions(input, 3),
+      ]);
+      if (facts || solutions.length > 0) {
+        memoryContext = {
+          facts: facts || undefined,
+          facts_line_count: facts ? facts.split('\n').length : undefined,
+          solutions: solutions.length > 0 ? solutions : undefined,
+        };
+      }
+    } catch (memErr) {
+      // Graceful degradation: memory unavailable doesn't block enrichment
+      console.warn('[V4] Memory context query failed:', memErr);
+    }
+  }
+
+  // Build enriched prompt (now with editor context + memory context)
+  const enrichedPrompt = buildEnrichedPrompt(input, codebaseContext, referenceDetails, editorContext, options.settings, memoryContext);
 
   // Update session with this interaction
   sessionManager.addTopic(extractTopicFromInput(input));

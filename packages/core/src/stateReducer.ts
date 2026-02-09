@@ -317,6 +317,61 @@ export class StateReducer {
         // They contribute to narration and evidence
         break;
 
+      // VNext: Project Memory events (V2-V5)
+      // Migration note: Runs before VNext won't have these; safe to ignore.
+      case 'memory_facts_updated':
+      case 'solution_captured':
+        // Informational — memory system records these for retrieval.
+        // No task state change.
+        break;
+
+      // VNext: Generated Tool events (V6-V8)
+      case 'generated_tool_proposed':
+      case 'generated_tool_saved':
+      case 'generated_tool_run_started':
+      case 'generated_tool_run_completed':
+      case 'generated_tool_run_failed':
+        // Informational — tool lifecycle events for the feed.
+        // No task state change (approval is handled by existing approval_requested/resolved).
+        break;
+
+      // VNext: Agent Mode Policy (V9)
+      case 'mode_changed':
+        // Mode transition event — update the task's current mode.
+        if (event.payload.to_mode) {
+          newState.mode = event.payload.to_mode as Mode;
+        }
+        break;
+
+      // W3: Autonomy Loop Detection
+      case 'autonomy_loop_detected':
+        newState.status = 'paused';
+        break;
+      case 'autonomy_downgraded':
+        // Status already paused by loop_detected
+        break;
+
+      // Step 47: Resume After Crash
+      case 'task_interrupted':
+        newState.status = 'paused';
+        break;
+      case 'task_recovery_started':
+        newState.status = 'running';
+        break;
+      case 'task_discarded':
+        newState.status = 'idle';
+        break;
+
+      // Step 48: Undo System
+      case 'undo_performed':
+        // Informational — audit trail only. No task state change.
+        break;
+
+      // Step 49: Error Recovery UX
+      case 'recovery_action_taken':
+        // Informational — audit trail only. No task state change.
+        break;
+
       default:
         // Unknown event type should have been rejected at write time
         // But defensive handling here

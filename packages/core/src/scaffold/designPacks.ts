@@ -656,6 +656,82 @@ export function generateCssVariables(tokens: DesignTokens): string {
 }
 
 /**
+ * Generate a tailwind.config.ts that extends the Tailwind theme with design pack tokens.
+ * Maps CSS variables to Tailwind theme keys so classes like `bg-primary`, `text-accent-foreground`,
+ * `border-border`, `font-heading` all work as first-class Tailwind classes.
+ *
+ * @param pack - Design pack to use
+ * @returns Complete tailwind.config.ts file content
+ */
+export function generateTailwindConfig(pack: DesignPack): string {
+  const { radius, shadow } = pack.tokens;
+
+  const radiusMap: Record<RadiusSize, string> = {
+    sm: '0.25rem',
+    md: '0.5rem',
+    lg: '1rem',
+  };
+
+  const shadowMap: Record<ShadowLevel, string> = {
+    none: 'none',
+    subtle: '0 1px 2px 0 rgb(0 0 0 / 0.05)',
+    medium: '0 4px 6px -1px rgb(0 0 0 / 0.1), 0 2px 4px -2px rgb(0 0 0 / 0.1)',
+    dramatic: '0 10px 15px -3px rgb(0 0 0 / 0.1), 0 4px 6px -4px rgb(0 0 0 / 0.1)',
+  };
+
+  return `import type { Config } from "tailwindcss";
+
+const config: Config = {
+  content: [
+    "./app/**/*.{js,ts,jsx,tsx,mdx}",
+    "./src/**/*.{js,ts,jsx,tsx,mdx}",
+    "./components/**/*.{js,ts,jsx,tsx,mdx}",
+  ],
+  theme: {
+    extend: {
+      colors: {
+        background: "var(--background)",
+        foreground: "var(--foreground)",
+        primary: {
+          DEFAULT: "var(--primary)",
+          foreground: "var(--primary-foreground)",
+        },
+        secondary: {
+          DEFAULT: "var(--secondary)",
+          foreground: "var(--secondary-foreground)",
+        },
+        accent: {
+          DEFAULT: "var(--accent)",
+          foreground: "var(--accent-foreground)",
+        },
+        muted: {
+          DEFAULT: "var(--muted)",
+          foreground: "var(--muted-foreground)",
+        },
+        border: "var(--border)",
+      },
+      borderRadius: {
+        DEFAULT: "${radiusMap[radius]}",
+        sm: "${parseFloat(radiusMap[radius]) * 0.5}rem",
+        lg: "${parseFloat(radiusMap[radius]) * 1.5}rem",
+      },
+      fontFamily: {
+        heading: ["var(--font-heading)"],
+        body: ["var(--font-body)"],
+      },
+      boxShadow: {
+        DEFAULT: "${shadowMap[shadow]}",
+      },
+    },
+  },
+  plugins: [],
+};
+
+export default config;
+`;
+}
+
+/**
  * Generate a complete globals.css content with design tokens
  * @param pack - Design pack to use
  * @returns Complete CSS file content
@@ -679,10 +755,11 @@ export function generateGlobalsCss(pack: DesignPack): string {
 
 @layer base {
   * {
-    @apply border-border;
+    border-color: var(--border);
   }
   body {
-    @apply bg-background text-foreground;
+    background-color: var(--background);
+    color: var(--foreground);
     font-family: var(--font-body);
   }
   h1, h2, h3, h4, h5, h6 {

@@ -15,6 +15,11 @@ import { getPendingApprovalById } from '../selectors/approvalSelectors';
 import { renderClarificationCard } from './ClarificationCard';
 import { isScaffoldEvent } from './ScaffoldCard';
 import { renderPreflightDecisionCard } from './PreflightDecisionCard';
+import { renderSolutionCapturedCard } from './SolutionCapturedCard';
+import { renderProcessCard, updateProcessCard, getProcessCardHtml, isProcessEvent } from './ProcessCard';
+import { renderGeneratedToolProposedCard, renderGeneratedToolRunCard, isGeneratedToolEvent } from './GeneratedToolCard';
+import { renderCrashRecoveryCard, renderTaskRecoveryStartedCard, renderTaskDiscardedCard } from './CrashRecoveryCard';
+import { renderFailureCard } from './FailureCard';
 
 export interface EventCardConfig {
   icon: string;
@@ -176,6 +181,12 @@ export const EVENT_CARD_MAP: Record<EventType, EventCardConfig> = {
     getSummary: (e) => {
       const tool = e.payload.tool_name as string || 'unknown';
       const duration = e.payload.duration_ms as number;
+      // Step 49: Check for error conditions
+      const hasError = e.payload.success === false || !!e.payload.error;
+      const errorMsg = e.payload.error as string || '';
+      if (hasError) {
+        return `${tool} failed${errorMsg ? ': ' + errorMsg.substring(0, 50) : ''}`;
+      }
       return `${tool}${duration ? ' (' + duration + 'ms)' : ''}`;
     }
   },
@@ -590,8 +601,14 @@ export const EVENT_CARD_MAP: Record<EventType, EventCardConfig> = {
     title: 'Failure Classified',
     color: 'var(--vscode-charts-orange)',
     getSummary: (e) => {
-      const classification = e.payload.classification as string || 'unknown';
-      return `Type: ${classification}`;
+      const classification = e.payload.classification as string || e.payload.failureType as string || 'unknown';
+      const isFixable = e.payload.isCodeFixable as boolean | undefined;
+      const summary = e.payload.summary as string || '';
+      const parts: string[] = [classification];
+      if (isFixable === true) parts.push('(fixable)');
+      if (isFixable === false) parts.push('(env issue)');
+      if (summary) parts.push(`- ${summary.substring(0, 60)}`);
+      return parts.join(' ');
     }
   },
   decision_point_needed: {
@@ -1089,25 +1106,25 @@ export const EVENT_CARD_MAP: Record<EventType, EventCardConfig> = {
   // Process Management
   process_started: {
     icon: '🚀',
-    title: 'Dev Server Starting',
+    title: 'Process Starting',
     color: 'var(--vscode-charts-blue)',
     getSummary: (e) => `Running: ${e.payload.command || ''}`
   },
   process_ready: {
     icon: '✅',
-    title: 'Dev Server Ready',
+    title: 'Process Ready',
     color: 'var(--vscode-charts-green)',
-    getSummary: (e) => `Server ready${e.payload.port ? ' on port ' + e.payload.port : ''}`
+    getSummary: (e) => `Ready${e.payload.port ? ' on port ' + e.payload.port : ''}`
   },
   process_stopped: {
     icon: '⏹️',
-    title: 'Dev Server Stopped',
+    title: 'Process Stopped',
     color: 'var(--vscode-charts-yellow)',
     getSummary: (e) => (e.payload.reason as string) || 'Process stopped'
   },
-  process_error: {
+  process_failed: {
     icon: '❌',
-    title: 'Dev Server Error',
+    title: 'Process Failed',
     color: 'var(--vscode-charts-red)',
     getSummary: (e) => (e.payload.error as string) || 'Unknown error'
   },
@@ -1154,8 +1171,175 @@ export const EVENT_CARD_MAP: Record<EventType, EventCardConfig> = {
     title: 'Verification Complete',
     color: 'var(--vscode-charts-green)',
     getSummary: (e) => (e.payload.message as string) || `Outcome: ${e.payload.outcome}`
+  },
+
+  // VNext: Project Memory (V2-V5)
+  // Placeholder cards — full UI will be built in V5 (SolutionCapturedCard).
+  memory_facts_updated: {
+    icon: '🧠',
+    title: 'Memory Updated',
+    color: 'var(--vscode-charts-purple)',
+    getSummary: (e) => {
+      const delta = (e.payload.delta_summary as string) || '';
+      const lines = (e.payload.lines_added as number) || 0;
+      return delta || `${lines} line(s) added to project facts`;
+    }
+  },
+  solution_captured: {
+    icon: '💡',
+    title: 'Solution Captured',
+    color: 'var(--vscode-charts-green)',
+    getSummary: (e) => {
+      const problem = (e.payload.problem as string) || '';
+      const fix = (e.payload.fix as string) || '';
+      if (problem && fix) return `${problem} → ${fix}`;
+      return problem || fix || 'Proven solution saved';
+    }
+  },
+
+  // VNext: Generated Tools (V6-V8)
+  // Placeholder cards — full UI will be built in V8 (GeneratedToolProposalCard, GeneratedToolRunCard).
+  generated_tool_proposed: {
+    icon: '🔨',
+    title: 'Tool Proposed',
+    color: 'var(--vscode-charts-blue)',
+    getSummary: (e) => {
+      const name = (e.payload.name as string) || 'unknown';
+      const desc = (e.payload.description as string) || '';
+      return desc ? `${name}: ${desc}` : name;
+    }
+  },
+  generated_tool_saved: {
+    icon: '✅',
+    title: 'Tool Saved',
+    color: 'var(--vscode-charts-green)',
+    getSummary: (e) => `Tool "${(e.payload.name as string) || 'unknown'}" approved and saved`
+  },
+  generated_tool_run_started: {
+    icon: '⚡',
+    title: 'Tool Running',
+    color: 'var(--vscode-charts-blue)',
+    getSummary: (e) => {
+      const name = (e.payload.tool_name as string) || 'unknown';
+      const args = (e.payload.args_summary as string) || '';
+      return args ? `${name}(${args})` : `Running ${name}...`;
+    }
+  },
+  generated_tool_run_completed: {
+    icon: '✅',
+    title: 'Tool Completed',
+    color: 'var(--vscode-charts-green)',
+    getSummary: (e) => {
+      const name = (e.payload.tool_name as string) || 'unknown';
+      const ms = (e.payload.duration_ms as number) || 0;
+      const code = (e.payload.exit_code as number) ?? -1;
+      return `${name} finished (exit ${code}, ${ms}ms)`;
+    }
+  },
+  generated_tool_run_failed: {
+    icon: '❌',
+    title: 'Tool Failed',
+    color: 'var(--vscode-charts-red)',
+    getSummary: (e) => {
+      const name = (e.payload.tool_name as string) || 'unknown';
+      const reason = (e.payload.reason as string) || 'Unknown error';
+      const ftype = (e.payload.failure_type as string) || '';
+      return ftype === 'blocked'
+        ? `${name}: blocked before execution — ${reason}`
+        : `${name}: ${reason}`;
+    }
+  },
+
+  // VNext: Agent Mode Policy (V9)
+  mode_changed: {
+    icon: '🔄',
+    title: 'Mode Changed',
+    color: 'var(--vscode-charts-yellow)',
+    getSummary: (e) => {
+      const from = (e.payload.from_mode as string) || '?';
+      const to = (e.payload.to_mode as string) || '?';
+      const reason = (e.payload.reason as string) || '';
+      const userInit = e.payload.user_initiated ? ' (user)' : ' (auto)';
+      return `${from} → ${to}${userInit}${reason ? ': ' + reason : ''}`;
+    }
+  },
+
+  // W3: Autonomy Loop Detection
+  autonomy_loop_detected: {
+    icon: '🔄',
+    title: 'Loop Detected',
+    color: 'var(--vscode-charts-red)',
+    getSummary: (e) => {
+      const loopType = (e.payload.loopType as string) || 'unknown';
+      const recommendation = (e.payload.recommendation as string) || '';
+      return `${loopType}: ${recommendation}`;
+    }
+  },
+  autonomy_downgraded: {
+    icon: '⬇️',
+    title: 'Autonomy Downgraded',
+    color: 'var(--vscode-charts-orange)',
+    getSummary: (e) => {
+      const from = (e.payload.fromLevel as string) || '?';
+      const to = (e.payload.toLevel as string) || '?';
+      return `${from} → ${to}`;
+    }
+  },
+
+  // Step 47: Resume After Crash
+  task_interrupted: {
+    icon: '⚠️',
+    title: 'Task Interrupted',
+    color: 'var(--vscode-charts-orange)',
+    getSummary: (e) => {
+      const reason = (e.payload.reason as string) || '';
+      return reason || 'Interrupted task detected';
+    }
+  },
+  task_recovery_started: {
+    icon: '▶️',
+    title: 'Task Resumed',
+    color: 'var(--vscode-charts-green)',
+    getSummary: (e) => {
+      const action = (e.payload.action as string) || 'resume';
+      return `Recovered via: ${action}`;
+    }
+  },
+  task_discarded: {
+    icon: '🗑️',
+    title: 'Task Discarded',
+    color: 'var(--vscode-descriptionForeground)',
+    getSummary: () => 'Interrupted task cleared'
+  },
+
+  // Step 48: Undo System
+  undo_performed: {
+    icon: '↶',
+    title: 'Undo Performed',
+    color: 'var(--vscode-charts-yellow)',
+    getSummary: (e) => {
+      const restored = (e.payload.files_restored as string[]) || [];
+      const deleted = (e.payload.files_deleted as string[]) || [];
+      const recreated = (e.payload.files_recreated as string[]) || [];
+      const parts: string[] = [];
+      if (restored.length > 0) parts.push(`${restored.length} restored`);
+      if (deleted.length > 0) parts.push(`${deleted.length} deleted`);
+      if (recreated.length > 0) parts.push(`${recreated.length} recreated`);
+      return parts.length > 0 ? parts.join(', ') : 'Edit reverted';
+    }
+  },
+
+  // Step 49: Error Recovery UX
+  recovery_action_taken: {
+    icon: '🔄',
+    title: 'Recovery Action',
+    color: 'var(--vscode-charts-orange)',
+    getSummary: (e) => {
+      const action = (e.payload.action as string) || 'unknown';
+      return `User chose: ${action}`;
+    }
   }
-};
+} as Record<EventType, EventCardConfig>;
 
 /**
  * Stage header configuration
@@ -1180,12 +1364,74 @@ export function renderEventCard(event: Event, taskId?: string): string {
   console.log('[MissionFeed] EVENT_CARD_MAP has config:', event.type in EVENT_CARD_MAP);
   console.log('[MissionFeed] Config value:', EVENT_CARD_MAP[event.type]);
   
+  // W2: Process events — render ProcessCard for process_started,
+  // update existing card state for follow-up events
+  if (event.type === 'process_started') {
+    return renderProcessCard(event);
+  }
+  if (isProcessEvent(event.type)) {
+    const result = updateProcessCard(event);
+    if (result.handled && result.processId) {
+      // Re-render the existing card in the DOM
+      const cardHtml = getProcessCardHtml(result.processId);
+      if (cardHtml) {
+        // Find and update the existing card element
+        const existingCard = document.querySelector(
+          `.process-card[data-process-id="${result.processId}"]`
+        );
+        if (existingCard) {
+          const wrapper = document.createElement('div');
+          wrapper.innerHTML = cardHtml;
+          const newCard = wrapper.firstElementChild;
+          if (newCard) {
+            existingCard.replaceWith(newCard);
+          }
+        }
+      }
+    }
+    // Don't render a new card for follow-up events — they update the existing one
+    return '';
+  }
+
+  // V8: Generated tool events - specialized cards
+  if (event.type === 'generated_tool_proposed') {
+    return renderGeneratedToolProposedCard(event);
+  }
+  if (event.type === 'generated_tool_run_completed') {
+    return renderGeneratedToolRunCard(event);
+  }
+
+  // Step 47: Crash recovery — specialized cards
+  if (event.type === 'task_interrupted') {
+    return renderCrashRecoveryCard(event);
+  }
+  if (event.type === 'task_recovery_started') {
+    return renderTaskRecoveryStartedCard(event);
+  }
+  if (event.type === 'task_discarded') {
+    return renderTaskDiscardedCard(event);
+  }
+
+  // V5: Solution captured - specialized card
+  if (event.type === 'solution_captured') {
+    return renderSolutionCapturedCard(event);
+  }
+
+  // Step 49: Failure events — render FailureCard with recovery actions
+  if (event.type === 'failure_detected') {
+    // Extract error_match and error_descriptor if enriched by extension
+    const errorMatch = event.payload.error_match as any | undefined;
+    const errorDescriptor = event.payload.error_descriptor as any | undefined;
+    const recoveryActions = (event.payload.recovery_actions as any[]) || [];
+    return renderFailureCard(event, errorMatch || null, errorDescriptor || null, recoveryActions);
+  }
+
   // SCAFFOLD EVENTS: Render using ScaffoldCard custom element (PRIORITY CHECK)
   if (isScaffoldEvent(event.type)) {
     console.log('[MissionFeed] Rendering scaffold event with ScaffoldCard:', event.type);
     return renderScaffoldEventCard(event);
   }
-  
+
   // ANSWER mode specialized renderers
   if (event.type === 'context_collected') {
     return renderContextCollectedCard(event);
@@ -1297,7 +1543,18 @@ export function renderEventCard(event: Event, taskId?: string): string {
   }
   
   if (event.type === 'diff_applied') {
-    return renderDiffAppliedCard(event);
+    // Step 48: Pass undoGroupId to render [Undo] button when applicable.
+    // window.__ordinexUndoState is set by the extension via updateUndoState message.
+    const undoState = (typeof window !== 'undefined' && (window as any).__ordinexUndoState) || {};
+    const topGroupId = undoState.top_undoable_group_id as string | undefined;
+    const undoableIds = (undoState.undoable_group_ids as string[]) || [];
+
+    // Determine the correlation ID for this diff_applied event
+    const corrId = (event.payload.proposal_id as string) || (event.payload.diff_id as string) || '';
+
+    // Only show [Undo] on the top-of-stack undoable group
+    const showUndo = corrId && corrId === topGroupId && undoableIds.includes(corrId);
+    return renderDiffAppliedCard(event, showUndo ? corrId : undefined);
   }
   
   if (event.type === 'checkpoint_created') {
@@ -1307,16 +1564,32 @@ export function renderEventCard(event: Event, taskId?: string): string {
   // Test-related tool_end events (terminal commands in test stage)
   if (event.type === 'tool_end') {
     const tool = event.payload.tool as string;
-    const message = event.payload.message as string;
-    
+
     // Check if this is a test detection failure
     if (tool === 'test_detection' && !event.payload.success) {
       return renderNoTestRunnerCard(event);
     }
-    
+
     // Check if this is a terminal command (test execution)
     if (tool === 'terminal' && event.payload.command) {
       return renderTestResultCard(event);
+    }
+
+    // Step 49: Fix tool_end color — check both success and error fields
+    const hasError = event.payload.success === false || !!event.payload.error;
+    if (hasError) {
+      const config = EVENT_CARD_MAP[event.type];
+      const summary = config ? config.getSummary(event) : 'Tool failed';
+      return `
+        <div class="event-card failure">
+          <div class="event-card-header">
+            <span class="event-icon" style="color: var(--vscode-charts-red)">❌</span>
+            <span class="event-type">Tool Failed</span>
+            <span class="event-timestamp">${formatTimestamp(event.timestamp)}</span>
+          </div>
+          <div class="event-summary">${escapeHtml(summary)}</div>
+        </div>
+      `;
     }
   }
 
@@ -1342,7 +1615,7 @@ export function renderEventCard(event: Event, taskId?: string): string {
   const summary = config.getSummary(event);
   const hasEvidence = event.evidence_ids.length > 0;
   const isApproval = event.type === 'approval_requested';
-  const isFailure = event.type.includes('fail') || event.type === 'failure_detected';
+  const isFailure = event.type.includes('fail');
 
   return `
     <div class="event-card ${isApproval ? 'approval-required' : ''} ${isFailure ? 'failure' : ''}">

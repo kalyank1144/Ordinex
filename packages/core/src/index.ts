@@ -59,7 +59,7 @@ export type { ScopeValidationResult } from './scopeManager';
 
 // Export lifecycle and mode management
 export { TaskLifecycleController, TaskLifecycleState } from './taskLifecycle';
-export { ModeManager, Action, ModeValidationResult } from './modeManager';
+export { ModeManager, Action, ModeValidationResult, ModeTransitionResult, isEscalation, isDowngrade } from './modeManager';
 
 // Export approval and checkpoint managers
 export { 
@@ -114,6 +114,20 @@ export {
   IterationResult,
   PreconditionCheck
 } from './autonomyController';
+
+// W3: Autonomy Loop Detection
+export {
+  detectLoop,
+  detectStuck,
+  detectRegressing,
+  detectOscillating,
+  detectScopeCreep,
+} from './autonomyLoopDetector';
+
+export type {
+  IterationOutcome,
+  LoopDetectionResult,
+} from './autonomyLoopDetector';
 
 // Export repair orchestrator
 export {
@@ -672,6 +686,7 @@ export {
   getPacksByVibe,
   generateCssVariables,
   generateGlobalsCss,
+  generateTailwindConfig,
   DESIGN_PACKS,
 } from './scaffold/designPacks';
 
@@ -752,6 +767,12 @@ export {
   getSessionContext,
   SessionContextManager,
   COMPONENT_TYPES,
+  // Project Memory (V2-V5)
+  ProjectMemoryManager,
+  // Solution Capture (V3)
+  detectSolutionCandidate,
+  // Generated Tools (V6-V8)
+  GeneratedToolManager,
 } from './intelligence';
 
 export type {
@@ -779,6 +800,25 @@ export type {
   DecisionEntry,
   PendingClarification,
   ErrorMention,
+  // Project Memory types (V2-V5)
+  MemoryService,
+  Solution,
+  SolutionEvidence,
+  SolutionMatch,
+  EventPublisher,
+  // Solution Capture types (V3)
+  SolutionCaptureContext,
+  SolutionCandidate,
+  // Generated Tools types (V6-V8)
+  ToolRegistryService,
+  ToolProposal,
+  ToolAllowPolicy,
+  ToolEntry,
+  ToolRegistry,
+  ToolMetadata,
+  ToolRunResult,
+  ToolRunFailureType,
+  ToolExecutionPolicy,
 } from './intelligence';
 
 // ============================================================================
@@ -901,3 +941,66 @@ export type {
   VerifyRecipeInfo,
   VerifyEventCtx,
 } from './scaffold/postVerify';
+
+// ============================================================================
+// Step 47: Resume After Crash (Task Persistence + Recovery Policy)
+// ============================================================================
+
+export type {
+  ActiveTaskMetadata,
+  ActiveTaskPointer,
+  RecoveryOption,
+  RecoveryAnalysis,
+  TaskPersistenceService,
+} from './taskPersistence';
+
+export {
+  isLikelyCrash,
+  isStaleTask,
+  buildRecoveryOptions,
+  recommendAction,
+  analyzeRecoveryOptions,
+  MAX_RECOVERY_AGE_MS,
+} from './crashRecoveryPolicy';
+
+// ============================================================================
+// Step 48: Undo System (Granular Per-Diff Undo)
+// ============================================================================
+
+export {
+  UndoStack,
+} from './undoStack';
+
+export type {
+  UndoActionType,
+  UndoableAction,
+  UndoGroup,
+} from './undoStack';
+
+export {
+  extractDiffFilePaths,
+  getDiffCorrelationId,
+  inferActionType,
+  buildUndoGroup,
+} from './undoContentCapture';
+
+export type {
+  FileReadResult,
+} from './undoContentCapture';
+
+// ============================================================================
+// Step 49: Error Recovery UX (Error Patterns + Recovery Actions)
+// ============================================================================
+
+export {
+  matchErrorPattern,
+  errorDescriptorToRecoveryActions,
+  mergeRecoveryActions,
+  isSafeRecoveryCommand,
+  SAFE_RECOVERY_COMMANDS,
+} from './errorPatterns';
+
+export type {
+  ErrorPatternMatch,
+  RecoveryAction,
+} from './errorPatterns';

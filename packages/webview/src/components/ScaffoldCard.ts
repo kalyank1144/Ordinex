@@ -146,24 +146,7 @@ export class ScaffoldCard extends HTMLElement {
       case 'feature_code_error':
         body = this.renderStatusCard('\u26A0\uFE0F', 'Feature Generation Skipped', this.escapeHtml(String(payload.error || 'Falling back to generic scaffold')), 'warn');
         break;
-      // Process Management events
-      case 'process_started':
-        body = this.renderStatusCard('🚀', 'Dev Server Starting',
-          `Running: ${this.escapeHtml(String(payload.command || ''))}`, 'running');
-        break;
-      case 'process_ready':
-        const port = payload.port ? ` on port ${payload.port}` : '';
-        body = this.renderStatusCard('✅', 'Dev Server Ready',
-          `Server is running${port}. Time to ready: ${Math.round((payload.time_to_ready_ms || 0) / 1000)}s`, 'pass');
-        break;
-      case 'process_stopped':
-        body = this.renderStatusCard('⏹️', 'Dev Server Stopped',
-          this.escapeHtml(String(payload.reason || 'Process stopped')), 'info');
-        break;
-      case 'process_error':
-        body = this.renderStatusCard('❌', 'Dev Server Error',
-          this.escapeHtml(String(payload.error || 'Unknown error')), 'fail');
-        break;
+      // Process events are now handled by ProcessCard (W2)
       // Auto-fix events
       case 'scaffold_autofix_started':
         body = this.renderStatusCard('🔧', 'Auto-Fixing Errors',
@@ -2443,11 +2426,7 @@ export function isScaffoldEvent(eventType: string): boolean {
     'feature_code_generating',
     'feature_code_applied',
     'feature_code_error',
-    // Process Management events
-    'process_started',
-    'process_ready',
-    'process_stopped',
-    'process_error',
+    // Process events are handled by ProcessCard (W2), NOT here
     // Auto-fix events
     'scaffold_autofix_started',
     'scaffold_autofix_applied',

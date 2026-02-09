@@ -190,12 +190,12 @@ export type EventType =
   | 'feature_code_generating'
   | 'feature_code_applied'
   | 'feature_code_error'
-  // Process Management (Dev Server)
+  // Process Management
   | 'process_started'
   | 'process_ready'
   | 'process_output'
   | 'process_stopped'
-  | 'process_error'
+  | 'process_failed'
   // Verification streaming
   | 'scaffold_verify_started'
   | 'scaffold_verify_step_completed'
@@ -203,7 +203,29 @@ export type EventType =
   // Auto-fix
   | 'scaffold_autofix_started'
   | 'scaffold_autofix_applied'
-  | 'scaffold_autofix_failed';
+  | 'scaffold_autofix_failed'
+  // VNext: Project Memory (V2-V5)
+  | 'memory_facts_updated'
+  | 'solution_captured'
+  // VNext: Generated Tools (V6-V8)
+  | 'generated_tool_proposed'
+  | 'generated_tool_saved'
+  | 'generated_tool_run_started'
+  | 'generated_tool_run_completed'
+  | 'generated_tool_run_failed'
+  // VNext: Agent Mode Policy (V9)
+  | 'mode_changed'
+  // W3: Autonomy Loop Detection
+  | 'autonomy_loop_detected'
+  | 'autonomy_downgraded'
+  // Step 47: Resume After Crash
+  | 'task_interrupted'
+  | 'task_recovery_started'
+  | 'task_discarded'
+  // Step 48: Undo System
+  | 'undo_performed'
+  // Step 49: Error Recovery UX
+  | 'recovery_action_taken';
 
 export interface Event {
   event_id: string;

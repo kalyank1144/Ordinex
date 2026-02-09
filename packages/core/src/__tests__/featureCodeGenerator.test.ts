@@ -11,7 +11,9 @@ import {
   buildGenerationUserMessage,
   parseGenerationResult,
   getRecipeConstraints,
+  reduceFeatureScope,
 } from '../scaffold/featureCodeGenerator';
+import { generateTailwindConfig } from '../scaffold/designPacks';
 import type { FeatureLLMClient } from '../scaffold/featureExtractor';
 import type { FeatureRequirements } from '../types';
 import type { DesignPack } from '../scaffold/designPacks';
@@ -78,11 +80,13 @@ const MOCK_DESIGN_PACK: DesignPack = {
   },
 };
 
-function createMockLLMClient(response: string): FeatureLLMClient {
+function createMockLLMClient(response: string, stopReason: string = 'end_turn'): FeatureLLMClient {
   return {
     async createMessage() {
       return {
         content: [{ type: 'text', text: response }],
+        stop_reason: stopReason,
+        usage: { input_tokens: 500, output_tokens: 1000 },
       };
     },
   };
@@ -125,12 +129,27 @@ describe('buildGenerationSystemPrompt', () => {
     expect(prompt).toContain('Next.js');
   });
 
-  it('includes design token CSS variables', () => {
+  it('includes semantic Tailwind design token classes', () => {
     const prompt = buildGenerationSystemPrompt('nextjs_app_router', MOCK_DESIGN_PACK);
-    expect(prompt).toContain('var(--primary)');
-    expect(prompt).toContain('var(--accent)');
-    expect(prompt).toContain('var(--background)');
+    expect(prompt).toContain('bg-primary');
+    expect(prompt).toContain('text-primary-foreground');
+    expect(prompt).toContain('bg-accent');
+    expect(prompt).toContain('border-border');
     expect(prompt).toContain('Minimal Light');
+  });
+
+  it('forbids arbitrary value syntax', () => {
+    const prompt = buildGenerationSystemPrompt('nextjs_app_router', MOCK_DESIGN_PACK);
+    expect(prompt).toContain('Do NOT use arbitrary value syntax');
+    // The old prompt recommended "- Primary: text-[var(--primary)] bg-[var(--primary)]" — that pattern should NOT appear
+    expect(prompt).not.toContain('- Primary: text-[var(--primary)]');
+  });
+
+  it('includes visual quality rules', () => {
+    const prompt = buildGenerationSystemPrompt('nextjs_app_router', MOCK_DESIGN_PACK);
+    expect(prompt).toContain('COMPLETELY replace default template content');
+    expect(prompt).toContain('max-w-4xl mx-auto');
+    expect(prompt).toContain('empty states');
   });
 
   it('includes RSC rules for Next.js', () => {
@@ -170,6 +189,15 @@ describe('buildGenerationSystemPrompt', () => {
   it('includes Tailwind constraint', () => {
     const prompt = buildGenerationSystemPrompt('nextjs_app_router', null);
     expect(prompt).toContain('Tailwind');
+  });
+
+  it('includes few-shot component example', () => {
+    const prompt = buildGenerationSystemPrompt('nextjs_app_router', MOCK_DESIGN_PACK);
+    expect(prompt).toContain('EXAMPLE COMPONENT');
+    expect(prompt).toContain('bg-primary text-primary-foreground');
+    expect(prompt).toContain('border border-border');
+    expect(prompt).toContain('text-muted-foreground');
+    expect(prompt).toContain('font-heading');
   });
 });
 
@@ -376,5 +404,213 @@ describe('generateFeatureCode', () => {
     const client = createMockLLMClient(mockResponse);
     const result = await generateFeatureCode(TODO_REQUIREMENTS, 'nextjs_app_router', null, client);
     expect(result).not.toBeNull();
+  });
+});
+
+// ============================================================================
+// TRUNCATION DETECTION TESTS
+// ============================================================================
+
+describe('generateFeatureCode truncation handling', () => {
+  it('returns null when LLM response is truncated (stop_reason=max_tokens)', async () => {
+    const client: FeatureLLMClient = {
+      async createMessage() {
+        return {
+          content: [{ type: 'text', text: '{"files": [{"path": "a.ts", "content": "partial...' }],
+          stop_reason: 'max_tokens',
+          usage: { input_tokens: 500, output_tokens: 16384 },
+        };
+      },
+    };
+
+    const result = await generateFeatureCode(TODO_REQUIREMENTS, 'nextjs_app_router', MOCK_DESIGN_PACK, client);
+    expect(result).toBeNull();
+  });
+
+  it('retries with increased token budget on truncation', async () => {
+    let callCount = 0;
+    const validResponse = JSON.stringify({
+      files: [{ path: 'a.ts', content: 'code', description: 'd', kind: 'type' }],
+      modified_files: [],
+      summary: 'test',
+    });
+
+    const client: FeatureLLMClient = {
+      async createMessage(params) {
+        callCount++;
+        if (callCount === 1) {
+          // First call truncated
+          return {
+            content: [{ type: 'text', text: '{"files": [{"path": "incomplete' }],
+            stop_reason: 'max_tokens',
+            usage: { input_tokens: 500, output_tokens: 32768 },
+          };
+        }
+        // Second call succeeds with higher budget
+        return {
+          content: [{ type: 'text', text: validResponse }],
+          stop_reason: 'end_turn',
+          usage: { input_tokens: 500, output_tokens: 3000 },
+        };
+      },
+    };
+
+    const result = await generateFeatureCode(TODO_REQUIREMENTS, 'nextjs_app_router', MOCK_DESIGN_PACK, client);
+    expect(result).not.toBeNull();
+    expect(callCount).toBe(2);
+  });
+
+  it('reduces scope after second truncation for complex features', async () => {
+    let callCount = 0;
+    const validResponse = JSON.stringify({
+      files: [{ path: 'a.ts', content: 'code', description: 'd', kind: 'type' }],
+      modified_files: [],
+      summary: 'reduced scope success',
+    });
+
+    const complexRequirements: FeatureRequirements = {
+      ...TODO_REQUIREMENTS,
+      features: ['f1', 'f2', 'f3', 'f4', 'f5', 'f6', 'f7', 'f8', 'f9', 'f10'],
+      pages: [
+        { path: '/p1', description: 'd1', components: ['C1'] },
+        { path: '/p2', description: 'd2', components: ['C2'] },
+        { path: '/p3', description: 'd3', components: ['C3'] },
+        { path: '/p4', description: 'd4', components: ['C4'] },
+      ],
+    };
+
+    const client: FeatureLLMClient = {
+      async createMessage() {
+        callCount++;
+        if (callCount <= 2) {
+          return {
+            content: [{ type: 'text', text: '{"files": [{"truncated' }],
+            stop_reason: 'max_tokens',
+            usage: { input_tokens: 500, output_tokens: 65536 },
+          };
+        }
+        // Third call with reduced scope succeeds
+        return {
+          content: [{ type: 'text', text: validResponse }],
+          stop_reason: 'end_turn',
+          usage: { input_tokens: 400, output_tokens: 2000 },
+        };
+      },
+    };
+
+    const result = await generateFeatureCode(complexRequirements, 'nextjs_app_router', MOCK_DESIGN_PACK, client);
+    expect(result).not.toBeNull();
+    expect(callCount).toBe(3);
+    expect(result!.summary).toContain('reduced scope');
+  });
+});
+
+// ============================================================================
+// reduceFeatureScope TESTS
+// ============================================================================
+
+describe('reduceFeatureScope', () => {
+  it('limits features to 4', () => {
+    const complex: FeatureRequirements = {
+      ...TODO_REQUIREMENTS,
+      features: ['f1', 'f2', 'f3', 'f4', 'f5', 'f6', 'f7', 'f8'],
+    };
+    const reduced = reduceFeatureScope(complex);
+    expect(reduced.features).toHaveLength(4);
+    expect(reduced.features[0]).toBe('f1');
+  });
+
+  it('limits pages to 2', () => {
+    const complex: FeatureRequirements = {
+      ...TODO_REQUIREMENTS,
+      pages: [
+        { path: '/a', description: 'a', components: [] },
+        { path: '/b', description: 'b', components: [] },
+        { path: '/c', description: 'c', components: [] },
+        { path: '/d', description: 'd', components: [] },
+      ],
+    };
+    const reduced = reduceFeatureScope(complex);
+    expect(reduced.pages).toHaveLength(2);
+  });
+
+  it('limits data model to 2 entities', () => {
+    const complex: FeatureRequirements = {
+      ...TODO_REQUIREMENTS,
+      data_model: [
+        { name: 'A', fields: [] },
+        { name: 'B', fields: [] },
+        { name: 'C', fields: [] },
+      ],
+    };
+    const reduced = reduceFeatureScope(complex);
+    expect(reduced.data_model).toHaveLength(2);
+  });
+
+  it('preserves app_type and other fields', () => {
+    const reduced = reduceFeatureScope(TODO_REQUIREMENTS);
+    expect(reduced.app_type).toBe('todo');
+    expect(reduced.has_auth).toBe(false);
+  });
+});
+
+// ============================================================================
+// generateTailwindConfig TESTS
+// ============================================================================
+
+describe('generateTailwindConfig', () => {
+  it('generates valid tailwind config with design pack colors', () => {
+    const config = generateTailwindConfig(MOCK_DESIGN_PACK);
+    expect(config).toContain('import type { Config } from "tailwindcss"');
+    expect(config).toContain('var(--primary)');
+    expect(config).toContain('var(--primary-foreground)');
+    expect(config).toContain('var(--secondary)');
+    expect(config).toContain('var(--accent)');
+    expect(config).toContain('var(--muted)');
+    expect(config).toContain('var(--border)');
+    expect(config).toContain('var(--background)');
+    expect(config).toContain('var(--foreground)');
+  });
+
+  it('includes font family configuration', () => {
+    const config = generateTailwindConfig(MOCK_DESIGN_PACK);
+    expect(config).toContain('var(--font-heading)');
+    expect(config).toContain('var(--font-body)');
+  });
+
+  it('includes border radius from pack', () => {
+    const config = generateTailwindConfig(MOCK_DESIGN_PACK);
+    // md radius = 0.5rem
+    expect(config).toContain('0.5rem');
+  });
+
+  it('includes box shadow from pack', () => {
+    const config = generateTailwindConfig(MOCK_DESIGN_PACK);
+    // subtle shadow
+    expect(config).toContain('boxShadow');
+  });
+
+  it('exports default config', () => {
+    const config = generateTailwindConfig(MOCK_DESIGN_PACK);
+    expect(config).toContain('export default config');
+  });
+});
+
+// ============================================================================
+// buildGenerationUserMessage VISUAL QUALITY TESTS
+// ============================================================================
+
+describe('buildGenerationUserMessage visual quality', () => {
+  it('includes visual quality section', () => {
+    const message = buildGenerationUserMessage(TODO_REQUIREMENTS, 'nextjs_app_router');
+    expect(message).toContain('VISUAL QUALITY');
+    expect(message).toContain('visible <label>');
+    expect(message).toContain('card-based');
+    expect(message).toContain('empty state');
+  });
+
+  it('includes page replacement instruction', () => {
+    const message = buildGenerationUserMessage(TODO_REQUIREMENTS, 'nextjs_app_router');
+    expect(message).toContain('no default template content remaining');
   });
 });

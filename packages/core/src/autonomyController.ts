@@ -16,6 +16,7 @@ import { CheckpointManager } from './checkpointManager';
 import { ModeManager } from './modeManager';
 import { Event, Mode, Stage } from './types';
 import { randomUUID } from 'crypto';
+import { detectLoop, IterationOutcome, LoopDetectionResult } from './autonomyLoopDetector';
 
 /**
  * A1 autonomy budgets (V1 defaults)
@@ -53,6 +54,12 @@ export interface IterationResult {
   success: boolean;
   failure_reason?: string;
   evidence_ids?: string[];
+  /** Number of tests passing (-1 or omit if unknown). Feeds detectRegressing. */
+  testPassCount?: number;
+  /** Number of tests failing (-1 or omit if unknown). Feeds detectRegressing. */
+  testFailCount?: number;
+  /** Files modified during this iteration. Feeds detectScopeCreep. */
+  filesTouched?: string[];
 }
 
 /**
@@ -82,6 +89,8 @@ export class AutonomyController {
   private startTime: number = 0;
   private isPlanApproved: boolean = false;
   private areToolsApproved: boolean = false;
+  private iterationHistory: IterationOutcome[] = [];
+  private declaredScope: string[] | undefined;
 
   constructor(
     taskId: string,
@@ -148,6 +157,64 @@ export class AutonomyController {
   }
 
   /**
+   * Set declared scope for scope creep detection
+   */
+  setDeclaredScope(files: string[]): void {
+    this.declaredScope = [...files];
+  }
+
+  /**
+   * Record an iteration outcome for loop detection
+   */
+  recordIterationOutcome(outcome: IterationOutcome): void {
+    this.iterationHistory.push(outcome);
+  }
+
+  /**
+   * Get iteration history (for testing)
+   */
+  getIterationHistory(): IterationOutcome[] {
+    return [...this.iterationHistory];
+  }
+
+  /**
+   * Handle detected loop: emit events, downgrade, pause
+   */
+  private async handleLoopDetected(
+    mode: Mode,
+    stage: Stage,
+    result: LoopDetectionResult,
+  ): Promise<void> {
+    this.state = 'paused';
+
+    // Emit autonomy_loop_detected
+    await this.emitEvent('autonomy_loop_detected', mode, stage, {
+      loopType: result.loopType,
+      iteration: this.currentIteration,
+      evidence: result.evidence,
+      recommendation: result.recommendation,
+    });
+
+    // Emit autonomy_downgraded (A1 → A0)
+    await this.emitEvent('autonomy_downgraded', mode, stage, {
+      fromLevel: 'A1',
+      toLevel: 'A0',
+      reason: result.recommendation,
+      loopType: result.loopType,
+    });
+
+    // Emit decision_point_needed with user options
+    await this.emitEvent('decision_point_needed', mode, stage, {
+      reason: `Loop detected: ${result.loopType}`,
+      options: [
+        { id: 'continue_one', label: 'Continue one more iteration' },
+        { id: 'stop', label: 'Stop' },
+        { id: 'open_logs', label: 'Open logs' },
+      ],
+    });
+  }
+
+  /**
    * Start autonomy (with precondition check)
    */
   async startAutonomy(mode: Mode, stage: Stage): Promise<void> {
@@ -164,6 +231,7 @@ export class AutonomyController {
     this.currentIteration = 0;
     this.toolCallsUsed = 0;
     this.startTime = Date.now();
+    this.iterationHistory = [];
 
     // Emit autonomy_started event
     await this.emitEvent('autonomy_started', mode, stage, {
@@ -221,6 +289,17 @@ export class AutonomyController {
       };
     }
 
+    // Build outcome record for loop detection
+    const outcome: IterationOutcome = {
+      iteration: this.currentIteration,
+      success: result.success,
+      failureSignature: result.failure_reason || null,
+      testPassCount: result.testPassCount ?? -1,
+      testFailCount: result.testFailCount ?? -1,
+      filesTouched: result.filesTouched ?? [],
+    };
+    this.iterationHistory.push(outcome);
+
     // Emit iteration result
     if (result.success) {
       await this.emitEvent('iteration_succeeded', mode, stage, {
@@ -234,6 +313,13 @@ export class AutonomyController {
         failure_reason: result.failure_reason,
         evidence_ids: result.evidence_ids || [],
       });
+
+      // Check loop detection BEFORE budget check
+      const loopResult = detectLoop(this.iterationHistory, this.declaredScope);
+      if (loopResult.detected) {
+        await this.handleLoopDetected(mode, stage, loopResult);
+        return false;
+      }
 
       // Check if we should attempt repair
       const budgetCheck = this.checkBudgets();
@@ -447,5 +533,7 @@ export class AutonomyController {
     this.startTime = 0;
     this.isPlanApproved = false;
     this.areToolsApproved = false;
+    this.iterationHistory = [];
+    this.declaredScope = undefined;
   }
 }
