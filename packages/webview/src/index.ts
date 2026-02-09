@@ -4799,6 +4799,14 @@ export function getWebviewContent(): string {
               }
               break;
 
+            // Step 48: Undo state updates from extension
+            case 'updateUndoState':
+              (window as any).__ordinexUndoState = {
+                undoable_group_ids: message.undoable_group_ids || [],
+                top_undoable_group_id: message.top_undoable_group_id || null,
+              };
+              break;
+
             default:
               console.log('Unknown message from backend:', message.type);
           }
@@ -5010,6 +5018,20 @@ export function getWebviewContent(): string {
         }
       };
 
+      // ===== CRASH RECOVERY HANDLER (Step 47) =====
+      window.handleCrashRecovery = function(taskId, action, checkpointId) {
+        console.log(\`handleCrashRecovery: task=\${taskId}, action=\${action}, cp=\${checkpointId || 'none'}\`);
+
+        if (typeof vscode !== 'undefined') {
+          vscode.postMessage({
+            type: 'crash_recovery',
+            task_id: taskId,
+            action: action,
+            checkpoint_id: checkpointId || null,
+          });
+        }
+      };
+
       // Global scope expansion handler
       window.handleScopeApproval = function(approved) {
         // Find the pending scope expansion approval ID
@@ -5055,6 +5077,44 @@ export function getWebviewContent(): string {
           });
         } else {
           console.log('Demo mode: generatedToolAction', action, proposalId, taskId);
+        }
+      };
+
+      // ===== UNDO ACTION HANDLER (Step 48) =====
+      window.handleUndoAction = function(groupId) {
+        if (typeof vscode !== 'undefined') {
+          vscode.postMessage({
+            type: 'undo_action',
+            group_id: groupId,
+          });
+        } else {
+          console.log('Demo mode: handleUndoAction', groupId);
+        }
+      };
+
+      // ===== RECOVERY ACTION HANDLER (Step 49) =====
+      window.handleRecoveryAction = function(actionId, eventId, command) {
+        if (typeof vscode !== 'undefined') {
+          vscode.postMessage({
+            type: 'recovery_action',
+            action_id: actionId,
+            event_id: eventId,
+            command: command || '',
+          });
+        } else {
+          console.log('Demo mode: handleRecoveryAction', actionId, eventId, command);
+        }
+      };
+
+      // ===== OPEN FILE HANDLER (Step 49) =====
+      window.handleOpenFile = function(filePath) {
+        if (typeof vscode !== 'undefined') {
+          vscode.postMessage({
+            type: 'open_file',
+            file_path: filePath,
+          });
+        } else {
+          console.log('Demo mode: handleOpenFile', filePath);
         }
       };
 

@@ -941,3 +941,66 @@ export type {
   VerifyRecipeInfo,
   VerifyEventCtx,
 } from './scaffold/postVerify';
+
+// ============================================================================
+// Step 47: Resume After Crash (Task Persistence + Recovery Policy)
+// ============================================================================
+
+export type {
+  ActiveTaskMetadata,
+  ActiveTaskPointer,
+  RecoveryOption,
+  RecoveryAnalysis,
+  TaskPersistenceService,
+} from './taskPersistence';
+
+export {
+  isLikelyCrash,
+  isStaleTask,
+  buildRecoveryOptions,
+  recommendAction,
+  analyzeRecoveryOptions,
+  MAX_RECOVERY_AGE_MS,
+} from './crashRecoveryPolicy';
+
+// ============================================================================
+// Step 48: Undo System (Granular Per-Diff Undo)
+// ============================================================================
+
+export {
+  UndoStack,
+} from './undoStack';
+
+export type {
+  UndoActionType,
+  UndoableAction,
+  UndoGroup,
+} from './undoStack';
+
+export {
+  extractDiffFilePaths,
+  getDiffCorrelationId,
+  inferActionType,
+  buildUndoGroup,
+} from './undoContentCapture';
+
+export type {
+  FileReadResult,
+} from './undoContentCapture';
+
+// ============================================================================
+// Step 49: Error Recovery UX (Error Patterns + Recovery Actions)
+// ============================================================================
+
+export {
+  matchErrorPattern,
+  errorDescriptorToRecoveryActions,
+  mergeRecoveryActions,
+  isSafeRecoveryCommand,
+  SAFE_RECOVERY_COMMANDS,
+} from './errorPatterns';
+
+export type {
+  ErrorPatternMatch,
+  RecoveryAction,
+} from './errorPatterns';

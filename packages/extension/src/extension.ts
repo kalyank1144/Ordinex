@@ -11,9 +11,11 @@ import {
   AttachmentStoreResult 
 } from './attachmentEvidenceStore';
 import { 
-  EventStore, 
-  Event, 
-  Mode, 
+  EventStore,
+  Event,
+  Mode,
+  StateReducer,
+  ScopeManager,
   classifyPrompt, 
   classifyPromptV2,
   modeConfirmationPolicy,
@@ -134,16 +136,36 @@ import {
   // V9: Agent Mode Policy
   isEscalation,
   isDowngrade,
+  // Step 47: Resume After Crash
+  analyzeRecoveryOptions,
+  // Step 48: Undo System
+  UndoStack,
+  extractDiffFilePaths,
+  getDiffCorrelationId,
+  buildUndoGroup,
+  // Step 49: Error Recovery UX
+  matchErrorPattern,
+  errorDescriptorToRecoveryActions,
+  mergeRecoveryActions,
+  isSafeRecoveryCommand,
 } from 'core';
+import type { FileReadResult } from 'core';
 import type { ModeTransitionResult } from 'core';
 import type { ToolRegistryService, ToolExecutionPolicy } from 'core';
 import type { ProcessStatusEvent, ProcessOutputEvent } from 'core';
 import type { PreflightChecksInput, PreflightOrchestratorCtx, VerifyRecipeInfo, VerifyConfig, VerifyEventCtx } from 'core';
 import type { EnrichedInput, EditorContext, DiagnosticEntry } from 'core';
 import type { SolutionCaptureContext } from 'core';
+import type { ActiveTaskMetadata } from 'core';
 import { FsMemoryService } from './fsMemoryService';
 import { FsToolRegistryService } from './fsToolRegistryService';
 import { runGeneratedTool, scanForBlockedPatterns } from './generatedToolRunner';
+import { FsTaskPersistenceService } from './fsTaskPersistenceService';
+import { FsUndoService } from './fsUndoService';
+
+// Step 47: Module-level ref for deactivate() access (synchronous, can't use lazy init)
+let globalTaskPersistenceService: FsTaskPersistenceService | null = null;
+let globalCurrentTaskId: string | null = null;
 
 class MissionControlViewProvider implements vscode.WebviewViewProvider {
   public static readonly viewType = 'ordinex.missionControl';
@@ -175,6 +197,13 @@ class MissionControlViewProvider implements vscode.WebviewViewProvider {
   // V6-V8: Generated Tools
   private _toolRegistryService: FsToolRegistryService | null = null;
   private _generatedToolManager: GeneratedToolManager | null = null;
+  // Step 47: Resume After Crash
+  private _taskPersistenceService: FsTaskPersistenceService | null = null;
+  // Step 48: Undo System
+  private _undoStack: UndoStack | null = null;
+  private _fsUndoService: FsUndoService | null = null;
+  private _undoBeforeCache: Map<string, Map<string, FileReadResult>> = new Map();
+  private _currentWebview: vscode.Webview | null = null; // Stored for Cmd+Shift+Z command
 
   constructor(
     private readonly _extensionUri: vscode.Uri,
@@ -312,6 +341,397 @@ class MissionControlViewProvider implements vscode.WebviewViewProvider {
   private getGeneratedToolPolicy(): ToolExecutionPolicy {
     const config = vscode.workspace.getConfiguration('ordinex.generatedTools');
     return config.get<ToolExecutionPolicy>('policy', 'prompt');
+  }
+
+  // -------------------------------------------------------------------------
+  // Step 47: Task Persistence - Lazy initialization
+  // -------------------------------------------------------------------------
+
+  private getTaskPersistenceService(): FsTaskPersistenceService | null {
+    const workspaceRoot = this.getWorkspaceRoot();
+    if (!workspaceRoot) return null;
+
+    if (!this._taskPersistenceService) {
+      this._taskPersistenceService = new FsTaskPersistenceService(workspaceRoot);
+      // Set module-level reference for deactivate() access
+      globalTaskPersistenceService = this._taskPersistenceService;
+    }
+    return this._taskPersistenceService;
+  }
+
+  /**
+   * Step 47: Update task persistence metadata at phase boundaries.
+   * Lightweight — only updates metadata fields, not full state.
+   */
+  private async updateTaskPersistence(
+    taskId: string,
+    updates: Partial<Pick<ActiveTaskMetadata, 'mode' | 'stage' | 'last_checkpoint_id'>>,
+  ): Promise<void> {
+    const service = this.getTaskPersistenceService();
+    if (!service) return;
+
+    try {
+      const metadata: ActiveTaskMetadata = {
+        task_id: taskId,
+        mode: updates.mode || this.currentMode,
+        stage: updates.stage || this.currentStage,
+        status: 'running',
+        last_updated_at: new Date().toISOString(),
+        cleanly_exited: false,
+        last_checkpoint_id: updates.last_checkpoint_id,
+      };
+      await service.setActiveTask(metadata);
+    } catch (err) {
+      console.error('[Step47] Failed to update task persistence:', err);
+    }
+  }
+
+  /**
+   * Step 47: Clear task persistence (task completed or discarded).
+   */
+  private async clearTaskPersistence(): Promise<void> {
+    const service = this.getTaskPersistenceService();
+    if (!service) return;
+
+    try {
+      await service.clearActiveTask();
+    } catch (err) {
+      console.error('[Step47] Failed to clear task persistence:', err);
+    }
+  }
+
+  /**
+   * Step 47: Reset current task and clear persistence.
+   * Centralized helper to avoid forgetting persistence cleanup.
+   */
+  private async resetCurrentTask(): Promise<void> {
+    this.currentTaskId = null;
+    globalCurrentTaskId = null;
+    this.currentStage = 'none';
+    await this.clearTaskPersistence();
+  }
+
+  // -------------------------------------------------------------------------
+  // Step 48: Undo System - Lazy initialization + capture + execution
+  // -------------------------------------------------------------------------
+
+  private getUndoStack(): UndoStack {
+    if (!this._undoStack) {
+      this._undoStack = new UndoStack(50);
+    }
+    return this._undoStack;
+  }
+
+  private getFsUndoService(): FsUndoService | null {
+    const workspaceRoot = this.getWorkspaceRoot();
+    if (!workspaceRoot) return null;
+    if (!this._fsUndoService) {
+      this._fsUndoService = new FsUndoService(workspaceRoot);
+    }
+    return this._fsUndoService;
+  }
+
+  /**
+   * Step 48: Capture file content for undo on diff_proposed / diff_applied events.
+   * Called from emitEvent() after event is stored.
+   */
+  private async captureForUndo(event: Event): Promise<void> {
+    const fsUndo = this.getFsUndoService();
+    if (!fsUndo) return;
+
+    if (event.type === 'diff_proposed') {
+      const corrId = getDiffCorrelationId(event.payload);
+      if (!corrId) return;
+      const filePaths = extractDiffFilePaths(event.payload);
+      const beforeMap = new Map<string, FileReadResult>();
+      for (const fp of filePaths) {
+        beforeMap.set(fp, await fsUndo.readFileContent(fp));
+      }
+      this._undoBeforeCache.set(corrId, beforeMap);
+    }
+
+    if (event.type === 'diff_applied') {
+      const corrId = getDiffCorrelationId(event.payload);
+      if (!corrId) return;
+      const undoStack = this.getUndoStack();
+      const beforeMap = this._undoBeforeCache.get(corrId);
+
+      if (!beforeMap) {
+        // Concern #6: No before cache → mark entire group non-undoable
+        const filePaths = extractDiffFilePaths(event.payload);
+        const emptyBefore = new Map<string, FileReadResult>();
+        const afterMap = new Map<string, FileReadResult>();
+        for (const fp of filePaths) {
+          afterMap.set(fp, await fsUndo.readFileContent(fp));
+        }
+        const group = buildUndoGroup(event, emptyBefore, afterMap);
+        undoStack.push(group);
+      } else {
+        const afterMap = new Map<string, FileReadResult>();
+        for (const fp of beforeMap.keys()) {
+          afterMap.set(fp, await fsUndo.readFileContent(fp));
+        }
+        // Check applied_files for any files not in before cache
+        const appliedFiles = extractDiffFilePaths(event.payload);
+        for (const fp of appliedFiles) {
+          if (!beforeMap.has(fp)) {
+            afterMap.set(fp, await fsUndo.readFileContent(fp));
+          }
+        }
+        const group = buildUndoGroup(event, beforeMap, afterMap);
+        undoStack.push(group);
+      }
+      this._undoBeforeCache.delete(corrId);
+    }
+  }
+
+  /** Step 48: Sync undo state to webview. */
+  private syncUndoStateToWebview(webview: vscode.Webview): void {
+    const undoStack = this._undoStack;
+    if (!undoStack) return;
+    webview.postMessage({
+      type: 'updateUndoState',
+      undoable_group_ids: undoStack.getUndoableGroupIds(),
+      top_undoable_group_id: undoStack.topUndoableGroupId(),
+    });
+  }
+
+  /** Step 48: Handle undo action from webview or VS Code command. */
+  private async handleUndoAction(message: any, webview: vscode.Webview): Promise<void> {
+    const { group_id } = message;
+    const undoStack = this._undoStack;
+    const fsUndo = this.getFsUndoService();
+    if (!undoStack || !fsUndo) return;
+    const taskId = this.currentTaskId || 'unknown';
+
+    // V9: Enforce MISSION mode for undo (writes to disk)
+    if (!await this.enforceMissionMode('undo_edit', taskId)) {
+      await this.sendEventsToWebview(webview, taskId);
+      return;
+    }
+
+    const top = undoStack.peek();
+    if (!top || top.group_id !== group_id) {
+      vscode.window.showWarningMessage('Ordinex: Can only undo the most recent edit');
+      return;
+    }
+    if (!top.undoable) {
+      vscode.window.showWarningMessage('Ordinex: Undo unavailable — before state not captured');
+      return;
+    }
+
+    undoStack.pop();
+
+    // Apply undo — revert each action
+    const filesRestored: string[] = [];
+    const filesDeleted: string[] = [];
+    const filesRecreated: string[] = [];
+
+    for (const action of top.actions) {
+      try {
+        switch (action.type) {
+          case 'file_edit':
+            if (action.before_content !== null) {
+              await fsUndo.writeFileContent(action.file_path, action.before_content);
+              filesRestored.push(action.file_path);
+            }
+            break;
+          case 'file_create':
+            await fsUndo.deleteFile(action.file_path);
+            filesDeleted.push(action.file_path);
+            break;
+          case 'file_delete':
+            if (action.before_content !== null) {
+              await fsUndo.ensureDirectory(action.file_path);
+              await fsUndo.writeFileContent(action.file_path, action.before_content);
+              filesRecreated.push(action.file_path);
+            }
+            break;
+        }
+      } catch (err) {
+        console.error(`[Step48] Undo failed for ${action.file_path}:`, err);
+      }
+    }
+
+    // Emit undo_performed event
+    await this.emitEvent({
+      event_id: this.generateId(),
+      task_id: taskId,
+      timestamp: new Date().toISOString(),
+      type: 'undo_performed',
+      mode: this.currentMode,
+      stage: this.currentStage,
+      payload: {
+        group_id,
+        files_restored: filesRestored,
+        files_deleted: filesDeleted,
+        files_recreated: filesRecreated,
+        description: top.description,
+      },
+      evidence_ids: [],
+      parent_event_id: null,
+    });
+
+    // Update context key + sync webview
+    vscode.commands.executeCommand('setContext', 'ordinex.hasUndoableEdits', undoStack.canUndo());
+    this.syncUndoStateToWebview(webview);
+    await this.sendEventsToWebview(webview, taskId);
+  }
+
+  /**
+   * Step 47: Check for interrupted tasks on webview activation.
+   * Reads pointer + metadata, runs pure analysis, emits task_interrupted event.
+   */
+  private async checkForInterruptedTasks(webview: vscode.Webview): Promise<void> {
+    const service = this.getTaskPersistenceService();
+    if (!service) return;
+
+    try {
+      const task = await service.getActiveTask();
+      if (!task) return; // No active task — clean state
+
+      // Get event count for this task
+      let eventCount = 0;
+      if (this.eventStore) {
+        const events = this.eventStore.getEventsByTaskId(task.task_id);
+        eventCount = events.length;
+      }
+
+      // Check if checkpoint exists
+      const hasCheckpoint = !!task.last_checkpoint_id;
+
+      // Pure analysis (from core)
+      const analysis = analyzeRecoveryOptions(task, eventCount, hasCheckpoint);
+
+      // Emit task_interrupted event with FULL payload (stateless card)
+      const interruptedEvent: Event = {
+        event_id: this.generateId(),
+        task_id: task.task_id,
+        timestamp: new Date().toISOString(),
+        type: 'task_interrupted',
+        mode: (task.mode as Mode) || 'ANSWER',
+        stage: (task.stage as any) || 'none',
+        payload: {
+          task_id: task.task_id,
+          was_clean_exit: task.cleanly_exited,
+          is_likely_crash: !task.cleanly_exited && task.status === 'running',
+          is_stale: analysis.recommended_action === 'discard',
+          recommended_action: analysis.recommended_action,
+          options: analysis.options,
+          last_checkpoint_id: task.last_checkpoint_id || null,
+          last_updated_at: task.last_updated_at,
+          mode: task.mode,
+          stage: task.stage,
+          event_count: eventCount,
+          time_since_interruption_ms: analysis.time_since_interruption_ms,
+          reason: analysis.reason,
+        },
+        evidence_ids: [],
+        parent_event_id: null,
+      };
+
+      await this.emitEvent(interruptedEvent);
+      await this.sendEventsToWebview(webview, task.task_id);
+    } catch (err) {
+      console.error('[Step47] Error checking for interrupted tasks:', err);
+    }
+  }
+
+  /**
+   * Step 47: Handle user's recovery action choice from CrashRecoveryCard.
+   */
+  private async handleCrashRecovery(message: any, webview: vscode.Webview): Promise<void> {
+    const { task_id, action, checkpoint_id } = message;
+    const service = this.getTaskPersistenceService();
+
+    if (action === 'discard') {
+      // Emit task_discarded, clear persistence
+      await this.emitEvent({
+        event_id: this.generateId(),
+        task_id,
+        timestamp: new Date().toISOString(),
+        type: 'task_discarded',
+        mode: this.currentMode,
+        stage: this.currentStage,
+        payload: { task_id },
+        evidence_ids: [],
+        parent_event_id: null,
+      });
+      this.currentTaskId = null;
+      this.currentStage = 'none';
+      this.currentMode = 'ANSWER';
+      if (service) await service.clearActiveTask();
+      await this.sendEventsToWebview(webview, task_id);
+      return;
+    }
+
+    if (action === 'restore_checkpoint' && checkpoint_id) {
+      // Restore checkpoint first, then resume
+      await this.emitEvent({
+        event_id: this.generateId(),
+        task_id,
+        timestamp: new Date().toISOString(),
+        type: 'checkpoint_restored',
+        mode: this.currentMode,
+        stage: this.currentStage,
+        payload: { checkpoint_id },
+        evidence_ids: [],
+        parent_event_id: null,
+      });
+      // Fall through to resume flow
+    }
+
+    // Resume: full event replay
+    if (this.eventStore) {
+      const events = this.eventStore.getEventsByTaskId(task_id);
+      if (events.length > 0) {
+        // Replay through StateReducer to derive state
+        const eventBus = new EventBus(this.eventStore);
+        const scopeManager = new ScopeManager(eventBus);
+        const reducer = new StateReducer(scopeManager);
+        const state = reducer.reduceForTask(task_id, events);
+
+        // Rehydrate in-memory state
+        this.currentTaskId = task_id;
+        globalCurrentTaskId = task_id;
+        this.currentMode = state.mode;
+        this.currentStage = state.stage as any;
+
+        // Send events to webview for MissionFeed replay
+        await this.sendEventsToWebview(webview, task_id);
+      }
+    }
+
+    // Emit task_recovery_started
+    await this.emitEvent({
+      event_id: this.generateId(),
+      task_id,
+      timestamp: new Date().toISOString(),
+      type: 'task_recovery_started',
+      mode: this.currentMode,
+      stage: this.currentStage,
+      payload: {
+        task_id,
+        action,
+        checkpoint_id: checkpoint_id || null,
+      },
+      evidence_ids: [],
+      parent_event_id: null,
+    });
+
+    // Update persistence: running again
+    if (service) {
+      await service.setActiveTask({
+        task_id,
+        mode: this.currentMode,
+        stage: this.currentStage,
+        status: 'running',
+        last_updated_at: new Date().toISOString(),
+        cleanly_exited: false,
+      });
+    }
+
+    await this.sendEventsToWebview(webview, task_id);
   }
 
   // -------------------------------------------------------------------------
@@ -515,12 +935,20 @@ class MissionControlViewProvider implements vscode.WebviewViewProvider {
 
     webviewView.webview.html = this._getHtmlForWebview(webviewView.webview);
 
+    // Step 48: Store webview reference for Cmd+Shift+Z command
+    this._currentWebview = webviewView.webview;
+
     // Set up message passing
     webviewView.webview.onDidReceiveMessage(
       async (message) => {
         await this.handleMessage(message, webviewView.webview);
       }
     );
+
+    // Step 47: Check for interrupted tasks on webview activation
+    this.checkForInterruptedTasks(webviewView.webview).catch(err => {
+      console.error('[Step47] checkForInterruptedTasks failed:', err);
+    });
   }
 
   private async handleMessage(message: any, webview: vscode.Webview) {
@@ -654,6 +1082,26 @@ class MissionControlViewProvider implements vscode.WebviewViewProvider {
         await this.handleGeneratedToolRun(message, webview);
         break;
 
+      // Step 47: Crash recovery action from CrashRecoveryCard
+      case 'crash_recovery':
+        await this.handleCrashRecovery(message, webview);
+        break;
+
+      // Step 48: Undo action from DiffAppliedCard
+      case 'undo_action':
+        await this.handleUndoAction(message, webview);
+        break;
+
+      // Step 49: Recovery action from FailureCard
+      case 'recovery_action':
+        await this.handleRecoveryAction(message, webview);
+        break;
+
+      // Step 49: Open file from FailureCard
+      case 'open_file':
+        await this.handleOpenFile(message);
+        break;
+
       default:
         console.log('Unknown message type:', message.type);
     }
@@ -682,6 +1130,8 @@ class MissionControlViewProvider implements vscode.WebviewViewProvider {
     }
 
     const taskId = this.currentTaskId;
+    // Step 47: Track currentTaskId at module level for deactivate()
+    globalCurrentTaskId = taskId;
     console.log('Using task ID:', taskId);
 
     // PHASE 4: Extract attachment evidence_ids for storing in intent_received
@@ -715,6 +1165,9 @@ class MissionControlViewProvider implements vscode.WebviewViewProvider {
       });
       console.log('✓ intent_received event emitted');
       await this.sendEventsToWebview(webview, taskId);
+
+      // Step 47: Persist active task after intent_received
+      await this.updateTaskPersistence(taskId, { mode: userSelectedMode, stage: this.currentStage });
 
       // 2. STEP 40.5: Enrich user input with intelligence layer
       const workspaceRoot = this.selectedWorkspaceRoot
@@ -5368,6 +5821,157 @@ This demonstrates the diff proposal pipeline without requiring LLM integration.
     }
   }
 
+  // -------------------------------------------------------------------------
+  // Step 49: Error Recovery UX — Action Handlers
+  // -------------------------------------------------------------------------
+
+  /**
+   * Handle recovery actions dispatched from FailureCard.
+   * Routes by action type: retry, alternative, checkpoint, command, manual.
+   * V9: Mode-gated for actions that write to disk (retry, command).
+   * Concern #4: Command actions must pass isSafeRecoveryCommand() allowlist.
+   */
+  private async handleRecoveryAction(message: any, webview: vscode.Webview): Promise<void> {
+    const { action_id, event_id, command } = message;
+    const taskId = this.currentTaskId || 'unknown';
+    console.log(`[Step49] Recovery action: ${action_id} for event ${event_id}`);
+
+    switch (action_id) {
+      case 'retry':
+      case 'retry_split': {
+        // V9: Retry writes to disk — requires MISSION mode
+        if (!await this.enforceMissionMode('recovery_retry', taskId)) {
+          await this.sendEventsToWebview(webview, taskId);
+          return;
+        }
+        // Emit decision so the autonomy controller / self-correction loop can pick it up
+        await this.emitEvent({
+          event_id: this.generateId(),
+          task_id: taskId,
+          timestamp: new Date().toISOString(),
+          type: 'recovery_action_taken',
+          mode: this.currentMode,
+          stage: this.currentStage,
+          payload: {
+            source_event_id: event_id,
+            action: action_id === 'retry_split' ? 'RETRY_SPLIT' : 'RETRY_SAME',
+            user_initiated: true,
+          },
+          evidence_ids: [],
+          parent_event_id: null,
+        });
+        await this.sendEventsToWebview(webview, taskId);
+        break;
+      }
+
+      case 'alternative': {
+        if (!await this.enforceMissionMode('recovery_alternative', taskId)) {
+          await this.sendEventsToWebview(webview, taskId);
+          return;
+        }
+        await this.emitEvent({
+          event_id: this.generateId(),
+          task_id: taskId,
+          timestamp: new Date().toISOString(),
+          type: 'recovery_action_taken',
+          mode: this.currentMode,
+          stage: this.currentStage,
+          payload: {
+            source_event_id: event_id,
+            action: 'REGENERATE_PATCH',
+            user_initiated: true,
+          },
+          evidence_ids: [],
+          parent_event_id: null,
+        });
+        await this.sendEventsToWebview(webview, taskId);
+        break;
+      }
+
+      case 'restore_checkpoint': {
+        // Checkpoint restore is handled via existing checkpoint flow
+        await this.emitEvent({
+          event_id: this.generateId(),
+          task_id: taskId,
+          timestamp: new Date().toISOString(),
+          type: 'recovery_action_taken',
+          mode: this.currentMode,
+          stage: this.currentStage,
+          payload: {
+            source_event_id: event_id,
+            action: 'RESTORE_CHECKPOINT',
+            user_initiated: true,
+          },
+          evidence_ids: [],
+          parent_event_id: null,
+        });
+        await this.sendEventsToWebview(webview, taskId);
+        break;
+      }
+
+      case 'run_command': {
+        // Concern #4: Command must pass allowlist
+        if (!command || !isSafeRecoveryCommand(command)) {
+          vscode.window.showWarningMessage(`Ordinex: Command not in recovery allowlist: "${command || '(empty)'}"`);
+          return;
+        }
+        // V9: Running a command requires MISSION mode
+        if (!await this.enforceMissionMode('recovery_command', taskId)) {
+          await this.sendEventsToWebview(webview, taskId);
+          return;
+        }
+        // Execute the safe command via terminal
+        const terminal = vscode.window.createTerminal({
+          name: `Ordinex: ${command}`,
+          cwd: this.selectedWorkspaceRoot || undefined,
+        });
+        terminal.show(false);
+        terminal.sendText(command);
+        break;
+      }
+
+      case 'fix_manually': {
+        // No-op action — user handles it. Just acknowledge.
+        vscode.window.showInformationMessage('Ordinex: Please fix the issue manually and retry.');
+        break;
+      }
+
+      default:
+        console.log(`[Step49] Unknown recovery action: ${action_id}`);
+    }
+  }
+
+  /**
+   * Handle open_file requests from FailureCard.
+   * Guard: file must be inside workspace root (Concern: path traversal).
+   */
+  private async handleOpenFile(message: any): Promise<void> {
+    const { file_path } = message;
+    if (!file_path) return;
+
+    // Guard: resolve against workspace root and check containment
+    const workspaceRoot = this.selectedWorkspaceRoot
+      || vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+    if (!workspaceRoot) {
+      vscode.window.showWarningMessage('Ordinex: No workspace open');
+      return;
+    }
+
+    const resolved = path.resolve(workspaceRoot, file_path);
+    if (!resolved.startsWith(workspaceRoot)) {
+      vscode.window.showWarningMessage('Ordinex: Cannot open files outside workspace');
+      return;
+    }
+
+    try {
+      const doc = await vscode.workspace.openTextDocument(vscode.Uri.file(resolved));
+      await vscode.window.showTextDocument(doc, { preview: true });
+    } catch (err: any) {
+      console.error(`[Step49] Failed to open file: ${err.message}`);
+      vscode.window.showWarningMessage(`Ordinex: Could not open file: ${file_path}`);
+    }
+  }
+
   /**
    * Step 37: Handle attachment upload from webview
    *
@@ -5478,6 +6082,11 @@ This demonstrates the diff proposal pipeline without requiring LLM integration.
     this.checkSolutionCapture(event, runId).catch(err =>
       console.warn('[V3] Solution capture check failed:', err)
     );
+
+    // Step 48: Capture file content for undo (non-blocking)
+    this.captureForUndo(event).catch(err =>
+      console.warn('[Step48] Undo capture failed:', err)
+    );
   }
 
   private async sendEventsToWebview(webview: vscode.Webview, taskId: string) {
@@ -5490,6 +6099,9 @@ This demonstrates the diff proposal pipeline without requiring LLM integration.
       type: 'ordinex:eventsUpdate',
       events,
     });
+
+    // Step 48: Also sync undo state
+    this.syncUndoStateToWebview(webview);
   }
 
   // -------------------------------------------------------------------------
@@ -5815,6 +6427,28 @@ export function activate(context: vscode.ExtensionContext) {
   );
 
   // Keep the existing command for backward compatibility
+  // Step 48: Register Undo command (Cmd+Shift+Z)
+  context.subscriptions.push(
+    vscode.commands.registerCommand('ordinex.undo', async () => {
+      const undoStack = (provider as any)._undoStack as UndoStack | null;
+      const webview = (provider as any)._currentWebview as vscode.Webview | null;
+      if (!undoStack || !webview) {
+        vscode.window.showInformationMessage('Ordinex: Nothing to undo');
+        return;
+      }
+      if (undoStack.canUndo()) {
+        const top = undoStack.peek();
+        if (top && top.undoable) {
+          await (provider as any).handleUndoAction({ group_id: top.group_id }, webview);
+        } else if (top && !top.undoable) {
+          vscode.window.showWarningMessage('Ordinex: Most recent edit cannot be undone');
+        }
+      } else {
+        vscode.window.showInformationMessage('Ordinex: Nothing to undo');
+      }
+    })
+  );
+
   const disposable = vscode.commands.registerCommand('ordinex.openPanel', () => {
     const panel = vscode.window.createWebviewPanel(
       'ordinexPanel',
@@ -5834,6 +6468,17 @@ export function activate(context: vscode.ExtensionContext) {
 
 export function deactivate() {
   console.log('Ordinex extension deactivating — stopping all processes...');
+
+  // Step 47: Mark clean exit synchronously (within VS Code's deactivate time budget)
+  if (globalTaskPersistenceService && globalCurrentTaskId) {
+    try {
+      globalTaskPersistenceService.markCleanExitSync(globalCurrentTaskId);
+      console.log(`[Step47] Marked clean exit for task ${globalCurrentTaskId}`);
+    } catch (err) {
+      console.error('[Step47] Error marking clean exit on deactivate:', err);
+    }
+  }
+
   try {
     getProcessManager().stopAll('extension_deactivate');
   } catch (err) {

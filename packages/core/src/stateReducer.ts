@@ -351,6 +351,27 @@ export class StateReducer {
         // Status already paused by loop_detected
         break;
 
+      // Step 47: Resume After Crash
+      case 'task_interrupted':
+        newState.status = 'paused';
+        break;
+      case 'task_recovery_started':
+        newState.status = 'running';
+        break;
+      case 'task_discarded':
+        newState.status = 'idle';
+        break;
+
+      // Step 48: Undo System
+      case 'undo_performed':
+        // Informational — audit trail only. No task state change.
+        break;
+
+      // Step 49: Error Recovery UX
+      case 'recovery_action_taken':
+        // Informational — audit trail only. No task state change.
+        break;
+
       default:
         // Unknown event type should have been rejected at write time
         // But defensive handling here

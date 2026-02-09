@@ -51,6 +51,18 @@
         "command": "ordinex.openSettings",
         "title": "Ordinex: Open Settings",
         "icon": "$(gear)"
+      },
+      {
+        "command": "ordinex.undo",
+        "title": "Ordinex: Undo Last Edit"
+      }
+    ],
+    "keybindings": [
+      {
+        "command": "ordinex.undo",
+        "key": "shift+cmd+z",
+        "mac": "shift+cmd+z",
+        "when": "ordinex.hasUndoableEdits"
       }
     ],
     "menus": {

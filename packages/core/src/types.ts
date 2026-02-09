@@ -198,7 +198,15 @@ export type EventType =
   | 'mode_changed'
   // W3: Autonomy Loop Detection
   | 'autonomy_loop_detected'
-  | 'autonomy_downgraded';
+  | 'autonomy_downgraded'
+  // Step 47: Resume After Crash
+  | 'task_interrupted'
+  | 'task_recovery_started'
+  | 'task_discarded'
+  // Step 48: Undo System
+  | 'undo_performed'
+  // Step 49: Error Recovery UX
+  | 'recovery_action_taken';
 
 export const CANONICAL_EVENT_TYPES: readonly EventType[] = [
   'intent_received',
@@ -385,6 +393,14 @@ export const CANONICAL_EVENT_TYPES: readonly EventType[] = [
   // W3: Autonomy Loop Detection
   'autonomy_loop_detected',
   'autonomy_downgraded',
+  // Step 47: Resume After Crash
+  'task_interrupted',
+  'task_recovery_started',
+  'task_discarded',
+  // Step 48: Undo System
+  'undo_performed',
+  // Step 49: Error Recovery UX
+  'recovery_action_taken',
 ] as const;
 
 export type Mode = 'ANSWER' | 'PLAN' | 'MISSION';
