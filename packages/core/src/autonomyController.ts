@@ -54,6 +54,12 @@ export interface IterationResult {
   success: boolean;
   failure_reason?: string;
   evidence_ids?: string[];
+  /** Number of tests passing (-1 or omit if unknown). Feeds detectRegressing. */
+  testPassCount?: number;
+  /** Number of tests failing (-1 or omit if unknown). Feeds detectRegressing. */
+  testFailCount?: number;
+  /** Files modified during this iteration. Feeds detectScopeCreep. */
+  filesTouched?: string[];
 }
 
 /**
@@ -288,9 +294,9 @@ export class AutonomyController {
       iteration: this.currentIteration,
       success: result.success,
       failureSignature: result.failure_reason || null,
-      testPassCount: -1,
-      testFailCount: -1,
-      filesTouched: [],
+      testPassCount: result.testPassCount ?? -1,
+      testFailCount: result.testFailCount ?? -1,
+      filesTouched: result.filesTouched ?? [],
     };
     this.iterationHistory.push(outcome);
 

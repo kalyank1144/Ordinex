@@ -594,6 +594,95 @@ describe('AutonomyController', () => {
       expect(events.filter(e => e.type === 'autonomy_loop_detected').length).toBe(0);
     });
 
+    test('regressing loop → pauses when testPassCount decreases over 3 iterations', async () => {
+      modeManager.setMode('MISSION');
+      modeManager.setStage('test');
+
+      const controller = new AutonomyController(
+        taskId,
+        eventBus,
+        checkpointManager,
+        modeManager,
+        { max_iterations: 10, max_wall_time_ms: 60000, max_tool_calls: 50 }
+      );
+      controller.setPlanApproved(true);
+      controller.setToolsApproved(true);
+
+      await controller.startAutonomy('MISSION', 'test');
+
+      // 3 iterations with strictly decreasing pass counts and unique failure reasons
+      await controller.executeIteration('MISSION', 'test', async () => ({
+        success: false,
+        failure_reason: 'Error iteration 1',
+        testPassCount: 10,
+        testFailCount: 2,
+      }));
+      await controller.executeIteration('MISSION', 'test', async () => ({
+        success: false,
+        failure_reason: 'Error iteration 2',
+        testPassCount: 7,
+        testFailCount: 5,
+      }));
+      await controller.executeIteration('MISSION', 'test', async () => ({
+        success: false,
+        failure_reason: 'Error iteration 3',
+        testPassCount: 3,
+        testFailCount: 9,
+      }));
+
+      expect(controller.getState()).toBe('paused');
+
+      const events = eventStore.getEventsByTaskId(taskId);
+      const loopDetected = events.filter(e => e.type === 'autonomy_loop_detected');
+      expect(loopDetected.length).toBe(1);
+      expect(loopDetected[0].payload.loopType).toBe('regressing');
+      expect(loopDetected[0].payload.evidence).toEqual({
+        passCounts: [10, 7, 3],
+        trend: 'decreasing',
+      });
+    });
+
+    test('scope creep loop → pauses when files outside declared scope are touched', async () => {
+      modeManager.setMode('MISSION');
+      modeManager.setStage('test');
+
+      const controller = new AutonomyController(
+        taskId,
+        eventBus,
+        checkpointManager,
+        modeManager,
+        { max_iterations: 10, max_wall_time_ms: 60000, max_tool_calls: 50 }
+      );
+      controller.setPlanApproved(true);
+      controller.setToolsApproved(true);
+      controller.setDeclaredScope(['src/a.ts', 'src/b.ts']);
+
+      await controller.startAutonomy('MISSION', 'test');
+
+      // First iteration stays in scope — different failures so stuck doesn't trigger
+      await controller.executeIteration('MISSION', 'test', async () => ({
+        success: false,
+        failure_reason: 'Error alpha',
+        filesTouched: ['src/a.ts'],
+      }));
+
+      // Second iteration touches out-of-scope files
+      await controller.executeIteration('MISSION', 'test', async () => ({
+        success: false,
+        failure_reason: 'Error beta',
+        filesTouched: ['src/c.ts', 'src/d.ts'],
+      }));
+
+      expect(controller.getState()).toBe('paused');
+
+      const events = eventStore.getEventsByTaskId(taskId);
+      const loopDetected = events.filter(e => e.type === 'autonomy_loop_detected');
+      expect(loopDetected.length).toBe(1);
+      expect(loopDetected[0].payload.loopType).toBe('scope_creep');
+      const evidence = loopDetected[0].payload.evidence as Record<string, unknown>;
+      expect(evidence.outOfScopeFiles).toEqual(['src/c.ts', 'src/d.ts']);
+    });
+
     test('success on iteration stops without loop detection', async () => {
       modeManager.setMode('MISSION');
       modeManager.setStage('test');
