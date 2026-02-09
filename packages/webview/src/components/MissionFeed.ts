@@ -15,6 +15,9 @@ import { getPendingApprovalById } from '../selectors/approvalSelectors';
 import { renderClarificationCard } from './ClarificationCard';
 import { isScaffoldEvent } from './ScaffoldCard';
 import { renderPreflightDecisionCard } from './PreflightDecisionCard';
+import { renderSolutionCapturedCard } from './SolutionCapturedCard';
+import { renderProcessCard, updateProcessCard, getProcessCardHtml, isProcessEvent } from './ProcessCard';
+import { renderGeneratedToolProposedCard, renderGeneratedToolRunCard, isGeneratedToolEvent } from './GeneratedToolCard';
 
 export interface EventCardConfig {
   icon: string;
@@ -1089,25 +1092,25 @@ export const EVENT_CARD_MAP: Record<EventType, EventCardConfig> = {
   // Process Management
   process_started: {
     icon: '🚀',
-    title: 'Dev Server Starting',
+    title: 'Process Starting',
     color: 'var(--vscode-charts-blue)',
     getSummary: (e) => `Running: ${e.payload.command || ''}`
   },
   process_ready: {
     icon: '✅',
-    title: 'Dev Server Ready',
+    title: 'Process Ready',
     color: 'var(--vscode-charts-green)',
-    getSummary: (e) => `Server ready${e.payload.port ? ' on port ' + e.payload.port : ''}`
+    getSummary: (e) => `Ready${e.payload.port ? ' on port ' + e.payload.port : ''}`
   },
   process_stopped: {
     icon: '⏹️',
-    title: 'Dev Server Stopped',
+    title: 'Process Stopped',
     color: 'var(--vscode-charts-yellow)',
     getSummary: (e) => (e.payload.reason as string) || 'Process stopped'
   },
-  process_error: {
+  process_failed: {
     icon: '❌',
-    title: 'Dev Server Error',
+    title: 'Process Failed',
     color: 'var(--vscode-charts-red)',
     getSummary: (e) => (e.payload.error as string) || 'Unknown error'
   },
@@ -1154,6 +1157,97 @@ export const EVENT_CARD_MAP: Record<EventType, EventCardConfig> = {
     title: 'Verification Complete',
     color: 'var(--vscode-charts-green)',
     getSummary: (e) => (e.payload.message as string) || `Outcome: ${e.payload.outcome}`
+  },
+
+  // VNext: Project Memory (V2-V5)
+  // Placeholder cards — full UI will be built in V5 (SolutionCapturedCard).
+  memory_facts_updated: {
+    icon: '🧠',
+    title: 'Memory Updated',
+    color: 'var(--vscode-charts-purple)',
+    getSummary: (e) => {
+      const delta = (e.payload.delta_summary as string) || '';
+      const lines = (e.payload.lines_added as number) || 0;
+      return delta || `${lines} line(s) added to project facts`;
+    }
+  },
+  solution_captured: {
+    icon: '💡',
+    title: 'Solution Captured',
+    color: 'var(--vscode-charts-green)',
+    getSummary: (e) => {
+      const problem = (e.payload.problem as string) || '';
+      const fix = (e.payload.fix as string) || '';
+      if (problem && fix) return `${problem} → ${fix}`;
+      return problem || fix || 'Proven solution saved';
+    }
+  },
+
+  // VNext: Generated Tools (V6-V8)
+  // Placeholder cards — full UI will be built in V8 (GeneratedToolProposalCard, GeneratedToolRunCard).
+  generated_tool_proposed: {
+    icon: '🔨',
+    title: 'Tool Proposed',
+    color: 'var(--vscode-charts-blue)',
+    getSummary: (e) => {
+      const name = (e.payload.name as string) || 'unknown';
+      const desc = (e.payload.description as string) || '';
+      return desc ? `${name}: ${desc}` : name;
+    }
+  },
+  generated_tool_saved: {
+    icon: '✅',
+    title: 'Tool Saved',
+    color: 'var(--vscode-charts-green)',
+    getSummary: (e) => `Tool "${(e.payload.name as string) || 'unknown'}" approved and saved`
+  },
+  generated_tool_run_started: {
+    icon: '⚡',
+    title: 'Tool Running',
+    color: 'var(--vscode-charts-blue)',
+    getSummary: (e) => {
+      const name = (e.payload.tool_name as string) || 'unknown';
+      const args = (e.payload.args_summary as string) || '';
+      return args ? `${name}(${args})` : `Running ${name}...`;
+    }
+  },
+  generated_tool_run_completed: {
+    icon: '✅',
+    title: 'Tool Completed',
+    color: 'var(--vscode-charts-green)',
+    getSummary: (e) => {
+      const name = (e.payload.tool_name as string) || 'unknown';
+      const ms = (e.payload.duration_ms as number) || 0;
+      const code = (e.payload.exit_code as number) ?? -1;
+      return `${name} finished (exit ${code}, ${ms}ms)`;
+    }
+  },
+  generated_tool_run_failed: {
+    icon: '❌',
+    title: 'Tool Failed',
+    color: 'var(--vscode-charts-red)',
+    getSummary: (e) => {
+      const name = (e.payload.tool_name as string) || 'unknown';
+      const reason = (e.payload.reason as string) || 'Unknown error';
+      const ftype = (e.payload.failure_type as string) || '';
+      return ftype === 'blocked'
+        ? `${name}: blocked before execution — ${reason}`
+        : `${name}: ${reason}`;
+    }
+  },
+
+  // VNext: Agent Mode Policy (V9)
+  mode_changed: {
+    icon: '🔄',
+    title: 'Mode Changed',
+    color: 'var(--vscode-charts-yellow)',
+    getSummary: (e) => {
+      const from = (e.payload.from_mode as string) || '?';
+      const to = (e.payload.to_mode as string) || '?';
+      const reason = (e.payload.reason as string) || '';
+      const userInit = e.payload.user_initiated ? ' (user)' : ' (auto)';
+      return `${from} → ${to}${userInit}${reason ? ': ' + reason : ''}`;
+    }
   }
 };
 
@@ -1180,12 +1274,54 @@ export function renderEventCard(event: Event, taskId?: string): string {
   console.log('[MissionFeed] EVENT_CARD_MAP has config:', event.type in EVENT_CARD_MAP);
   console.log('[MissionFeed] Config value:', EVENT_CARD_MAP[event.type]);
   
+  // W2: Process events — render ProcessCard for process_started,
+  // update existing card state for follow-up events
+  if (event.type === 'process_started') {
+    return renderProcessCard(event);
+  }
+  if (isProcessEvent(event.type)) {
+    const result = updateProcessCard(event);
+    if (result.handled && result.processId) {
+      // Re-render the existing card in the DOM
+      const cardHtml = getProcessCardHtml(result.processId);
+      if (cardHtml) {
+        // Find and update the existing card element
+        const existingCard = document.querySelector(
+          `.process-card[data-process-id="${result.processId}"]`
+        );
+        if (existingCard) {
+          const wrapper = document.createElement('div');
+          wrapper.innerHTML = cardHtml;
+          const newCard = wrapper.firstElementChild;
+          if (newCard) {
+            existingCard.replaceWith(newCard);
+          }
+        }
+      }
+    }
+    // Don't render a new card for follow-up events — they update the existing one
+    return '';
+  }
+
+  // V8: Generated tool events - specialized cards
+  if (event.type === 'generated_tool_proposed') {
+    return renderGeneratedToolProposedCard(event);
+  }
+  if (event.type === 'generated_tool_run_completed') {
+    return renderGeneratedToolRunCard(event);
+  }
+
+  // V5: Solution captured - specialized card
+  if (event.type === 'solution_captured') {
+    return renderSolutionCapturedCard(event);
+  }
+
   // SCAFFOLD EVENTS: Render using ScaffoldCard custom element (PRIORITY CHECK)
   if (isScaffoldEvent(event.type)) {
     console.log('[MissionFeed] Rendering scaffold event with ScaffoldCard:', event.type);
     return renderScaffoldEventCard(event);
   }
-  
+
   // ANSWER mode specialized renderers
   if (event.type === 'context_collected') {
     return renderContextCollectedCard(event);

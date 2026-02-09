@@ -126,10 +126,24 @@ import {
   generateProcessId,
   detectProcessType,
   getDefaultDevCommand,
+  // V2-V5: Project Memory
+  ProjectMemoryManager,
+  detectSolutionCandidate,
+  // V6-V8: Generated Tools
+  GeneratedToolManager,
+  // V9: Agent Mode Policy
+  isEscalation,
+  isDowngrade,
 } from 'core';
+import type { ModeTransitionResult } from 'core';
+import type { ToolRegistryService, ToolExecutionPolicy } from 'core';
 import type { ProcessStatusEvent, ProcessOutputEvent } from 'core';
 import type { PreflightChecksInput, PreflightOrchestratorCtx, VerifyRecipeInfo, VerifyConfig, VerifyEventCtx } from 'core';
 import type { EnrichedInput, EditorContext, DiagnosticEntry } from 'core';
+import type { SolutionCaptureContext } from 'core';
+import { FsMemoryService } from './fsMemoryService';
+import { FsToolRegistryService } from './fsToolRegistryService';
+import { runGeneratedTool, scanForBlockedPatterns } from './generatedToolRunner';
 
 class MissionControlViewProvider implements vscode.WebviewViewProvider {
   public static readonly viewType = 'ordinex.missionControl';
@@ -154,6 +168,13 @@ class MissionControlViewProvider implements vscode.WebviewViewProvider {
   private pendingVerifyScaffoldId: string | null = null; // Step 44: Scaffold ID for verification retry
   private settingsPanel: vscode.WebviewPanel | null = null; // Step 45: Settings panel
   private scaffoldProjectPath: string | null = null; // Store scaffold project path for follow-up context
+  // V2-V5: Project Memory
+  private _memoryService: FsMemoryService | null = null;
+  private _projectMemoryManager: ProjectMemoryManager | null = null;
+  private recentEventsWindow: Event[] = []; // V3: Sliding window for solution capture
+  // V6-V8: Generated Tools
+  private _toolRegistryService: FsToolRegistryService | null = null;
+  private _generatedToolManager: GeneratedToolManager | null = null;
 
   constructor(
     private readonly _extensionUri: vscode.Uri,
@@ -230,6 +251,190 @@ class MissionControlViewProvider implements vscode.WebviewViewProvider {
     editorCtx.workspaceDiagnostics = wsErrors;
 
     return editorCtx;
+  }
+
+  // -------------------------------------------------------------------------
+  // V2-V5: Project Memory - Lazy initialization
+  // -------------------------------------------------------------------------
+
+  private getWorkspaceRoot(): string | undefined {
+    return this.selectedWorkspaceRoot
+      || this.scaffoldProjectPath
+      || vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+  }
+
+  private getProjectMemoryManager(): ProjectMemoryManager | null {
+    const workspaceRoot = this.getWorkspaceRoot();
+    if (!workspaceRoot) return null;
+
+    if (!this._projectMemoryManager) {
+      const memoryRoot = path.join(workspaceRoot, '.ordinex', 'memory');
+      this._memoryService = new FsMemoryService(memoryRoot);
+
+      // Create a lightweight EventPublisher that delegates to emitEvent
+      const publisher = {
+        publish: (event: Event) => this.emitEvent(event),
+      };
+      this._projectMemoryManager = new ProjectMemoryManager(this._memoryService, publisher);
+    }
+    return this._projectMemoryManager;
+  }
+
+  // -------------------------------------------------------------------------
+  // V6-V8: Generated Tools - Lazy initialization
+  // -------------------------------------------------------------------------
+
+  private getGeneratedToolManager(): GeneratedToolManager | null {
+    const workspaceRoot = this.getWorkspaceRoot();
+    if (!workspaceRoot) return null;
+
+    if (!this._generatedToolManager) {
+      const toolsRoot = path.join(workspaceRoot, '.ordinex', 'tools', 'generated');
+      this._toolRegistryService = new FsToolRegistryService(toolsRoot);
+
+      const publisher = {
+        publish: (event: Event) => this.emitEvent(event),
+      };
+      this._generatedToolManager = new GeneratedToolManager(this._toolRegistryService, publisher);
+
+      // Rebuild pending proposals from event history (survives extension reloads)
+      if (this.eventStore && this.currentTaskId) {
+        const events = this.eventStore.getEventsByTaskId(this.currentTaskId);
+        this._generatedToolManager.rebuildPendingProposals(events);
+      }
+    }
+    return this._generatedToolManager;
+  }
+
+  /**
+   * V7: Get the generated tool execution policy from settings.
+   */
+  private getGeneratedToolPolicy(): ToolExecutionPolicy {
+    const config = vscode.workspace.getConfiguration('ordinex.generatedTools');
+    return config.get<ToolExecutionPolicy>('policy', 'prompt');
+  }
+
+  // -------------------------------------------------------------------------
+  // V9: Mode transition wrapper — emits mode_changed event
+  // -------------------------------------------------------------------------
+
+  /**
+   * Updates currentMode and emits a mode_changed event if the mode actually changed.
+   * Pure wrapper: existing mode_set events are kept at call sites for backward compat.
+   */
+  private async setModeWithEvent(
+    newMode: Mode,
+    taskId: string,
+    opts: {
+      reason: string;
+      user_initiated: boolean;
+    },
+  ): Promise<ModeTransitionResult> {
+    const from = this.currentMode;
+
+    // V9: Block non-user-initiated escalation UP (ANSWER→PLAN, ANSWER→MISSION, PLAN→MISSION).
+    // Downgrades (MISSION→ANSWER, etc.) are always allowed automatically.
+    if (isEscalation(from, newMode) && !opts.user_initiated) {
+      console.log(`[V9] Blocked auto-escalation: ${from} → ${newMode} (reason: ${opts.reason})`);
+      await this.emitEvent({
+        event_id: this.generateId(),
+        task_id: taskId,
+        timestamp: new Date().toISOString(),
+        type: 'mode_violation',
+        mode: from,
+        stage: this.currentStage,
+        payload: {
+          from_mode: from,
+          to_mode: newMode,
+          reason: `Auto-escalation blocked: ${from} → ${newMode}. User approval required.`,
+          blocked: true,
+        },
+        evidence_ids: [],
+        parent_event_id: null,
+      });
+      return { changed: false, from_mode: from, to_mode: from };
+    }
+
+    const changed = from !== newMode;
+    this.currentMode = newMode;
+
+    // Reset stage when leaving MISSION
+    if (newMode !== 'MISSION') {
+      this.currentStage = 'none';
+    }
+
+    if (changed) {
+      await this.emitEvent({
+        event_id: this.generateId(),
+        task_id: taskId,
+        timestamp: new Date().toISOString(),
+        type: 'mode_changed',
+        mode: newMode,
+        stage: this.currentStage,
+        payload: {
+          run_id: taskId,
+          from_mode: from,
+          to_mode: newMode,
+          reason: opts.reason,
+          user_initiated: opts.user_initiated,
+        },
+        evidence_ids: [],
+        parent_event_id: null,
+      });
+    }
+
+    return { changed, from_mode: from, to_mode: newMode };
+  }
+
+  /**
+   * V9: Check if current mode allows a write/execute action.
+   * Returns true if allowed, false if blocked (emits mode_violation event).
+   */
+  private async enforceMissionMode(
+    action: string,
+    taskId: string,
+  ): Promise<boolean> {
+    if (this.currentMode === 'MISSION') {
+      return true;
+    }
+    console.log(`[V9] Mode enforcement: '${action}' blocked in ${this.currentMode} mode (requires MISSION)`);
+    await this.emitEvent({
+      event_id: this.generateId(),
+      task_id: taskId,
+      timestamp: new Date().toISOString(),
+      type: 'mode_violation',
+      mode: this.currentMode,
+      stage: this.currentStage,
+      payload: {
+        action,
+        current_mode: this.currentMode,
+        required_mode: 'MISSION',
+        reason: `Action '${action}' requires MISSION mode, current mode is ${this.currentMode}`,
+      },
+      evidence_ids: [],
+      parent_event_id: null,
+    });
+    return false;
+  }
+
+  /**
+   * V3: Check if an event triggers solution capture.
+   * Maintains a sliding window of recent events (max 50).
+   */
+  private async checkSolutionCapture(event: Event, runId: string): Promise<void> {
+    this.recentEventsWindow.push(event);
+    if (this.recentEventsWindow.length > 50) this.recentEventsWindow.shift();
+
+    const pmm = this.getProjectMemoryManager();
+    if (!pmm) return;
+
+    const candidate = detectSolutionCandidate(event, {
+      recentEvents: this.recentEventsWindow,
+      runId,
+    });
+    if (candidate) {
+      await pmm.captureSolution(candidate.solution, event.task_id, event.mode);
+    }
   }
 
   // -------------------------------------------------------------------------
@@ -439,6 +644,16 @@ class MissionControlViewProvider implements vscode.WebviewViewProvider {
         await this.handleNextStepSelected(message, webview);
         break;
 
+      // Process card actions (terminate, open browser)
+      case 'process_action':
+        await this.handleProcessAction(message);
+        break;
+
+      // V7: Generated tool run request
+      case 'generated_tool_run':
+        await this.handleGeneratedToolRun(message, webview);
+        break;
+
       default:
         console.log('Unknown message type:', message.type);
     }
@@ -458,8 +673,11 @@ class MissionControlViewProvider implements vscode.WebviewViewProvider {
     console.log('Checking currentTaskId:', this.currentTaskId);
     if (!this.currentTaskId) {
       this.currentTaskId = this.generateId();
-      this.currentMode = userSelectedMode;
       this.currentStage = 'none';
+      await this.setModeWithEvent(userSelectedMode, this.currentTaskId, {
+        reason: 'User selected mode for new task',
+        user_initiated: true,
+      });
       console.log('Created new task ID:', this.currentTaskId);
     }
 
@@ -516,6 +734,7 @@ class MissionControlViewProvider implements vscode.WebviewViewProvider {
             workspaceRoot,
             openFiles: openFilePaths,
             editorContext,
+            projectMemoryManager: this.getProjectMemoryManager() || undefined,
           });
           effectivePrompt = enrichedInput.enrichedPrompt;
           console.log('[Step40.5] Enrichment complete:', {
@@ -725,7 +944,10 @@ class MissionControlViewProvider implements vscode.WebviewViewProvider {
         evidence_ids: [],
         parent_event_id: null,
       });
-      this.currentMode = analysis.derived_mode;
+      await this.setModeWithEvent(analysis.derived_mode, taskId, {
+        reason: `Intent analysis derived mode: ${analysis.behavior}`,
+        user_initiated: false,
+      });
       await this.sendEventsToWebview(webview, taskId);
 
       // 5. STEP 35 FIX: SCAFFOLD CHECK BEFORE BEHAVIOR SWITCH
@@ -1099,7 +1321,10 @@ class MissionControlViewProvider implements vscode.WebviewViewProvider {
       parent_event_id: null,
     });
 
-    this.currentMode = confirmedMode;
+    await this.setModeWithEvent(confirmedMode, taskId, {
+      reason: 'User confirmed mode',
+      user_initiated: true,
+    });
 
     // Now generate plan if needed
     if (confirmedMode === 'PLAN' || confirmedMode === 'MISSION') {
@@ -2533,7 +2758,10 @@ This demonstrates the diff proposal pipeline without requiring LLM integration.
           parent_event_id: null,
         });
 
-        this.currentMode = 'MISSION';
+        await this.setModeWithEvent('MISSION', task_id, {
+          reason: 'Plan approved - switching to MISSION mode',
+          user_initiated: true,
+        });
 
         // STEP 26: Check if plan is too large and needs breakdown
         const planEvents = events.filter((e: Event) => 
@@ -2716,6 +2944,13 @@ This demonstrates the diff proposal pipeline without requiring LLM integration.
 
       const approved = decision === 'approved';
 
+      // V9: Enforce MISSION mode for diff approvals (writes to disk)
+      const approvalTypeForGate = approvalRequest.payload.approval_type as string;
+      if (approved && approvalTypeForGate === 'diff' && !await this.enforceMissionMode('apply_diff', task_id)) {
+        await this.sendEventsToWebview(webview, task_id);
+        return;
+      }
+
       console.log(`[handleResolveApproval] Resolving approval: ${approval_id}, decision: ${decision}`);
 
       // Resolve via approval manager (this resolves the Promise and unblocks execution!)
@@ -2727,6 +2962,24 @@ This demonstrates the diff proposal pipeline without requiring LLM integration.
         approved ? 'approved' : 'denied',
         'once'
       );
+
+      // V6: If this is a generated_tool approval, approve/reject the tool proposal
+      const approvalType = approvalRequest.payload.approval_type as string;
+      if (approvalType === 'generated_tool') {
+        const gtm = this.getGeneratedToolManager();
+        const proposalId = approvalRequest.payload.details
+          ? (approvalRequest.payload.details as Record<string, unknown>).proposal_id as string
+          : approval_id;
+        if (gtm && proposalId) {
+          if (approved) {
+            await gtm.approveTool(proposalId, task_id, this.currentMode);
+            console.log(`[V6] Tool proposal approved and saved: ${proposalId}`);
+          } else {
+            gtm.rejectTool(proposalId);
+            console.log(`[V6] Tool proposal rejected: ${proposalId}`);
+          }
+        }
+      }
 
       // Send updated events to webview
       await this.sendEventsToWebview(webview, task_id);
@@ -2832,12 +3085,18 @@ This demonstrates the diff proposal pipeline without requiring LLM integration.
         if (action === 'run_commands') {
           // FIXED: Use VS Code terminal API to run commands visibly
           console.log('[handleResolveDecisionPoint] Running commands in VS Code terminal');
-          
+
+          // V9: Enforce MISSION mode for command execution
+          if (!await this.enforceMissionMode('execute_command', task_id)) {
+            await this.sendEventsToWebview(webview, task_id);
+            return;
+          }
+
           this.pendingCommandContexts.delete(task_id);
-          
+
           const commands = pendingContext.commands || [];
           const workspaceRoot = pendingContext.workspaceRoot;
-          
+
           for (const command of commands) {
             // Emit command_started event
             await this.emitEvent({
@@ -3174,9 +3433,15 @@ This demonstrates the diff proposal pipeline without requiring LLM integration.
               
               await this.sendEventsToWebview(webview, task_id);
               
+              // V9: Scaffold writes require MISSION mode (prompt escalation)
+              if (!await this.enforceMissionMode('scaffold_write', task_id)) {
+                await this.sendEventsToWebview(webview, task_id);
+                return;
+              }
+
               // Create terminal and RUN the scaffold command automatically
               console.log('[handleResolveDecisionPoint] 🚀 Auto-running scaffold command:', createCmd);
-              
+
               const terminal = vscode.window.createTerminal({
                 name: `Scaffold: ${recipeNames[recipeSelection.recipe_id] || 'Project'}`,
                 cwd: scaffoldWorkspaceRoot,
@@ -4296,6 +4561,12 @@ This demonstrates the diff proposal pipeline without requiring LLM integration.
 
       await this.sendEventsToWebview(webview, taskId);
 
+      // V9: Scaffold writes require MISSION mode (prompt escalation)
+      if (!await this.enforceMissionMode('scaffold_write', taskId)) {
+        await this.sendEventsToWebview(webview, taskId);
+        return;
+      }
+
       // Run scaffold in terminal
       const terminal = vscode.window.createTerminal({
         name: `Scaffold: ${recipeNames[recipeSelection.recipe_id] || 'Project'}`,
@@ -4629,7 +4900,7 @@ This demonstrates the diff proposal pipeline without requiring LLM integration.
   /**
    * Handle next_step_selected message from webview.
    * Routes to the correct action based on the suggestion kind:
-   *  - 'command': Start dev server via ProcessManager
+   *  - 'command': Run command via ProcessManager (generic — any command in cwd)
    *  - 'browser': Open URL in external browser
    *  - 'task': Emit event for future follow-up feature implementation
    *  - 'info': Just show info message
@@ -4645,15 +4916,19 @@ This demonstrates the diff proposal pipeline without requiring LLM integration.
     try {
       switch (kind) {
         case 'command': {
-          // Start dev server via ProcessManager
+          // Run command via ProcessManager (generic — any command in cwd)
           const projectPath = suggestion?.projectPath || suggestion?.target_directory || this.pendingVerifyTargetDir;
           if (!projectPath) {
             vscode.window.showWarningMessage('No project path available to run command.');
             return;
           }
 
-          const commandStr = suggestion?.command || 'npm run dev';
-          console.log(`${LOG_PREFIX} Starting dev server: ${commandStr} in ${projectPath}`);
+          const commandStr = suggestion?.command;
+          if (!commandStr) {
+            vscode.window.showWarningMessage('No command specified.');
+            return;
+          }
+          console.log(`${LOG_PREFIX} Starting process: ${commandStr} in ${projectPath}`);
 
           // Emit process_started event
           await this.emitEvent({
@@ -4674,7 +4949,7 @@ This demonstrates the diff proposal pipeline without requiring LLM integration.
           });
           await this.sendEventsToWebview(webview, taskId);
 
-          // Use ProcessManager to start the dev server
+          // Use ProcessManager to start the process
           const pm = getProcessManager();
           const processId = generateProcessId('devserver');
           const processType = detectProcessType(commandStr);
@@ -4684,7 +4959,7 @@ This demonstrates the diff proposal pipeline without requiring LLM integration.
             if (evt.processId !== processId) return;
 
             if (evt.newStatus === 'ready') {
-              console.log(`${LOG_PREFIX} Dev server ready on port ${evt.port}`);
+              console.log(`${LOG_PREFIX} Process ready${evt.port ? ` on port ${evt.port}` : ''}`);
               await this.emitEvent({
                 event_id: this.generateId(),
                 task_id: taskId,
@@ -4696,7 +4971,7 @@ This demonstrates the diff proposal pipeline without requiring LLM integration.
                   scaffold_id: scaffoldId,
                   process_id: processId,
                   port: evt.port,
-                  message: `Dev server ready${evt.port ? ` on http://localhost:${evt.port}` : ''}`,
+                  message: `Process ready${evt.port ? ` on http://localhost:${evt.port}` : ''}`,
                 },
                 evidence_ids: [],
                 parent_event_id: null,
@@ -4707,7 +4982,7 @@ This demonstrates the diff proposal pipeline without requiring LLM integration.
               if (evt.port) {
                 const url = `http://localhost:${evt.port}`;
                 const openBrowser = await vscode.window.showInformationMessage(
-                  `Dev server ready on port ${evt.port}`,
+                  `Process ready on port ${evt.port}`,
                   'Open in Browser'
                 );
                 if (openBrowser === 'Open in Browser') {
@@ -4715,6 +4990,9 @@ This demonstrates the diff proposal pipeline without requiring LLM integration.
                 }
               }
             } else if (evt.newStatus === 'stopped') {
+              // Flush any remaining buffered output before emitting stopped
+              if (outputFlushTimer) { clearTimeout(outputFlushTimer); outputFlushTimer = null; }
+              await flushOutput();
               await this.emitEvent({
                 event_id: this.generateId(),
                 task_id: taskId,
@@ -4726,7 +5004,7 @@ This demonstrates the diff proposal pipeline without requiring LLM integration.
                   scaffold_id: scaffoldId,
                   process_id: processId,
                   exit_code: evt.exitCode,
-                  message: `Dev server stopped${evt.exitCode !== undefined ? ` (exit code: ${evt.exitCode})` : ''}`,
+                  message: `Process stopped${evt.exitCode !== undefined ? ` (exit code: ${evt.exitCode})` : ''}`,
                 },
                 evidence_ids: [],
                 parent_event_id: null,
@@ -4735,18 +5013,21 @@ This demonstrates the diff proposal pipeline without requiring LLM integration.
               pm.removeListener('status', statusHandler);
               pm.removeListener('output', outputHandler);
             } else if (evt.newStatus === 'error') {
+              // Flush any remaining buffered output before emitting failed
+              if (outputFlushTimer) { clearTimeout(outputFlushTimer); outputFlushTimer = null; }
+              await flushOutput();
               await this.emitEvent({
                 event_id: this.generateId(),
                 task_id: taskId,
                 timestamp: new Date().toISOString(),
-                type: 'process_error' as any,
+                type: 'process_failed' as any,
                 mode: this.currentMode,
                 stage: this.currentStage,
                 payload: {
                   scaffold_id: scaffoldId,
                   process_id: processId,
                   error: evt.error || 'Unknown error',
-                  message: `Dev server error: ${evt.error || 'Unknown'}`,
+                  message: `Process failed: ${evt.error || 'Unknown'}`,
                 },
                 evidence_ids: [],
                 parent_event_id: null,
@@ -4757,11 +5038,47 @@ This demonstrates the diff proposal pipeline without requiring LLM integration.
             }
           };
 
+          // Debounced output forwarding — batch lines every 500ms to avoid flooding webview
+          const MAX_OUTPUT_BUFFER = 50;
+          let outputBuffer: string[] = [];
+          let outputFlushTimer: ReturnType<typeof setTimeout> | null = null;
+
+          const flushOutput = async () => {
+            if (outputBuffer.length === 0) return;
+            const lines = outputBuffer.slice(-MAX_OUTPUT_BUFFER);
+            outputBuffer = [];
+            outputFlushTimer = null;
+
+            await this.emitEvent({
+              event_id: this.generateId(),
+              task_id: taskId,
+              timestamp: new Date().toISOString(),
+              type: 'process_output' as any,
+              mode: this.currentMode,
+              stage: this.currentStage,
+              payload: {
+                scaffold_id: scaffoldId,
+                process_id: processId,
+                lines,
+                line_count: lines.length,
+              },
+              evidence_ids: [],
+              parent_event_id: null,
+            });
+            await this.sendEventsToWebview(webview, taskId);
+          };
+
           const outputHandler = async (evt: ProcessOutputEvent) => {
             if (evt.processId !== processId) return;
-            // Don't flood the event store — only log stderr and significant output
-            if (evt.stream === 'stderr' && evt.data.trim()) {
-              console.log(`${LOG_PREFIX} [${processId}] stderr: ${evt.data.trim().slice(0, 200)}`);
+            // Buffer lines, cap at MAX_OUTPUT_BUFFER
+            const newLines = evt.data.split('\n').filter((l: string) => l.trim());
+            outputBuffer.push(...newLines);
+            if (outputBuffer.length > MAX_OUTPUT_BUFFER) {
+              outputBuffer = outputBuffer.slice(-MAX_OUTPUT_BUFFER);
+            }
+            // Debounce flush at 500ms
+            if (!outputFlushTimer) {
+              outputFlushTimer = setTimeout(() => flushOutput(), 500);
             }
           };
 
@@ -4790,14 +5107,14 @@ This demonstrates the diff proposal pipeline without requiring LLM integration.
               event_id: this.generateId(),
               task_id: taskId,
               timestamp: new Date().toISOString(),
-              type: 'process_error' as any,
+              type: 'process_failed' as any,
               mode: this.currentMode,
               stage: this.currentStage,
               payload: {
                 scaffold_id: scaffoldId,
                 process_id: processId,
                 error: err.message || 'Failed to start process',
-                message: `Failed to start dev server: ${err.message}`,
+                message: `Failed to start process: ${err.message}`,
               },
               evidence_ids: [],
               parent_event_id: null,
@@ -4860,6 +5177,194 @@ This demonstrates the diff proposal pipeline without requiring LLM integration.
     } catch (error: any) {
       console.error(`${LOG_PREFIX} Error handling next step:`, error);
       vscode.window.showErrorMessage(`Failed to execute action: ${error.message}`);
+    }
+  }
+
+  /**
+   * Handle process card actions (terminate, open_browser) from webview.
+   */
+  // -------------------------------------------------------------------------
+  // V7: Generated Tool Execution
+  // -------------------------------------------------------------------------
+
+  private async handleGeneratedToolRun(message: any, webview: vscode.Webview): Promise<void> {
+    const { tool_name, input_json } = message;
+    const taskId = this.currentTaskId || 'tool_run';
+
+    // V9: Enforce MISSION mode for generated tool execution
+    if (!await this.enforceMissionMode('generated_tool_run', taskId)) {
+      await this.sendEventsToWebview(webview, taskId);
+      return;
+    }
+
+    const gtm = this.getGeneratedToolManager();
+    if (!gtm) {
+      console.error('[V7] GeneratedToolManager not available');
+      return;
+    }
+
+    const policy = this.getGeneratedToolPolicy();
+    if (policy === 'disabled') {
+      await this.emitEvent({
+        event_id: this.generateId(),
+        task_id: taskId,
+        timestamp: new Date().toISOString(),
+        type: 'generated_tool_run_failed',
+        mode: this.currentMode,
+        stage: 'edit',
+        payload: {
+          tool_name,
+          failure_type: 'policy',
+          reason: 'Generated tool execution is disabled',
+          policy_used: 'disabled',
+        },
+        evidence_ids: [],
+        parent_event_id: null,
+      });
+      await this.sendEventsToWebview(webview, taskId);
+      return;
+    }
+
+    // Load tool code and check static scan
+    const code = await gtm.getToolCode(tool_name);
+    if (!code) {
+      await this.emitEvent({
+        event_id: this.generateId(),
+        task_id: taskId,
+        timestamp: new Date().toISOString(),
+        type: 'generated_tool_run_failed',
+        mode: this.currentMode,
+        stage: 'edit',
+        payload: {
+          tool_name,
+          failure_type: 'error',
+          reason: `Tool "${tool_name}" not found in registry`,
+        },
+        evidence_ids: [],
+        parent_event_id: null,
+      });
+      await this.sendEventsToWebview(webview, taskId);
+      return;
+    }
+
+    const blockReason = scanForBlockedPatterns(code);
+    if (blockReason) {
+      await this.emitEvent({
+        event_id: this.generateId(),
+        task_id: taskId,
+        timestamp: new Date().toISOString(),
+        type: 'generated_tool_run_failed',
+        mode: this.currentMode,
+        stage: 'edit',
+        payload: {
+          tool_name,
+          failure_type: 'blocked',
+          reason: `Static scan blocked: ${blockReason}`,
+        },
+        evidence_ids: [],
+        parent_event_id: null,
+      });
+      await this.sendEventsToWebview(webview, taskId);
+      return;
+    }
+
+    // Emit run_started
+    await this.emitEvent({
+      event_id: this.generateId(),
+      task_id: taskId,
+      timestamp: new Date().toISOString(),
+      type: 'generated_tool_run_started',
+      mode: this.currentMode,
+      stage: 'edit',
+      payload: {
+        tool_name,
+        args_summary: (input_json || '').substring(0, 100),
+        policy_used: policy,
+        approved_by_user: policy === 'prompt',
+      },
+      evidence_ids: [],
+      parent_event_id: null,
+    });
+    await this.sendEventsToWebview(webview, taskId);
+
+    // Run the tool
+    const workspaceRoot = this.getWorkspaceRoot() || '.';
+    const toolsRoot = path.join(workspaceRoot, '.ordinex', 'tools', 'generated');
+    const codePath = path.join(toolsRoot, `${tool_name}.js`);
+
+    const result = await runGeneratedTool({
+      tool_name,
+      code_path: codePath,
+      cwd: workspaceRoot,
+      input_json: input_json || '{}',
+    });
+
+    if (result.success) {
+      await this.emitEvent({
+        event_id: this.generateId(),
+        task_id: taskId,
+        timestamp: new Date().toISOString(),
+        type: 'generated_tool_run_completed',
+        mode: this.currentMode,
+        stage: 'edit',
+        payload: {
+          tool_name,
+          exit_code: result.result.exit_code,
+          duration_ms: result.result.duration_ms,
+          stdout_preview: result.result.stdout.substring(0, 500),
+          stderr_preview: result.result.stderr.substring(0, 500),
+        },
+        evidence_ids: [],
+        parent_event_id: null,
+      });
+    } else {
+      await this.emitEvent({
+        event_id: this.generateId(),
+        task_id: taskId,
+        timestamp: new Date().toISOString(),
+        type: 'generated_tool_run_failed',
+        mode: this.currentMode,
+        stage: 'edit',
+        payload: {
+          tool_name,
+          failure_type: result.failure_type,
+          reason: result.reason,
+        },
+        evidence_ids: [],
+        parent_event_id: null,
+      });
+    }
+
+    await this.sendEventsToWebview(webview, taskId);
+  }
+
+  private async handleProcessAction(message: any): Promise<void> {
+    const { action, process_id, port } = message;
+    const pm = getProcessManager();
+
+    switch (action) {
+      case 'terminate': {
+        console.log(`[Ordinex:Process] Terminating process: ${process_id}`);
+        try {
+          await pm.stopProcess(process_id, 'user_terminated');
+        } catch (err: any) {
+          console.error(`[Ordinex:Process] Failed to terminate: ${err.message}`);
+          vscode.window.showWarningMessage(`Failed to terminate process: ${err.message}`);
+        }
+        break;
+      }
+
+      case 'open_browser': {
+        if (port) {
+          const url = `http://localhost:${port}`;
+          console.log(`[Ordinex:Process] Opening browser: ${url}`);
+          await vscode.env.openExternal(vscode.Uri.parse(url));
+        }
+        break;
+      }
+
+      default:
+        console.log(`[Ordinex:Process] Unknown action: ${action}`);
     }
   }
 
@@ -4967,6 +5472,12 @@ This demonstrates the diff proposal pipeline without requiring LLM integration.
       console.error('→ ❌ eventStore.append FAILED:', appendError);
       throw appendError;
     }
+
+    // V3: Check for solution capture (non-blocking)
+    const runId = (event.payload.run_id as string) || event.task_id;
+    this.checkSolutionCapture(event, runId).catch(err =>
+      console.warn('[V3] Solution capture check failed:', err)
+    );
   }
 
   private async sendEventsToWebview(webview: vscode.Webview, taskId: string) {
@@ -5075,6 +5586,16 @@ This demonstrates the diff proposal pipeline without requiring LLM integration.
         break;
       }
 
+      case 'ordinex:settings:setGeneratedToolPolicy': {
+        const toolPolicy = message.policy;
+        if (['disabled', 'prompt', 'auto'].includes(toolPolicy)) {
+          await vscode.workspace.getConfiguration('ordinex.generatedTools').update('policy', toolPolicy, vscode.ConfigurationTarget.Global);
+          this.emitSettingsChangedEvent('generatedToolPolicy', toolPolicy);
+          webview.postMessage({ type: 'ordinex:settings:saveResult', setting: 'Generated Tool Policy', success: true });
+        }
+        break;
+      }
+
       default:
         console.log('[Settings] Unknown message type:', message.type);
     }
@@ -5097,6 +5618,7 @@ This demonstrates the diff proposal pipeline without requiring LLM integration.
     const commandPolicy = config.get<string>('commandPolicy.mode', 'prompt');
     const autonomyLevel = config.get<string>('autonomy.level', 'conservative');
     const sessionPersistence = config.get<string>('intelligence.sessionPersistence', 'off') === 'on';
+    const generatedToolPolicy = config.get<string>('generatedTools.policy', 'prompt');
 
     // Account info
     const extensionVersion = this._context.extension?.packageJSON?.version || '0.0.0';
@@ -5120,6 +5642,7 @@ This demonstrates the diff proposal pipeline without requiring LLM integration.
       commandPolicy,
       autonomyLevel,
       sessionPersistence,
+      generatedToolPolicy,
       extensionVersion,
       workspacePath,
       eventStorePath,
@@ -5310,5 +5833,11 @@ export function activate(context: vscode.ExtensionContext) {
 }
 
 export function deactivate() {
+  console.log('Ordinex extension deactivating — stopping all processes...');
+  try {
+    getProcessManager().stopAll('extension_deactivate');
+  } catch (err) {
+    console.error('Error stopping processes on deactivate:', err);
+  }
   console.log('Ordinex extension deactivated');
 }

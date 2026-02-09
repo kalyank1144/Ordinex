@@ -3097,11 +3097,7 @@ export function getWebviewContent(): string {
           'scaffold_verify_completed',
           // Step 45: Settings
           'settings_changed',
-          // Process management events
-          'process_started',
-          'process_ready',
-          'process_stopped',
-          'process_error',
+          // Process events are handled by ProcessCard (W2), NOT ScaffoldCard
           // Auto-fix events
           'scaffold_autofix_started',
           'scaffold_autofix_applied',
@@ -5030,6 +5026,35 @@ export function getWebviewContent(): string {
           state.pendingScopeExpansion = null;
           renderSystemsCounters();
           renderMission();
+        }
+      };
+
+      // ===== PROCESS CARD ACTION HANDLER =====
+      window.processCardAction = function(action, processId, port) {
+        if (typeof vscode !== 'undefined') {
+          vscode.postMessage({
+            type: 'process_action',
+            action: action,
+            process_id: processId,
+            port: port,
+          });
+        } else {
+          console.log('Demo mode: processCardAction', action, processId, port);
+        }
+      };
+
+      // ===== GENERATED TOOL ACTION HANDLER (V8) =====
+      window.generatedToolAction = function(action, proposalId, taskId) {
+        if (typeof vscode !== 'undefined') {
+          // Flow through the existing approval pipeline
+          vscode.postMessage({
+            type: 'ordinex:resolveApproval',
+            task_id: taskId,
+            approval_id: proposalId,
+            decision: action === 'approve' ? 'approved' : 'denied',
+          });
+        } else {
+          console.log('Demo mode: generatedToolAction', action, proposalId, taskId);
         }
       };
 

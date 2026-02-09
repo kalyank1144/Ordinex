@@ -498,6 +498,129 @@ describe('AutonomyController', () => {
     });
   });
 
+  describe('Loop Detection Integration (W3)', () => {
+    test('stuck loop → pauses + emits 3 events (loop_detected + downgraded + decision_point)', async () => {
+      modeManager.setMode('MISSION');
+      modeManager.setStage('test');
+
+      const budgets: AutonomyBudgets = {
+        max_iterations: 10,
+        max_wall_time_ms: 60000,
+        max_tool_calls: 50,
+      };
+      const controller = new AutonomyController(
+        taskId,
+        eventBus,
+        checkpointManager,
+        modeManager,
+        budgets
+      );
+      controller.setPlanApproved(true);
+      controller.setToolsApproved(true);
+
+      await controller.startAutonomy('MISSION', 'test');
+
+      // Execute 3 iterations with same failure — triggers stuck detection
+      for (let i = 0; i < 3; i++) {
+        await controller.executeIteration('MISSION', 'test', async () => ({
+          success: false,
+          failure_reason: 'TypeError: cannot read property of undefined',
+        }));
+      }
+
+      // Controller should be paused
+      expect(controller.getState()).toBe('paused');
+
+      // Verify all 3 events were emitted
+      const events = eventStore.getEventsByTaskId(taskId);
+      const loopDetected = events.filter(e => e.type === 'autonomy_loop_detected');
+      const downgraded = events.filter(e => e.type === 'autonomy_downgraded');
+      const decisionPoint = events.filter(
+        e => e.type === 'decision_point_needed' && (e.payload.reason as string)?.includes('Loop detected')
+      );
+
+      expect(loopDetected.length).toBe(1);
+      expect(loopDetected[0].payload.loopType).toBe('stuck');
+      expect(loopDetected[0].payload.iteration).toBe(3);
+
+      expect(downgraded.length).toBe(1);
+      expect(downgraded[0].payload.fromLevel).toBe('A1');
+      expect(downgraded[0].payload.toLevel).toBe('A0');
+
+      expect(decisionPoint.length).toBe(1);
+      expect(decisionPoint[0].payload.options).toBeDefined();
+      const options = decisionPoint[0].payload.options as Array<{ id: string; label: string }>;
+      expect(options.map(o => o.id)).toEqual(['continue_one', 'stop', 'open_logs']);
+    });
+
+    test('clean iterations → continues without loop detection', async () => {
+      modeManager.setMode('MISSION');
+      modeManager.setStage('test');
+
+      const budgets: AutonomyBudgets = {
+        max_iterations: 10,
+        max_wall_time_ms: 60000,
+        max_tool_calls: 50,
+      };
+      const controller = new AutonomyController(
+        taskId,
+        eventBus,
+        checkpointManager,
+        modeManager,
+        budgets
+      );
+      controller.setPlanApproved(true);
+      controller.setToolsApproved(true);
+
+      await controller.startAutonomy('MISSION', 'test');
+
+      // Execute iterations with different failures — no loop
+      const shouldContinue1 = await controller.executeIteration('MISSION', 'test', async () => ({
+        success: false,
+        failure_reason: 'Error A',
+      }));
+      expect(shouldContinue1).toBe(true);
+
+      const shouldContinue2 = await controller.executeIteration('MISSION', 'test', async () => ({
+        success: false,
+        failure_reason: 'Error B',
+      }));
+      expect(shouldContinue2).toBe(true);
+
+      expect(controller.getState()).toBe('running');
+
+      // No loop events
+      const events = eventStore.getEventsByTaskId(taskId);
+      expect(events.filter(e => e.type === 'autonomy_loop_detected').length).toBe(0);
+    });
+
+    test('success on iteration stops without loop detection', async () => {
+      modeManager.setMode('MISSION');
+      modeManager.setStage('test');
+
+      const controller = new AutonomyController(
+        taskId,
+        eventBus,
+        checkpointManager,
+        modeManager,
+        { max_iterations: 10, max_wall_time_ms: 60000, max_tool_calls: 50 }
+      );
+      controller.setPlanApproved(true);
+      controller.setToolsApproved(true);
+
+      await controller.startAutonomy('MISSION', 'test');
+
+      const shouldContinue = await controller.executeIteration('MISSION', 'test', async () => ({
+        success: true,
+      }));
+      expect(shouldContinue).toBe(false); // Success stops iteration
+      expect(controller.getState()).toBe('running'); // Not paused, just done
+
+      const events = eventStore.getEventsByTaskId(taskId);
+      expect(events.filter(e => e.type === 'autonomy_loop_detected').length).toBe(0);
+    });
+  });
+
   describe('Budget Tracking', () => {
     test('getBudgetsRemaining returns correct values', async () => {
       modeManager.setMode('MISSION');

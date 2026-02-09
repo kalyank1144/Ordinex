@@ -163,7 +163,7 @@ export type EventType =
   | 'process_ready'
   | 'process_output'
   | 'process_stopped'
-  | 'process_error'
+  | 'process_failed'
   // Step 43: Scaffold Quality Gates (Preflight Checks + Resolutions + Safe Apply)
   | 'scaffold_preflight_checks_started'
   | 'scaffold_preflight_checks_completed'
@@ -184,7 +184,21 @@ export type EventType =
   | 'feature_extraction_completed'
   | 'feature_code_generating'
   | 'feature_code_applied'
-  | 'feature_code_error';
+  | 'feature_code_error'
+  // VNext: Project Memory (V2-V5)
+  | 'memory_facts_updated'
+  | 'solution_captured'
+  // VNext: Generated Tools (V6-V8)
+  | 'generated_tool_proposed'
+  | 'generated_tool_saved'
+  | 'generated_tool_run_started'
+  | 'generated_tool_run_completed'
+  | 'generated_tool_run_failed'
+  // VNext: Agent Mode Policy (V9)
+  | 'mode_changed'
+  // W3: Autonomy Loop Detection
+  | 'autonomy_loop_detected'
+  | 'autonomy_downgraded';
 
 export const CANONICAL_EVENT_TYPES: readonly EventType[] = [
   'intent_received',
@@ -333,7 +347,7 @@ export const CANONICAL_EVENT_TYPES: readonly EventType[] = [
   'process_ready',
   'process_output',
   'process_stopped',
-  'process_error',
+  'process_failed',
   // Step 43: Scaffold Quality Gates
   'scaffold_preflight_checks_started',
   'scaffold_preflight_checks_completed',
@@ -355,6 +369,22 @@ export const CANONICAL_EVENT_TYPES: readonly EventType[] = [
   'feature_code_generating',
   'feature_code_applied',
   'feature_code_error',
+  // VNext: Project Memory (V2-V5)
+  // Migration note: Runs created before VNext won't have these events.
+  // UI and normalizer must tolerate their absence.
+  'memory_facts_updated',
+  'solution_captured',
+  // VNext: Generated Tools (V6-V8)
+  'generated_tool_proposed',
+  'generated_tool_saved',
+  'generated_tool_run_started',
+  'generated_tool_run_completed',
+  'generated_tool_run_failed',
+  // VNext: Agent Mode Policy (V9)
+  'mode_changed',
+  // W3: Autonomy Loop Detection
+  'autonomy_loop_detected',
+  'autonomy_downgraded',
 ] as const;
 
 export type Mode = 'ANSWER' | 'PLAN' | 'MISSION';
@@ -1843,5 +1873,147 @@ export interface FeatureCodeErrorPayload {
   phase: 'extraction' | 'generation' | 'application';
   /** Whether this is recoverable (falls back to generic scaffold) */
   recoverable: boolean;
+}
+
+// ============================================================================
+// VNext EVENT PAYLOADS
+// Migration note: Runs created before VNext implementation won't have these
+// events. All consumers (reducer, normalizer, UI) must tolerate their absence.
+// ============================================================================
+
+// --- Project Memory (V2-V5) ---
+
+export interface MemoryFactsUpdatedPayload {
+  /** Run ID that triggered the update */
+  run_id: string;
+  /** Short summary of what changed */
+  delta_summary: string;
+  /** Number of lines added */
+  lines_added: number;
+  /** Total facts line count after update */
+  total_lines: number;
+}
+
+/** Verification metadata proving a solution is "proven" */
+export interface SolutionVerification {
+  /** Which check confirmed success */
+  type: 'tests' | 'build' | 'lint' | 'manual';
+  /** The actual command that passed */
+  command: string;
+  /** ISO timestamp of the verification event */
+  passed_at: string;
+  /** One-line result (e.g. "12 tests passed") */
+  summary: string;
+}
+
+export interface SolutionCapturedPayload {
+  /** Run ID where the solution was captured */
+  run_id: string;
+  /** Unique solution ID */
+  solution_id: string;
+  /** Problem description */
+  problem: string;
+  /** Fix description */
+  fix: string;
+  /** Files changed */
+  files_changed: string[];
+  /** Tags for retrieval */
+  tags: string[];
+  /** Verification that proves the solution works */
+  verification: SolutionVerification;
+}
+
+// --- Generated Tools (V6-V8) ---
+
+export interface GeneratedToolProposedPayload {
+  /** Run ID */
+  run_id: string;
+  /** Unique proposal ID */
+  proposal_id: string;
+  /** Tool name */
+  name: string;
+  /** Human-readable description */
+  description: string;
+  /** Tool input schema summary */
+  inputs_summary: string;
+  /** Tool output schema summary */
+  outputs_summary: string;
+}
+
+export interface GeneratedToolSavedPayload {
+  /** Run ID */
+  run_id: string;
+  /** Proposal ID that was approved */
+  proposal_id: string;
+  /** Saved tool name */
+  name: string;
+}
+
+export interface GeneratedToolRunStartedPayload {
+  /** Run ID */
+  run_id: string;
+  /** Tool name being executed */
+  tool_name: string;
+  /** Arguments passed to the tool (summary, not full data) */
+  args_summary: string;
+}
+
+export interface GeneratedToolRunCompletedPayload {
+  /** Run ID */
+  run_id: string;
+  /** Tool name */
+  tool_name: string;
+  /** Exit code */
+  exit_code: number;
+  /** Duration in milliseconds */
+  duration_ms: number;
+  /** Truncated stdout (first 500 chars) */
+  stdout_preview: string;
+}
+
+export interface GeneratedToolRunFailedPayload {
+  /** Run ID */
+  run_id: string;
+  /** Tool name */
+  tool_name: string;
+  /** Failure reason */
+  reason: string;
+  /** Whether it was blocked by static scan vs runtime failure */
+  failure_type: 'blocked' | 'timeout' | 'runtime_error' | 'policy_denied';
+  /** Duration in milliseconds (0 if blocked before execution) */
+  duration_ms: number;
+}
+
+// --- Agent Mode Policy (V9) ---
+
+export interface ModeChangedPayload {
+  /** Run ID */
+  run_id: string;
+  /** Previous mode */
+  from_mode: Mode;
+  /** New mode */
+  to_mode: Mode;
+  /** Why the mode changed */
+  reason: string;
+  /** Whether the user explicitly initiated this change */
+  user_initiated: boolean;
+}
+
+// --- Autonomy Loop Detection (W3) ---
+
+export type LoopType = 'stuck' | 'regressing' | 'oscillating' | 'scope_creep';
+
+export interface AutonomyLoopDetectedPayload {
+  loopType: LoopType;
+  iteration: number;
+  evidence: Record<string, unknown>;
+  recommendation: string;
+}
+
+export interface AutonomyDowngradedPayload {
+  fromLevel: string;
+  toLevel: string;
+  reason: string;
+  loopType: LoopType;
 }
 

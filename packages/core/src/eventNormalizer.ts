@@ -730,6 +730,62 @@ const NORMALIZATION_MAP: Partial<Record<EventType, NormalizationMapping>> = {
     scope: 'run',
     ui_hint: 'scaffold_error_card'
   },
+
+  // VNext: Project Memory (V2-V5)
+  // Migration note: Runs before VNext won't have these events.
+  memory_facts_updated: {
+    type: 'state_changed',
+    kind: 'memory_facts',
+    scope: 'run',
+    ui_hint: 'memory_facts_card'
+  },
+  solution_captured: {
+    type: 'artifact_proposed',
+    kind: 'proven_solution',
+    scope: 'run',
+    ui_hint: 'solution_captured_card'
+  },
+
+  // VNext: Generated Tools (V6-V8)
+  generated_tool_proposed: {
+    type: 'artifact_proposed',
+    kind: 'generated_tool',
+    scope: 'run',
+    ui_hint: 'tool_proposal_card'
+  },
+  generated_tool_saved: {
+    type: 'artifact_applied',
+    kind: 'generated_tool',
+    scope: 'run',
+    ui_hint: 'tool_saved_card'
+  },
+  generated_tool_run_started: {
+    type: 'tool_started',
+    kind: 'generated_tool_run',
+    scope: 'step',
+    ui_hint: 'tool_run_card'
+  },
+  generated_tool_run_completed: {
+    type: 'tool_completed',
+    kind: 'generated_tool_run',
+    scope: 'step',
+    ui_hint: 'tool_run_card'
+  },
+  generated_tool_run_failed: {
+    type: 'error_raised',
+    kind: 'generated_tool_run',
+    code: 'TOOL_RUN_FAILED',
+    scope: 'step',
+    ui_hint: 'tool_run_card'
+  },
+
+  // VNext: Agent Mode Policy (V9)
+  mode_changed: {
+    type: 'state_changed',
+    kind: 'mode_transition',
+    scope: 'run',
+    ui_hint: 'mode_changed_card'
+  },
 };
 
 // ============================================================================

@@ -15,7 +15,7 @@ import { EventBus } from './eventBus';
 import { Event, Mode, Stage } from './types';
 import { randomUUID } from 'crypto';
 
-export type ApprovalType = 'terminal' | 'apply_diff' | 'scope_expansion' | 'plan_approval';
+export type ApprovalType = 'terminal' | 'apply_diff' | 'scope_expansion' | 'plan_approval' | 'generated_tool' | 'generated_tool_run';
 export type ApprovalDecision = 'approved' | 'denied' | 'edit_requested';
 export type ApprovalScope = 'once' | 'always' | 'session';
 

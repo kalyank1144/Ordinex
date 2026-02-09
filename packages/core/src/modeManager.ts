@@ -56,6 +56,38 @@ export interface ModeValidationResult {
 }
 
 /**
+ * Result of a mode transition attempt (pure data, no side effects).
+ */
+export interface ModeTransitionResult {
+  changed: boolean;
+  from_mode: Mode;
+  to_mode: Mode;
+}
+
+/**
+ * Mode ordering for escalation/downgrade detection.
+ */
+const MODE_LEVEL: Record<Mode, number> = {
+  ANSWER: 0,
+  PLAN: 1,
+  MISSION: 2,
+};
+
+/**
+ * Check if a mode transition is an escalation (UP: ANSWER→PLAN, ANSWER→MISSION, PLAN→MISSION).
+ */
+export function isEscalation(from: Mode, to: Mode): boolean {
+  return MODE_LEVEL[to] > MODE_LEVEL[from];
+}
+
+/**
+ * Check if a mode transition is a downgrade (DOWN: MISSION→PLAN, MISSION→ANSWER, PLAN→ANSWER).
+ */
+export function isDowngrade(from: Mode, to: Mode): boolean {
+  return MODE_LEVEL[to] < MODE_LEVEL[from];
+}
+
+/**
  * ModeManager enforces mode boundaries and detects violations
  */
 export class ModeManager {
@@ -70,14 +102,19 @@ export class ModeManager {
   }
 
   /**
-   * Set the current mode
+   * Set the current mode.
+   * Returns transition info (pure — no events emitted here).
+   * The caller (extension.ts) is responsible for emitting mode_changed events.
    */
-  setMode(mode: Mode): void {
+  setMode(mode: Mode): ModeTransitionResult {
+    const from = this.currentMode;
+    const changed = from !== mode;
     this.currentMode = mode;
     // When mode changes, reset stage to none
     if (mode !== 'MISSION') {
       this.currentStage = 'none';
     }
+    return { changed, from_mode: from, to_mode: mode };
   }
 
   /**
