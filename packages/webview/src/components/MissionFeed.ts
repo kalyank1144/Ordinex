@@ -4,6 +4,7 @@
  */
 
 import { Event, EventType, Stage } from '../types';
+import { escapeHtml, formatTimestamp, escapeJsString } from '../utils/cardHelpers';
 import { renderDiffProposedCard } from './DiffProposedCard';
 import { renderDiffAppliedCard } from './DiffAppliedCard';
 import { renderCheckpointCreatedCard } from './CheckpointCreatedCard';
@@ -20,6 +21,8 @@ import { renderProcessCard, updateProcessCard, getProcessCardHtml, isProcessEven
 import { renderGeneratedToolProposedCard, renderGeneratedToolRunCard, isGeneratedToolEvent } from './GeneratedToolCard';
 import { renderCrashRecoveryCard, renderTaskRecoveryStartedCard, renderTaskDiscardedCard } from './CrashRecoveryCard';
 import { renderFailureCard } from './FailureCard';
+import { isScaffoldProgressEvent, renderScaffoldProgressCard, updateScaffoldProgress, getScaffoldProgressCardHtml } from './ScaffoldProgressCard';
+import { isScaffoldCompleteEvent, renderScaffoldCompleteCard, updateScaffoldComplete, getScaffoldCompleteCardHtml } from './ScaffoldCompleteCard';
 
 export interface EventCardConfig {
   icon: string;
@@ -1342,6 +1345,63 @@ export const EVENT_CARD_MAP: Record<EventType, EventCardConfig> = {
 } as Record<EventType, EventCardConfig>;
 
 /**
+ * R1: Event tier classification — determines visibility in Mission tab
+ * 'user' = full card (always visible), 'progress' = collapsible group, 'system' = Logs only
+ */
+const USER_TIER_EVENTS = new Set<EventType>([
+  'intent_received',
+  'plan_created', 'plan_revised',
+  'approval_requested', 'approval_resolved',
+  'diff_proposed', 'diff_applied',
+  'test_completed',
+  'failure_detected',
+  'decision_point_needed',
+  'clarification_presented', 'clarification_received',
+  'mission_started', 'mission_completed', 'mission_cancelled', 'mission_paused',
+  'scaffold_proposal_created', 'scaffold_completed', 'scaffold_cancelled',
+  'scaffold_blocked',
+  'process_started', 'process_ready',
+  'execution_paused', 'execution_resumed', 'execution_stopped',
+  'generated_tool_proposed',
+  'task_interrupted',
+  'scope_expansion_requested', 'scope_expansion_resolved',
+  'next_steps_shown',
+  'autonomy_loop_detected',
+  'mission_breakdown_created',
+  'scaffold_final_complete',
+  'plan_large_detected',
+  'repeated_failure_detected',
+] as EventType[]);
+
+const PROGRESS_TIER_EVENTS = new Set<EventType>([
+  'step_started', 'step_completed', 'step_failed',
+  'iteration_started', 'iteration_succeeded', 'iteration_failed',
+  'scaffold_apply_started', 'scaffold_applied',
+  'scaffold_started',
+  'feature_extraction_started', 'feature_extraction_completed',
+  'feature_code_generating', 'feature_code_applied', 'feature_code_error',
+  'scaffold_verify_started', 'scaffold_verify_step_completed', 'scaffold_verify_completed',
+  'scaffold_autofix_started', 'scaffold_autofix_applied', 'scaffold_autofix_failed',
+  'scaffold_progress', 'design_pack_applied',
+  'command_started', 'command_completed',
+  'tool_start', 'tool_end',
+  'repair_attempt_started', 'repair_attempt_completed', 'repair_attempted',
+  'test_started',
+  'verify_started', 'verify_completed', 'verify_proposed',
+  'context_collected',
+  'retrieval_started', 'retrieval_completed',
+  'scaffold_decision_resolved',
+  'scaffold_preflight_started', 'scaffold_preflight_completed',
+  'scaffold_target_chosen',
+] as EventType[]);
+
+export function getEventTier(eventType: EventType): 'user' | 'progress' | 'system' {
+  if (USER_TIER_EVENTS.has(eventType)) return 'user';
+  if (PROGRESS_TIER_EVENTS.has(eventType)) return 'progress';
+  return 'system';
+}
+
+/**
  * Stage header configuration
  */
 export const STAGE_CONFIG: Record<Stage, { title: string; icon: string; color: string }> = {
@@ -1426,7 +1486,58 @@ export function renderEventCard(event: Event, taskId?: string): string {
     return renderFailureCard(event, errorMatch || null, errorDescriptor || null, recoveryActions);
   }
 
-  // SCAFFOLD EVENTS: Render using ScaffoldCard custom element (PRIORITY CHECK)
+  // S1: Scaffold build-phase events — aggregate into ScaffoldProgressCard
+  if (isScaffoldProgressEvent(event.type)) {
+    if (event.type === 'scaffold_apply_started') {
+      // First build event — create the progress card
+      return renderScaffoldProgressCard(event);
+    }
+    // Follow-up events — update existing card in-place
+    const result = updateScaffoldProgress(event);
+    if (result.handled && result.scaffoldId) {
+      const cardHtml = getScaffoldProgressCardHtml(result.scaffoldId);
+      if (cardHtml) {
+        const existing = document.querySelector(
+          `.scaffold-progress-card[data-scaffold-id="${result.scaffoldId}"]`
+        );
+        if (existing) {
+          const wrapper = document.createElement('div');
+          wrapper.innerHTML = cardHtml;
+          const newCard = wrapper.firstElementChild;
+          if (newCard) existing.replaceWith(newCard);
+        }
+      }
+    }
+    return ''; // Don't render a new card
+  }
+
+  // S2: Scaffold completion — render ScaffoldCompleteCard
+  if (isScaffoldCompleteEvent(event.type)) {
+    if (event.type === 'scaffold_final_complete') {
+      return renderScaffoldCompleteCard(event);
+    }
+    if (event.type === 'next_steps_shown') {
+      const result = updateScaffoldComplete(event);
+      if (result.handled && result.scaffoldId) {
+        const cardHtml = getScaffoldCompleteCardHtml(result.scaffoldId);
+        if (cardHtml) {
+          const existing = document.querySelector(
+            `.scaffold-complete-card[data-scaffold-complete-id="${result.scaffoldId}"]`
+          );
+          if (existing) {
+            const wrapper = document.createElement('div');
+            wrapper.innerHTML = cardHtml;
+            const newCard = wrapper.firstElementChild;
+            if (newCard) existing.replaceWith(newCard);
+          }
+        }
+      }
+      return ''; // Don't render a new card
+    }
+  }
+
+  // SCAFFOLD EVENTS: Render remaining events (proposal, decision, blocked, etc.)
+  // using ScaffoldCard custom element
   if (isScaffoldEvent(event.type)) {
     console.log('[MissionFeed] Rendering scaffold event with ScaffoldCard:', event.type);
     return renderScaffoldEventCard(event);
@@ -1850,26 +1961,6 @@ function renderScaffoldEventCard(event: Event): string {
  * Utility functions
  */
 
-function escapeJsString(value: string): string {
-  return String(value).replace(/\\/g, '\\\\').replace(/'/g, "\\'");
-}
-function formatTimestamp(isoString: string): string {
-  const date = new Date(isoString);
-  return date.toLocaleTimeString('en-US', { 
-    hour: '2-digit', 
-    minute: '2-digit',
-    second: '2-digit'
-  });
-}
-
-function escapeHtml(text: string): string {
-  return text
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#039;');
-}
 
 /**
  * Humanize an event type string for display

@@ -1,0 +1,64 @@
+/* ===== HEADER BAR ===== */
+.header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--vscode-panel-border);
+  background: var(--vscode-sideBar-background);
+  flex-shrink: 0;
+}
+
+.header-left {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.header-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--vscode-foreground);
+}
+
+.status-pill {
+  display: inline-flex;
+  align-items: center;
+  padding: 3px 8px;
+  border-radius: 10px;
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.status-pill.ready {
+  background: var(--vscode-charts-blue);
+  color: #fff;
+}
+
+.status-pill.running {
+  background: var(--vscode-charts-green);
+  color: #fff;
+}
+
+.status-pill.paused {
+  background: var(--vscode-charts-orange);
+  color: #fff;
+}
+
+.status-pill.awaiting_approval {
+  background: var(--vscode-charts-yellow);
+  color: #000;
+}
+
+.status-pill.error {
+  background: var(--vscode-errorForeground);
+  color: #fff;
+}
+
+.stage-label {
+  font-size: 11px;
+  color: var(--vscode-descriptionForeground);
+  font-style: italic;
+}

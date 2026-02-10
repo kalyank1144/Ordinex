@@ -1,0 +1,342 @@
+/* ===== COMPOSER BAR ===== */
+.composer {
+  border-top: 1px solid var(--vscode-panel-border);
+  background: var(--vscode-sideBar-background);
+  padding: 8px 12px;
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.composer-controls {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+  font-size: 11px;
+}
+
+.composer-controls label {
+  color: var(--vscode-descriptionForeground);
+  font-weight: 500;
+  margin-right: 4px;
+}
+
+.composer-controls select {
+  background: var(--vscode-dropdown-background);
+  color: var(--vscode-dropdown-foreground);
+  border: 1px solid var(--vscode-dropdown-border);
+  padding: 3px 6px;
+  border-radius: 3px;
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.composer-controls select:focus {
+  outline: 1px solid var(--vscode-focusBorder);
+}
+
+.composer-controls-spacer {
+  flex: 1;
+}
+
+.attach-btn {
+  background: transparent;
+  border: none;
+  color: var(--vscode-descriptionForeground);
+  font-size: 16px;
+  padding: 4px 6px;
+  cursor: pointer;
+  border-radius: 4px;
+  transition: all 0.15s ease;
+}
+
+.attach-btn:hover {
+  background: var(--vscode-toolbar-hoverBackground);
+  color: var(--vscode-foreground);
+}
+
+.attach-btn.has-attachments {
+  color: var(--vscode-charts-blue);
+}
+
+/* ===== ATTACHMENT PREVIEWS ===== */
+.attachments-container {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 8px 0;
+  margin-top: 4px;
+}
+
+.attachment-chip {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  background: var(--vscode-input-background);
+  border: 1px solid var(--vscode-panel-border);
+  border-radius: 8px;
+  padding: 4px 8px;
+  max-width: 140px;
+  position: relative;
+  animation: fadeIn 0.2s ease-in;
+}
+
+.attachment-chip.uploading {
+  opacity: 0.6;
+  border-color: var(--vscode-charts-blue);
+}
+
+.attachment-chip.uploaded {
+  border-color: var(--vscode-charts-green);
+}
+
+.attachment-chip.error {
+  border-color: var(--vscode-charts-red);
+  background: var(--vscode-inputValidation-errorBackground);
+}
+
+.attachment-thumb {
+  width: 32px;
+  height: 32px;
+  border-radius: 4px;
+  object-fit: cover;
+  flex-shrink: 0;
+}
+
+.attachment-info {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.attachment-name {
+  font-size: 10px;
+  color: var(--vscode-foreground);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  display: block;
+}
+
+.attachment-size {
+  font-size: 9px;
+  color: var(--vscode-descriptionForeground);
+}
+
+.attachment-status {
+  font-size: 10px;
+}
+
+.attachment-status.uploading {
+  color: var(--vscode-charts-blue);
+}
+
+.attachment-status.error {
+  color: var(--vscode-charts-red);
+}
+
+.attachment-remove {
+  position: absolute;
+  top: -4px;
+  right: -4px;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: var(--vscode-charts-red);
+  color: #fff;
+  border: none;
+  font-size: 10px;
+  line-height: 1;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  opacity: 0;
+  transition: opacity 0.15s ease;
+}
+
+.attachment-chip:hover .attachment-remove {
+  opacity: 1;
+}
+
+.attachment-remove:hover {
+  background: #dc3545;
+  transform: scale(1.1);
+}
+
+.attachments-count {
+  font-size: 10px;
+  color: var(--vscode-descriptionForeground);
+  padding: 4px 8px;
+  background: var(--vscode-editor-inactiveSelectionBackground);
+  border-radius: 10px;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.attachments-count.at-limit {
+  color: var(--vscode-charts-yellow);
+}
+
+/* Toast notification for errors */
+.toast {
+  position: fixed;
+  bottom: 80px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: var(--vscode-inputValidation-errorBackground);
+  border: 1px solid var(--vscode-inputValidation-errorBorder);
+  color: var(--vscode-foreground);
+  padding: 10px 16px;
+  border-radius: 6px;
+  font-size: 12px;
+  z-index: 9999;
+  animation: slideUp 0.3s ease-out, fadeOut 0.3s ease-in 2.7s forwards;
+  max-width: 300px;
+  text-align: center;
+}
+
+.toast.warning {
+  background: var(--vscode-inputValidation-warningBackground);
+  border-color: var(--vscode-inputValidation-warningBorder);
+}
+
+@keyframes fadeOut {
+  from { opacity: 1; }
+  to { opacity: 0; visibility: hidden; }
+}
+
+.composer-input-wrapper {
+  position: relative;
+  display: flex;
+  align-items: flex-end;
+  background: var(--vscode-input-background);
+  border: 1px solid var(--vscode-input-border);
+  border-radius: 12px;
+  padding: 6px 8px;
+  transition: border-color 0.15s ease;
+}
+
+.composer-input-wrapper:focus-within {
+  border-color: var(--vscode-focusBorder);
+}
+
+.composer-input-wrapper textarea {
+  flex: 1;
+  background: transparent;
+  color: var(--vscode-input-foreground);
+  border: none;
+  padding: 4px 8px;
+  font-size: 12px;
+  font-family: inherit;
+  resize: none;
+  min-height: 32px;
+  max-height: 100px;
+  line-height: 1.4;
+  outline: none;
+}
+
+.composer-input-wrapper textarea::placeholder {
+  color: var(--vscode-input-placeholderForeground);
+}
+
+/* Send/Stop Toggle Button - Inside Input */
+.send-stop-btn {
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  border: none;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 14px;
+  transition: all 0.2s ease;
+  flex-shrink: 0;
+  margin-left: 4px;
+}
+
+.send-stop-btn.send {
+  background: var(--vscode-button-background);
+  color: var(--vscode-button-foreground);
+}
+
+.send-stop-btn.send:hover:not(:disabled) {
+  background: var(--vscode-button-hoverBackground);
+  transform: scale(1.05);
+}
+
+.send-stop-btn.stop {
+  background: var(--vscode-charts-red);
+  color: #fff;
+  animation: stopPulse 1.5s ease-in-out infinite;
+}
+
+.send-stop-btn.stop:hover:not(:disabled) {
+  background: #dc3545;
+}
+
+.send-stop-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+  transform: none;
+}
+
+@keyframes stopPulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(220, 53, 69, 0.4); }
+  50% { box-shadow: 0 0 0 6px rgba(220, 53, 69, 0); }
+}
+
+/* Hide old button container */
+.composer-buttons {
+  display: none;
+}
+
+button {
+  background: var(--vscode-button-background);
+  color: var(--vscode-button-foreground);
+  border: none;
+  padding: 6px 12px;
+  border-radius: 3px;
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background 0.1s ease;
+}
+
+button:hover:not(:disabled) {
+  background: var(--vscode-button-hoverBackground);
+}
+
+button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+button.secondary {
+  background: var(--vscode-button-secondaryBackground);
+  color: var(--vscode-button-secondaryForeground);
+}
+
+button.secondary:hover:not(:disabled) {
+  background: var(--vscode-button-secondaryHoverBackground);
+}
+
+button.danger {
+  background: var(--vscode-inputValidation-errorBackground);
+  color: #fff;
+}
+
+button.approve {
+  background: var(--vscode-charts-green);
+  color: #fff;
+}
+
+button.reject {
+  background: var(--vscode-charts-red);
+  color: #fff;
+}

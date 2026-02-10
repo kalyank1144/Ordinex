@@ -1,0 +1,237 @@
+/* ===== MISSION TAB - Timeline Feed ===== */
+.mission-empty {
+  text-align: center;
+  color: var(--vscode-descriptionForeground);
+  padding: 40px 20px;
+  font-size: 13px;
+}
+
+/* Stage Headers */
+.stage-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+  margin: 16px 0 8px 0;
+  background: var(--vscode-editor-inactiveSelectionBackground);
+  border-left: 3px solid var(--vscode-focusBorder);
+  border-radius: 4px;
+  font-weight: 700;
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.stage-header:first-child {
+  margin-top: 0;
+}
+
+.stage-icon {
+  font-size: 16px;
+}
+
+.stage-title {
+  color: var(--vscode-foreground);
+}
+
+/* Event Cards */
+.event-card {
+  background: var(--vscode-editor-inactiveSelectionBackground);
+  border: 1px solid var(--vscode-panel-border);
+  border-left: 3px solid var(--vscode-panel-border);
+  border-radius: 4px;
+  padding: 10px 12px;
+  margin-bottom: 8px;
+  animation: fadeIn 0.2s ease-in;
+  transition: all 0.15s ease;
+}
+
+.event-card:hover {
+  background: var(--vscode-list-hoverBackground);
+  border-left-color: var(--vscode-focusBorder);
+}
+
+.event-card.approval-required {
+  border-left-color: var(--vscode-charts-yellow);
+  background: var(--vscode-inputValidation-warningBackground);
+}
+
+.event-card.failure {
+  border-left-color: var(--vscode-charts-red);
+  background: var(--vscode-inputValidation-errorBackground);
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.event-card-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+
+.event-icon {
+  font-size: 16px;
+  flex-shrink: 0;
+}
+
+.event-type {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--vscode-foreground);
+  flex: 1;
+}
+
+.event-timestamp {
+  font-size: 10px;
+  color: var(--vscode-descriptionForeground);
+  flex-shrink: 0;
+}
+
+.event-summary {
+  font-size: 12px;
+  line-height: 1.4;
+  color: var(--vscode-descriptionForeground);
+  padding-left: 24px;
+}
+
+.event-evidence {
+  margin-top: 6px;
+  padding-left: 24px;
+  font-size: 10px;
+  color: var(--vscode-charts-blue);
+  font-weight: 500;
+  cursor: pointer;
+  user-select: none;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.event-evidence:hover {
+  text-decoration: underline;
+}
+
+/* R1: Progress group (collapsible Tier 2 events) */
+.progress-group {
+  background: var(--vscode-editor-inactiveSelectionBackground);
+  border: 1px solid var(--vscode-panel-border);
+  border-left: 3px solid var(--vscode-descriptionForeground);
+  border-radius: 4px;
+  margin-bottom: 8px;
+  overflow: hidden;
+  animation: fadeIn 0.2s ease-in;
+}
+.progress-group-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  cursor: pointer;
+  user-select: none;
+  font-size: 12px;
+  color: var(--vscode-descriptionForeground);
+}
+.progress-group-header:hover {
+  background: var(--vscode-list-hoverBackground);
+}
+.progress-group-toggle {
+  font-size: 10px;
+  flex-shrink: 0;
+  transition: transform 0.15s ease;
+}
+.progress-group.expanded .progress-group-toggle {
+  transform: rotate(90deg);
+}
+.progress-group-label {
+  flex: 1;
+  font-weight: 500;
+}
+.progress-group-count {
+  font-size: 10px;
+  color: var(--vscode-descriptionForeground);
+  opacity: 0.7;
+}
+.progress-group-details {
+  display: none;
+  padding: 0 12px 8px 28px;
+  font-size: 11px;
+  color: var(--vscode-descriptionForeground);
+}
+.progress-group.expanded .progress-group-details {
+  display: block;
+}
+.progress-group-item {
+  padding: 3px 0;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.progress-group-item-icon {
+  font-size: 12px;
+  flex-shrink: 0;
+}
+.progress-group-item-text {
+  flex: 1;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.progress-group-view-details {
+  font-size: 10px;
+  color: var(--vscode-textLink-foreground);
+  cursor: pointer;
+  padding: 4px 12px 8px 28px;
+  display: none;
+}
+.progress-group-view-details:hover {
+  text-decoration: underline;
+}
+
+/* R1 + I1: User chat bubble */
+.user-bubble {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  margin-bottom: 12px;
+  animation: fadeIn 0.2s ease-in;
+}
+.user-bubble-avatar {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  background: var(--vscode-charts-blue);
+  color: #fff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 14px;
+  flex-shrink: 0;
+  margin-top: 2px;
+}
+.user-bubble-content {
+  background: var(--vscode-textBlockQuote-background);
+  border: 1px solid var(--vscode-textBlockQuote-border, var(--vscode-panel-border));
+  border-radius: 12px;
+  border-top-left-radius: 4px;
+  padding: 10px 14px;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--vscode-foreground);
+  max-width: 85%;
+  word-break: break-word;
+  white-space: pre-wrap;
+}
+.user-bubble-meta {
+  font-size: 10px;
+  color: var(--vscode-descriptionForeground);
+  margin-top: 4px;
+  padding-left: 38px;
+}
+
+.event-card.expanded {
+  background: var(--vscode-list-hoverBackground);
+}

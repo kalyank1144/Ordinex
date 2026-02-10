@@ -4,6 +4,7 @@
  */
 
 import { Evidence } from '../types';
+import { escapeHtml, formatTimestamp } from '../utils/cardHelpers';
 
 /**
  * Evidence type icon mapping
@@ -77,26 +78,3 @@ function renderEvidenceItem(evidence: Evidence, eventId: string): string {
   `;
 }
 
-/**
- * Utility: Format timestamp
- */
-function formatTimestamp(isoString: string): string {
-  const date = new Date(isoString);
-  return date.toLocaleTimeString('en-US', { 
-    hour: '2-digit', 
-    minute: '2-digit',
-    second: '2-digit'
-  });
-}
-
-/**
- * Utility: Escape HTML
- */
-function escapeHtml(text: string): string {
-  return text
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#039;');
-}

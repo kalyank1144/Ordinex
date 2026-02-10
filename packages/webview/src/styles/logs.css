@@ -1,0 +1,308 @@
+/* ===== LOGS TAB (Step 30: Raw Debug Surface) ===== */
+.logs-filter-bar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 10px 12px;
+  background: var(--vscode-sideBar-background);
+  border-bottom: 1px solid var(--vscode-panel-border);
+  margin-bottom: 8px;
+  border-radius: 4px;
+  align-items: center;
+}
+
+.logs-filter-bar label {
+  font-size: 10px;
+  color: var(--vscode-descriptionForeground);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+}
+
+.logs-search-input {
+  flex: 1;
+  min-width: 150px;
+  padding: 5px 10px;
+  background: var(--vscode-input-background);
+  color: var(--vscode-input-foreground);
+  border: 1px solid var(--vscode-input-border);
+  border-radius: 4px;
+  font-size: 11px;
+  outline: none;
+}
+
+.logs-search-input:focus {
+  border-color: var(--vscode-focusBorder);
+}
+
+.logs-search-input::placeholder {
+  color: var(--vscode-input-placeholderForeground);
+}
+
+.logs-filter-select {
+  padding: 4px 8px;
+  background: var(--vscode-dropdown-background);
+  color: var(--vscode-dropdown-foreground);
+  border: 1px solid var(--vscode-dropdown-border);
+  border-radius: 3px;
+  font-size: 10px;
+  cursor: pointer;
+  min-width: 80px;
+}
+
+.logs-filter-select:focus {
+  outline: 1px solid var(--vscode-focusBorder);
+}
+
+.logs-stats {
+  font-size: 10px;
+  color: var(--vscode-descriptionForeground);
+  margin-left: auto;
+  padding: 4px 8px;
+  background: var(--vscode-editor-inactiveSelectionBackground);
+  border-radius: 10px;
+}
+
+.event-log-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-height: calc(100vh - 300px);
+  overflow-y: auto;
+}
+
+.event-log-item {
+  background: var(--vscode-input-background);
+  border: 1px solid var(--vscode-input-border);
+  border-radius: 4px;
+  font-size: 11px;
+  transition: background 0.1s ease;
+}
+
+.event-log-item:hover {
+  background: var(--vscode-list-hoverBackground);
+}
+
+.event-log-item.expanded {
+  background: var(--vscode-editor-background);
+  border-color: var(--vscode-focusBorder);
+}
+
+.log-row-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  cursor: pointer;
+}
+
+.log-expand-icon {
+  font-size: 10px;
+  color: var(--vscode-descriptionForeground);
+  flex-shrink: 0;
+  width: 12px;
+  transition: transform 0.15s ease;
+}
+
+.event-log-item.expanded .log-expand-icon {
+  transform: rotate(90deg);
+}
+
+.event-log-type {
+  font-weight: 600;
+  color: var(--vscode-foreground);
+  font-family: 'SF Mono', Monaco, 'Cascadia Code', 'Roboto Mono', Consolas, monospace;
+}
+
+.event-log-meta {
+  display: flex;
+  gap: 6px;
+  flex: 1;
+  align-items: center;
+}
+
+.log-badge {
+  padding: 1px 6px;
+  border-radius: 8px;
+  font-size: 9px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+}
+
+.log-badge.mode {
+  background: var(--vscode-charts-purple);
+  color: #fff;
+}
+
+.log-badge.stage {
+  background: var(--vscode-charts-blue);
+  color: #fff;
+}
+
+.log-badge.tool {
+  background: var(--vscode-charts-orange);
+  color: #fff;
+}
+
+.event-log-timestamp {
+  font-size: 10px;
+  color: var(--vscode-descriptionForeground);
+  font-family: monospace;
+  flex-shrink: 0;
+}
+
+.log-evidence-ids {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  padding: 4px 10px 8px 30px;
+}
+
+.evidence-token {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 2px 6px;
+  background: var(--vscode-textLink-foreground);
+  color: #fff;
+  border-radius: 10px;
+  font-size: 9px;
+  font-family: monospace;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.evidence-token:hover {
+  background: var(--vscode-textLink-activeForeground);
+  transform: scale(1.05);
+}
+
+.evidence-token-icon {
+  font-size: 10px;
+}
+
+.evidence-token-copied {
+  background: var(--vscode-charts-green) !important;
+}
+
+.log-payload-container {
+  padding: 0 10px 10px 30px;
+  display: none;
+}
+
+.event-log-item.expanded .log-payload-container {
+  display: block;
+}
+
+.log-payload-pre {
+  margin: 0;
+  padding: 10px;
+  background: var(--vscode-editor-background);
+  border: 1px solid var(--vscode-panel-border);
+  border-radius: 4px;
+  font-family: 'SF Mono', Monaco, 'Cascadia Code', 'Roboto Mono', Consolas, monospace;
+  font-size: 10px;
+  line-height: 1.5;
+  overflow-x: auto;
+  white-space: pre;
+  color: var(--vscode-editor-foreground);
+  max-height: 400px;
+  overflow-y: auto;
+}
+
+.log-copy-btn {
+  margin-top: 6px;
+  padding: 4px 8px;
+  background: var(--vscode-button-secondaryBackground);
+  color: var(--vscode-button-secondaryForeground);
+  border: none;
+  border-radius: 3px;
+  font-size: 10px;
+  cursor: pointer;
+}
+
+.log-copy-btn:hover {
+  background: var(--vscode-button-secondaryHoverBackground);
+}
+
+/* Stream Delta Group Styling */
+.stream-group {
+  background: var(--vscode-editor-inactiveSelectionBackground);
+  border-color: var(--vscode-charts-blue);
+}
+
+.stream-group-badge {
+  padding: 2px 8px;
+  background: var(--vscode-charts-blue);
+  color: #fff;
+  border-radius: 10px;
+  font-size: 9px;
+  font-weight: 700;
+}
+
+.stream-group-content {
+  padding: 10px;
+  background: var(--vscode-editor-background);
+  border: 1px solid var(--vscode-panel-border);
+  border-radius: 4px;
+  font-family: 'SF Mono', Monaco, 'Cascadia Code', 'Roboto Mono', Consolas, monospace;
+  font-size: 11px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 300px;
+  overflow-y: auto;
+}
+
+.stream-toggle-mode {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.stream-toggle-btn {
+  padding: 3px 8px;
+  background: var(--vscode-button-secondaryBackground);
+  color: var(--vscode-button-secondaryForeground);
+  border: none;
+  border-radius: 3px;
+  font-size: 10px;
+  cursor: pointer;
+}
+
+.stream-toggle-btn.active {
+  background: var(--vscode-button-background);
+  color: var(--vscode-button-foreground);
+}
+
+/* Virtual scroll placeholder */
+.logs-virtual-spacer {
+  height: 0;
+  flex-shrink: 0;
+}
+
+.event-log-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 4px;
+}
+
+.event-log-summary {
+  color: var(--vscode-descriptionForeground);
+  font-size: 11px;
+  line-height: 1.3;
+}
+
+.event-log-details {
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid var(--vscode-panel-border);
+  font-size: 11px;
+  color: var(--vscode-descriptionForeground);
+}
+
+.event-log-details-row {
+  margin: 4px 0;
+}

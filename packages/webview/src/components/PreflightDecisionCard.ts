@@ -12,6 +12,8 @@
  * - All decisions emit events for replay
  */
 
+import { escapeHtml } from '../utils/cardHelpers';
+
 // Using local Event interface to avoid cross-package import issues
 interface Event {
   event_id: string;
@@ -566,11 +568,6 @@ function getBadgeInfo(problem: string): { text: string; class: string } {
   }
 }
 
-function escapeHtml(text: string): string {
-  const div = document.createElement('div');
-  div.textContent = text;
-  return div.innerHTML;
-}
 
 // ============================================================================
 // EXPORTS

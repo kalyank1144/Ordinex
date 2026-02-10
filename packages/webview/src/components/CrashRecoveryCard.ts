@@ -6,6 +6,7 @@
  */
 
 import type { Event } from '../types';
+import { escapeHtml, escapeJsString, formatTimestamp, formatDurationCompact as formatDuration } from '../utils/cardHelpers';
 
 /**
  * Render a crash recovery card from a task_interrupted event.
@@ -143,35 +144,3 @@ export function renderTaskDiscardedCard(event: Event): string {
   `;
 }
 
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-
-function formatDuration(ms: number): string {
-  if (ms < 60_000) return `${Math.round(ms / 1000)}s`;
-  if (ms < 3600_000) return `${Math.round(ms / 60_000)}m`;
-  if (ms < 86400_000) return `${(ms / 3600_000).toFixed(1)}h`;
-  return `${(ms / 86400_000).toFixed(1)}d`;
-}
-
-function formatTimestamp(isoString: string): string {
-  const date = new Date(isoString);
-  return date.toLocaleTimeString('en-US', {
-    hour: '2-digit',
-    minute: '2-digit',
-    second: '2-digit',
-  });
-}
-
-function escapeHtml(text: string): string {
-  return text
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#039;');
-}
-
-function escapeJsString(value: string): string {
-  return String(value).replace(/\\/g, '\\\\').replace(/'/g, "\\'");
-}

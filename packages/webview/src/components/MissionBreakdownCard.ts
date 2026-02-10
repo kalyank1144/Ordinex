@@ -12,6 +12,7 @@
  */
 
 import { Event } from '../types';
+import { escapeHtml } from '../utils/cardHelpers';
 
 /**
  * Mission data from mission_breakdown_created event
@@ -582,14 +583,3 @@ function renderStartMissionButton(
   `;
 }
 
-/**
- * Escape HTML to prevent XSS
- */
-function escapeHtml(text: string): string {
-  return text
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#039;');
-}

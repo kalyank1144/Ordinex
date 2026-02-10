@@ -16,6 +16,8 @@
  *   { type: 'verification_continue', scaffoldId }
  */
 
+import { escapeHtml } from '../utils/cardHelpers';
+
 // ============================================================================
 // TYPES (local to avoid cross-package imports)
 // ============================================================================
@@ -327,15 +329,3 @@ function renderActions(scaffoldId: string, outcome: string, allowContinue: boole
   `;
 }
 
-// ============================================================================
-// UTILS
-// ============================================================================
-
-function escapeHtml(text: string): string {
-  return text
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#039;');
-}

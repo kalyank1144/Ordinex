@@ -8,6 +8,7 @@
  */
 
 import { Event } from '../types';
+import { escapeHtml } from '../utils/cardHelpers';
 
 /**
  * Render a card for generated_tool_proposed events.
@@ -148,11 +149,3 @@ export function isGeneratedToolEvent(eventType: string): boolean {
   return eventType.startsWith('generated_tool_');
 }
 
-function escapeHtml(text: string): string {
-  return text
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#39;');
-}

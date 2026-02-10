@@ -1,0 +1,15 @@
+/* ===== RESPONSIVE ===== */
+@media (max-width: 350px) {
+  .composer-controls {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .systems-counters {
+    grid-template-columns: 1fr;
+  }
+
+  .approval-card-actions {
+    flex-direction: column;
+  }
+}

@@ -6,7 +6,7 @@
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "scripts": {
-    "build": "tsc -p ./",
+    "build": "tsc -p ./ && cp -r src/styles dist/styles",
     "clean": "rm -rf dist",
     "test": "echo 'No tests yet'"
   },

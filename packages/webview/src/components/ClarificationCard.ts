@@ -12,6 +12,7 @@
  */
 
 import { Event } from '../types';
+import { escapeHtml } from '../utils/cardHelpers';
 
 /**
  * State machine for clarification card
@@ -534,14 +535,3 @@ export function getClarificationHandlerScript(): string {
   `;
 }
 
-/**
- * Escape HTML special characters
- */
-function escapeHtml(text: string): string {
-  return text
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#039;');
-}

@@ -4,6 +4,7 @@
  */
 
 import { Event } from '../types';
+import { escapeHtml, formatTimestamp } from '../utils/cardHelpers';
 
 /**
  * Render Answer Card for context_collected event
@@ -145,23 +146,3 @@ export function renderAnswerStreamCard(event: Event, taskId: string): string {
   `;
 }
 
-/**
- * Utility functions
- */
-function formatTimestamp(isoString: string): string {
-  const date = new Date(isoString);
-  return date.toLocaleTimeString('en-US', { 
-    hour: '2-digit', 
-    minute: '2-digit',
-    second: '2-digit'
-  });
-}
-
-function escapeHtml(text: string): string {
-  return text
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#039;');
-}

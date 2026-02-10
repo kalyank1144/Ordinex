@@ -9,6 +9,7 @@
  */
 
 import type { Event } from '../types';
+import { escapeHtml } from '../utils/cardHelpers';
 
 // Use string template function like other webview components
 function html(strings: TemplateStringsArray, ...values: unknown[]): string {
@@ -379,15 +380,6 @@ export function renderReferenceTokensUsedCard(event: Event): string {
 // ============================================================================
 // HELPERS
 // ============================================================================
-
-function escapeHtml(text: string): string {
-  return text
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#039;');
-}
 
 function formatWarning(warning: string): string {
   const warningLabels: Record<string, string> = {

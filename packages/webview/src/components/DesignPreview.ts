@@ -11,6 +11,8 @@
  * - Uses design tokens for all styling
  */
 
+import { escapeHtml } from '../utils/cardHelpers';
+
 declare class HTMLElement {
   shadowRoot: any;
   attachShadow(init: { mode: 'open' | 'closed' }): any;
@@ -250,7 +252,7 @@ export class DesignPreview extends HTMLElement {
         <span class="influence-icon">✨</span>
         <span class="influence-text">
           Influenced by references (${confidencePercent}%)
-          ${moodTags ? ` · ${this.escapeHtml(moodTags)}` : ''}
+          ${moodTags ? ` · ${escapeHtml(moodTags)}` : ''}
         </span>
       </div>
     `;
@@ -672,14 +674,6 @@ export class DesignPreview extends HTMLElement {
     `;
   }
 
-  private escapeHtml(text: string): string {
-    return String(text)
-      .replace(/&/g, '&amp;')
-      .replace(/</g, '&lt;')
-      .replace(/>/g, '&gt;')
-      .replace(/"/g, '&quot;')
-      .replace(/'/g, '&#039;');
-  }
 }
 
 // Register custom element

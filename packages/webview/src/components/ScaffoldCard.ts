@@ -34,6 +34,17 @@ declare const customElements: {
   define(name: string, ctor: any): void;
 };
 
+// ScaffoldCard runs as a standalone script in the webview (no module system).
+// Must define escapeHtml locally — cannot import from cardHelpers.
+function escapeHtml(text: string): string {
+  return text
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#039;');
+}
+
 type HTMLButtonElement = any;
 
 type ScaffoldEvent = {
@@ -132,19 +143,19 @@ export class ScaffoldCard extends HTMLElement {
         break;
       // Feature Intelligence events (LLM-powered feature generation)
       case 'feature_extraction_started':
-        body = this.renderStatusCard('\u{1F9E0}', 'Extracting Features', `Analyzing prompt for ${this.escapeHtml(String(payload.recipe_id || ''))} features...`, 'running');
+        body = this.renderStatusCard('\u{1F9E0}', 'Extracting Features', `Analyzing prompt for ${escapeHtml(String(payload.recipe_id || ''))} features...`, 'running');
         break;
       case 'feature_extraction_completed':
-        body = this.renderStatusCard('\u2705', 'Features Extracted', `Detected ${this.escapeHtml(String(payload.app_type || 'app'))}: ${payload.features_count || 0} features, ${payload.pages_count || 0} pages`, 'pass');
+        body = this.renderStatusCard('\u2705', 'Features Extracted', `Detected ${escapeHtml(String(payload.app_type || 'app'))}: ${payload.features_count || 0} features, ${payload.pages_count || 0} pages`, 'pass');
         break;
       case 'feature_code_generating':
-        body = this.renderStatusCard('\u{1F528}', 'Generating Code', this.escapeHtml(String(payload.message || 'Generating feature components...')), 'running');
+        body = this.renderStatusCard('\u{1F528}', 'Generating Code', escapeHtml(String(payload.message || 'Generating feature components...')), 'running');
         break;
       case 'feature_code_applied':
         body = this.renderFeatureCodeApplied(payload);
         break;
       case 'feature_code_error':
-        body = this.renderStatusCard('\u26A0\uFE0F', 'Feature Generation Skipped', this.escapeHtml(String(payload.error || 'Falling back to generic scaffold')), 'warn');
+        body = this.renderStatusCard('\u26A0\uFE0F', 'Feature Generation Skipped', escapeHtml(String(payload.error || 'Falling back to generic scaffold')), 'warn');
         break;
       // Process events are now handled by ProcessCard (W2)
       // Auto-fix events
@@ -158,18 +169,18 @@ export class ScaffoldCard extends HTMLElement {
         break;
       case 'scaffold_autofix_failed':
         body = this.renderStatusCard('⚠️', 'Auto-Fix Failed',
-          this.escapeHtml(String(payload.error || 'Could not automatically fix errors')), 'warn');
+          escapeHtml(String(payload.error || 'Could not automatically fix errors')), 'warn');
         break;
       // Streaming verification events
       case 'scaffold_verify_started':
         body = this.renderStatusCard('🔍', 'Verifying Project',
-          `Running post-scaffold verification (${this.escapeHtml(String(payload.recipe_id || ''))})...`, 'running');
+          `Running post-scaffold verification (${escapeHtml(String(payload.recipe_id || ''))})...`, 'running');
         break;
       case 'scaffold_verify_step_completed': {
         const stepStatus = String(payload.step_status || 'pass');
         const stepIcon = stepStatus === 'pass' ? '✅' : stepStatus === 'warn' ? '⚠️' : stepStatus === 'fail' ? '❌' : '⏭️';
-        body = this.renderStatusCard(stepIcon, `Verify: ${this.escapeHtml(String(payload.step_name || ''))}`,
-          this.escapeHtml(String(payload.message || '')), stepStatus === 'fail' ? 'fail' : stepStatus === 'warn' ? 'warn' : 'pass');
+        body = this.renderStatusCard(stepIcon, `Verify: ${escapeHtml(String(payload.step_name || ''))}`,
+          escapeHtml(String(payload.message || '')), stepStatus === 'fail' ? 'fail' : stepStatus === 'warn' ? 'warn' : 'pass');
         break;
       }
       case 'scaffold_verify_completed': {
@@ -219,7 +230,7 @@ export class ScaffoldCard extends HTMLElement {
         body = this.renderStatusCard('\u2699\uFE0F', 'Settings Updated', `${payload.setting || 'Setting'} changed`, 'info');
         break;
       default:
-        body = `<div class="scaffold-card">Unknown scaffold event: ${this.escapeHtml(String(event.type))}</div>`;
+        body = `<div class="scaffold-card">Unknown scaffold event: ${escapeHtml(String(event.type))}</div>`;
         break;
     }
 
@@ -241,12 +252,12 @@ export class ScaffoldCard extends HTMLElement {
         </div>
         <div class="prompt-section">
           <div class="prompt-label">Your Request</div>
-          <div class="prompt-text">${this.escapeHtml(this.truncateText(userPrompt, 150))}</div>
+          <div class="prompt-text">${escapeHtml(this.truncateText(userPrompt, 150))}</div>
         </div>
         ${targetDir ? `
           <div class="detail-row">
             <span class="detail-label">Target Directory:</span>
-            <span class="detail-value">${this.escapeHtml(String(targetDir))}</span>
+            <span class="detail-value">${escapeHtml(String(targetDir))}</span>
           </div>
         ` : ''}
         <div class="timestamp">Started: ${this.formatTimestamp(createdAt)}</div>
@@ -282,7 +293,7 @@ export class ScaffoldCard extends HTMLElement {
         </div>
         <div class="summary-section">
           <div class="prompt-label">Summary</div>
-          <div class="summary-text">${this.escapeHtml(String(summary))}</div>
+          <div class="summary-text">${escapeHtml(String(summary))}</div>
         </div>
         
         ${hasReferences ? this.renderReferenceSection(referenceContext, styleSourceMode) : ''}
@@ -297,13 +308,13 @@ export class ScaffoldCard extends HTMLElement {
             </div>
             <div class="preview-content">
               <div class="preview-image-container">
-                <div class="preview-placeholder" data-pack-id="${this.escapeHtml(designPackId)}">
-                  <span class="pack-initial">${this.escapeHtml(designPack.charAt(0).toUpperCase())}</span>
+                <div class="preview-placeholder" data-pack-id="${escapeHtml(designPackId)}">
+                  <span class="pack-initial">${escapeHtml(designPack.charAt(0).toUpperCase())}</span>
                 </div>
               </div>
               <div class="preview-details">
-                <div class="pack-name">${this.escapeHtml(String(designPack))}</div>
-                ${tokensSummary ? `<div class="tokens-summary">${this.escapeHtml(tokensSummary)}</div>` : ''}
+                <div class="pack-name">${escapeHtml(String(designPack))}</div>
+                ${tokensSummary ? `<div class="tokens-summary">${escapeHtml(tokensSummary)}</div>` : ''}
               </div>
             </div>
           </div>
@@ -312,7 +323,7 @@ export class ScaffoldCard extends HTMLElement {
         <div class="proposal-grid">
           <div class="detail-item">
             <div class="detail-label">Recipe</div>
-            <div class="detail-value ${isTBD(recipe) ? 'tbd' : ''}">${this.escapeHtml(String(recipe))}</div>
+            <div class="detail-value ${isTBD(recipe) ? 'tbd' : ''}">${escapeHtml(String(recipe))}</div>
           </div>
           ${!hasDesignPack ? `
             <div class="detail-item">
@@ -379,7 +390,7 @@ export class ScaffoldCard extends HTMLElement {
         </div>
         <div class="summary-section">
           <div class="prompt-label">Summary</div>
-          <div class="summary-text">${this.escapeHtml(String(summary))}</div>
+          <div class="summary-text">${escapeHtml(String(summary))}</div>
         </div>
         
         ${hasReferences ? this.renderReferenceSection(referenceContext, styleSourceMode) : ''}
@@ -390,15 +401,15 @@ export class ScaffoldCard extends HTMLElement {
               <span class="preview-label">Design Preview</span>
               ${changeStyleOption && !changeStyleOption.disabled ? `
                 <button class="change-style-btn" data-action="change_style">
-                  🎨 ${this.escapeHtml(changeStyleOption.label || 'Change Style')}
+                  🎨 ${escapeHtml(changeStyleOption.label || 'Change Style')}
                 </button>
               ` : ''}
             </div>
             ${referenceTokensSummary && referenceTokensSummary.confidence >= 0.5 ? this.renderInfluenceBadge(referenceTokensSummary) : ''}
             ${this.renderVisualPreview(packTokens, designPack, false)}
             <div class="pack-meta">
-              <span class="pack-name-badge">${this.escapeHtml(String(designPack))}</span>
-              ${tokensSummary ? `<span class="tokens-hint">${this.escapeHtml(tokensSummary)}</span>` : ''}
+              <span class="pack-name-badge">${escapeHtml(String(designPack))}</span>
+              ${tokensSummary ? `<span class="tokens-hint">${escapeHtml(tokensSummary)}</span>` : ''}
             </div>
           </div>
         ` : ''}
@@ -406,7 +417,7 @@ export class ScaffoldCard extends HTMLElement {
         <div class="proposal-grid">
           <div class="detail-item">
             <div class="detail-label">Recipe</div>
-            <div class="detail-value ${isTBD(recipe) ? 'tbd' : ''}">${this.escapeHtml(String(recipe))}</div>
+            <div class="detail-value ${isTBD(recipe) ? 'tbd' : ''}">${escapeHtml(String(recipe))}</div>
           </div>
           ${!hasDesignPack ? `
             <div class="detail-item">
@@ -426,10 +437,10 @@ export class ScaffoldCard extends HTMLElement {
         
         <div class="actions">
           <button class="btn-primary" data-action="proceed" ${proceedOption.disabled ? 'disabled' : ''}>
-            ✅ ${this.escapeHtml(proceedOption.label || 'Create Project')}
+            ✅ ${escapeHtml(proceedOption.label || 'Create Project')}
           </button>
           <button class="btn-secondary" data-action="cancel" ${cancelOption.disabled ? 'disabled' : ''}>
-            ${this.escapeHtml(cancelOption.label || 'Cancel')}
+            ${escapeHtml(cancelOption.label || 'Cancel')}
           </button>
         </div>
         
@@ -452,7 +463,7 @@ export class ScaffoldCard extends HTMLElement {
         <span class="influence-icon">✨</span>
         <span class="influence-text">
           Influenced by references (${confidence}% confidence)
-          ${moods ? ` · ${this.escapeHtml(moods)}` : ''}
+          ${moods ? ` · ${escapeHtml(moods)}` : ''}
         </span>
       </div>
     `;
@@ -666,7 +677,7 @@ export class ScaffoldCard extends HTMLElement {
           <span class="completion-text">
             ${isReady 
               ? 'Scaffold approved! Setting up your project...'
-              : this.escapeHtml(reason || 'Scaffold was cancelled')}
+              : escapeHtml(reason || 'Scaffold was cancelled')}
           </span>
         </div>
       </div>
@@ -695,7 +706,7 @@ export class ScaffoldCard extends HTMLElement {
         ${workspaceRoot ? `
           <div class="detail-row">
             <span class="detail-label">Workspace:</span>
-            <span class="detail-value mono">${this.escapeHtml(this.truncatePath(workspaceRoot))}</span>
+            <span class="detail-value mono">${escapeHtml(this.truncatePath(workspaceRoot))}</span>
           </div>
         ` : ''}
         <div class="timestamp">Started: ${this.formatTimestamp(createdAt)}</div>
@@ -726,7 +737,7 @@ export class ScaffoldCard extends HTMLElement {
         <div class="preflight-results">
           <div class="result-item">
             <span class="result-label">Target Directory</span>
-            <span class="result-value mono">${this.escapeHtml(this.truncatePath(targetDir))}</span>
+            <span class="result-value mono">${escapeHtml(this.truncatePath(targetDir))}</span>
           </div>
           <div class="result-item">
             <span class="result-label">Directory Status</span>
@@ -737,7 +748,7 @@ export class ScaffoldCard extends HTMLElement {
           ${isMonorepo ? `
             <div class="result-item">
               <span class="result-label">Monorepo Detected</span>
-              <span class="result-value">${monorepoType ? this.escapeHtml(monorepoType) : 'Yes'}</span>
+              <span class="result-value">${monorepoType ? escapeHtml(monorepoType) : 'Yes'}</span>
             </div>
           ` : ''}
         </div>
@@ -747,8 +758,8 @@ export class ScaffoldCard extends HTMLElement {
             <div class="conflicts-header">⚠️ Conflicts Detected</div>
             ${conflicts.map((c: any) => `
               <div class="conflict-item">
-                <span class="conflict-type">${this.escapeHtml(c.type)}</span>
-                <span class="conflict-message">${this.escapeHtml(c.message)}</span>
+                <span class="conflict-type">${escapeHtml(c.type)}</span>
+                <span class="conflict-message">${escapeHtml(c.message)}</span>
               </div>
             `).join('')}
           </div>
@@ -779,10 +790,10 @@ export class ScaffoldCard extends HTMLElement {
         <div class="target-info">
           <div class="target-path">
             <span class="path-label">Creating project at:</span>
-            <span class="path-value mono">${this.escapeHtml(targetDir)}</span>
+            <span class="path-value mono">${escapeHtml(targetDir)}</span>
           </div>
           <div class="target-reason">
-            <span class="reason-badge">${this.escapeHtml(reasonLabels[reason] || reason)}</span>
+            <span class="reason-badge">${escapeHtml(reasonLabels[reason] || reason)}</span>
           </div>
         </div>
       </div>
@@ -814,13 +825,13 @@ export class ScaffoldCard extends HTMLElement {
         <div class="reference-header">
           <span class="reference-icon">📎</span>
           <span class="reference-label">Design References</span>
-          <span class="reference-badge">${this.escapeHtml(intentLabels[intent] || 'Reference')}</span>
+          <span class="reference-badge">${escapeHtml(intentLabels[intent] || 'Reference')}</span>
         </div>
         
         ${images.length > 0 ? `
           <div class="thumbnail-strip">
             ${images.map((img: any) => `
-              <div class="thumbnail" title="${this.escapeHtml(img.path || img.id)}">
+              <div class="thumbnail" title="${escapeHtml(img.path || img.id)}">
                 <div class="thumbnail-placeholder">
                   <span class="thumbnail-icon">🖼️</span>
                 </div>
@@ -840,9 +851,9 @@ export class ScaffoldCard extends HTMLElement {
                 domain = url.substring(0, 30);
               }
               return `
-                <div class="url-item" title="${this.escapeHtml(url)}">
+                <div class="url-item" title="${escapeHtml(url)}">
                   <span class="url-favicon">🔗</span>
-                  <span class="url-domain">${this.escapeHtml(domain)}</span>
+                  <span class="url-domain">${escapeHtml(domain)}</span>
                 </div>
               `;
             }).join('')}
@@ -898,11 +909,11 @@ export class ScaffoldCard extends HTMLElement {
           <span class="badge blocked">${reasonLabels[reason] || 'Blocked'}</span>
         </div>
         <div class="block-info">
-          <div class="block-message">${this.escapeHtml(message)}</div>
+          <div class="block-message">${escapeHtml(message)}</div>
           ${targetDir ? `
             <div class="detail-row">
               <span class="detail-label">Target:</span>
-              <span class="detail-value mono">${this.escapeHtml(this.truncatePath(targetDir))}</span>
+              <span class="detail-value mono">${escapeHtml(this.truncatePath(targetDir))}</span>
             </div>
           ` : ''}
         </div>
@@ -943,13 +954,13 @@ export class ScaffoldCard extends HTMLElement {
           ${packs.map(pack => `
             <div class="pack-option ${currentPackId === pack.id ? 'selected' : ''}" 
                  data-action="select_pack" 
-                 data-pack-id="${this.escapeHtml(pack.id)}">
+                 data-pack-id="${escapeHtml(pack.id)}">
               <div class="pack-preview" style="background: ${pack.gradient};">
-                <span class="pack-letter">${this.escapeHtml(pack.name.charAt(0))}</span>
+                <span class="pack-letter">${escapeHtml(pack.name.charAt(0))}</span>
               </div>
               <div class="pack-info">
-                <div class="pack-title">${this.escapeHtml(pack.name)}</div>
-                <div class="pack-vibe">${this.escapeHtml(pack.vibe)}</div>
+                <div class="pack-title">${escapeHtml(pack.name)}</div>
+                <div class="pack-vibe">${escapeHtml(pack.vibe)}</div>
               </div>
               ${currentPackId === pack.id ? '<span class="check-mark">✓</span>' : ''}
             </div>
@@ -976,7 +987,7 @@ export class ScaffoldCard extends HTMLElement {
         </div>
         <div class="selection-confirm">
           <span class="selection-icon">🎨</span>
-          <span class="selection-text">Design style changed to <strong>${this.escapeHtml(packName)}</strong></span>
+          <span class="selection-text">Design style changed to <strong>${escapeHtml(packName)}</strong></span>
         </div>
       </div>
     `;
@@ -1001,8 +1012,8 @@ export class ScaffoldCard extends HTMLElement {
         </div>
         <div class="decision-details">
           ${isApproved ? `
-            ${recipe ? `<span class="detail-chip">Recipe: ${this.escapeHtml(recipe)}</span>` : ''}
-            ${nextCommand ? `<span class="detail-chip">Next: ${this.escapeHtml(this.truncateText(nextCommand, 40))}</span>` : ''}
+            ${recipe ? `<span class="detail-chip">Recipe: ${escapeHtml(recipe)}</span>` : ''}
+            ${nextCommand ? `<span class="detail-chip">Next: ${escapeHtml(this.truncateText(nextCommand, 40))}</span>` : ''}
           ` : `
             <span class="decision-text">User rejected the scaffold proposal</span>
           `}
@@ -1026,13 +1037,13 @@ export class ScaffoldCard extends HTMLElement {
         <div class="apply-status">
           <div class="status-item">
             <span class="status-icon">🔄</span>
-            <span class="status-text">Setting up ${this.escapeHtml(recipe)} project...</span>
+            <span class="status-text">Setting up ${escapeHtml(recipe)} project...</span>
           </div>
         </div>
         ${command ? `
           <div class="command-preview">
             <span class="command-label">Running:</span>
-            <code class="command-text">${this.escapeHtml(command)}</code>
+            <code class="command-text">${escapeHtml(command)}</code>
           </div>
         ` : ''}
         ${filesCount > 0 ? `
@@ -1075,7 +1086,7 @@ export class ScaffoldCard extends HTMLElement {
           ${command ? `
             <div class="command-preview">
               <span class="command-label">Command:</span>
-              <code class="command-text">${this.escapeHtml(command)}</code>
+              <code class="command-text">${escapeHtml(command)}</code>
             </div>
           ` : ''}
           <div class="terminal-notice">
@@ -1099,7 +1110,7 @@ export class ScaffoldCard extends HTMLElement {
         <div class="completion-section ready">
           <span class="completion-icon">✅</span>
           <span class="completion-text">
-            ${recipe ? `${this.escapeHtml(recipe)} scaffold applied successfully!` : 'Scaffold applied successfully!'}
+            ${recipe ? `${escapeHtml(recipe)} scaffold applied successfully!` : 'Scaffold applied successfully!'}
           </span>
         </div>
         <div class="apply-stats">
@@ -1121,7 +1132,7 @@ export class ScaffoldCard extends HTMLElement {
         ${targetDir ? `
           <div class="detail-row">
             <span class="detail-label">Location:</span>
-            <span class="detail-value mono">${this.escapeHtml(this.truncatePath(targetDir))}</span>
+            <span class="detail-value mono">${escapeHtml(this.truncatePath(targetDir))}</span>
           </div>
         ` : ''}
       </div>
@@ -1140,7 +1151,7 @@ export class ScaffoldCard extends HTMLElement {
         </div>
         <div class="completion-section cancelled">
           <span class="completion-icon">🔙</span>
-          <span class="completion-text">${this.escapeHtml(reason)}</span>
+          <span class="completion-text">${escapeHtml(reason)}</span>
         </div>
       </div>
     `;
@@ -1161,8 +1172,8 @@ export class ScaffoldCard extends HTMLElement {
           <span class="badge applying">In Progress</span>
         </div>
         <div class="progress-section">
-          <div class="progress-message">${this.escapeHtml(message)}</div>
-          ${phase ? `<div class="progress-phase">Phase: ${this.escapeHtml(phase)}</div>` : ''}
+          <div class="progress-message">${escapeHtml(message)}</div>
+          ${phase ? `<div class="progress-phase">Phase: ${escapeHtml(phase)}</div>` : ''}
           ${progress > 0 ? `
             <div class="progress-bar-container">
               <div class="progress-bar" style="width: ${progress}%"></div>
@@ -1188,7 +1199,7 @@ export class ScaffoldCard extends HTMLElement {
         <div class="design-applied-section">
           <div class="design-applied-info">
             <span class="design-icon">✨</span>
-            <span class="design-text">Applied <strong>${this.escapeHtml(designPack)}</strong> styling</span>
+            <span class="design-text">Applied <strong>${escapeHtml(designPack)}</strong> styling</span>
           </div>
           ${filesModified > 0 ? `
             <div class="files-modified-count">${filesModified} file(s) styled</div>
@@ -1196,7 +1207,7 @@ export class ScaffoldCard extends HTMLElement {
           ${modifiedFiles.length > 0 ? `
             <div class="modified-files-list">
               ${modifiedFiles.slice(0, 3).map((f: string) => `
-                <div class="modified-file">📄 ${this.escapeHtml(this.truncatePath(f, 40))}</div>
+                <div class="modified-file">📄 ${escapeHtml(this.truncatePath(f, 40))}</div>
               `).join('')}
               ${modifiedFiles.length > 3 ? `<div class="more-files">+${modifiedFiles.length - 3} more</div>` : ''}
             </div>
@@ -1227,8 +1238,8 @@ export class ScaffoldCard extends HTMLElement {
                 <div class="next-step-item">
                   <span class="step-number">${idx + 1}</span>
                   <div class="step-content">
-                    <span class="step-title">${this.escapeHtml(step.title || step.label || String(step))}</span>
-                    ${step.description ? `<span class="step-desc" style="font-size:11px;color:var(--vscode-descriptionForeground);display:block;margin-top:2px">${this.escapeHtml(step.description)}</span>` : ''}
+                    <span class="step-title">${escapeHtml(step.title || step.label || String(step))}</span>
+                    ${step.description ? `<span class="step-desc" style="font-size:11px;color:var(--vscode-descriptionForeground);display:block;margin-top:2px">${escapeHtml(step.description)}</span>` : ''}
                   </div>
                 </div>
               `).join('')}
@@ -1238,7 +1249,7 @@ export class ScaffoldCard extends HTMLElement {
           ${projectPath ? `
             <div class="project-path-note">
               <span class="path-icon">📁</span>
-              <span class="path-text">${this.escapeHtml(this.truncatePath(projectPath, 50))}</span>
+              <span class="path-text">${escapeHtml(this.truncatePath(projectPath, 50))}</span>
             </div>
           ` : ''}
         </div>
@@ -1260,18 +1271,18 @@ export class ScaffoldCard extends HTMLElement {
           <span class="badge ready">${totalFiles} file${totalFiles !== 1 ? 's' : ''}</span>
         </div>
         <div class="status-message" style="padding:8px 16px 4px;font-size:12px;color:var(--vscode-descriptionForeground);">
-          ${this.escapeHtml(summary)}
+          ${escapeHtml(summary)}
         </div>
         ${createdFiles.length > 0 ? `
           <div style="padding:4px 16px 8px;font-size:11px;color:var(--vscode-descriptionForeground);">
             <div style="font-weight:600;margin-bottom:2px;">Created:</div>
-            ${createdFiles.map(f => `<div style="padding-left:8px;font-family:monospace;">\u2795 ${this.escapeHtml(f)}</div>`).join('')}
+            ${createdFiles.map(f => `<div style="padding-left:8px;font-family:monospace;">\u2795 ${escapeHtml(f)}</div>`).join('')}
           </div>
         ` : ''}
         ${modifiedFiles.length > 0 ? `
           <div style="padding:0 16px 12px;font-size:11px;color:var(--vscode-descriptionForeground);">
             <div style="font-weight:600;margin-bottom:2px;">Modified:</div>
-            ${modifiedFiles.map(f => `<div style="padding-left:8px;font-family:monospace;">\u{270F}\uFE0F ${this.escapeHtml(f)}</div>`).join('')}
+            ${modifiedFiles.map(f => `<div style="padding-left:8px;font-family:monospace;">\u{270F}\uFE0F ${escapeHtml(f)}</div>`).join('')}
           </div>
         ` : ''}
       </div>
@@ -1297,18 +1308,18 @@ export class ScaffoldCard extends HTMLElement {
           <div class="final-icon">${success ? '🎉' : '⚠️'}</div>
           <div class="final-message">
             ${success 
-              ? `<strong>${this.escapeHtml(projectName)}</strong> is ready for development!`
+              ? `<strong>${escapeHtml(projectName)}</strong> is ready for development!`
               : 'Project setup encountered an issue'}
           </div>
         </div>
         ${success ? `
           <div class="final-details">
-            ${recipe ? `<span class="detail-chip">📦 ${this.escapeHtml(recipe)}</span>` : ''}
+            ${recipe ? `<span class="detail-chip">📦 ${escapeHtml(recipe)}</span>` : ''}
             ${designPackApplied ? `<span class="detail-chip">🎨 Design Applied</span>` : ''}
           </div>
           <div class="final-hint">
             <span class="hint-icon">💡</span>
-            <span class="hint-text">Open a terminal and run <code>cd ${this.escapeHtml(projectName)}</code> to get started</span>
+            <span class="hint-text">Open a terminal and run <code>cd ${escapeHtml(projectName)}</code> to get started</span>
           </div>
         ` : ''}
       </div>
@@ -1322,10 +1333,10 @@ export class ScaffoldCard extends HTMLElement {
       <div class="scaffold-card ${status === 'pass' ? 'applied' : status === 'block' ? 'cancelled' : 'starting'}">
         <div class="header">
           <span class="icon">${icon}</span>
-          <h3>${this.escapeHtml(title)}</h3>
+          <h3>${escapeHtml(title)}</h3>
           <span class="badge ${badgeClass}">${badgeText}</span>
         </div>
-        ${message ? `<div class="status-message" style="padding:8px 16px 12px;font-size:12px;color:var(--vscode-descriptionForeground);">${this.escapeHtml(message)}</div>` : ''}
+        ${message ? `<div class="status-message" style="padding:8px 16px 12px;font-size:12px;color:var(--vscode-descriptionForeground);">${escapeHtml(message)}</div>` : ''}
       </div>
     `;
   }
@@ -2382,14 +2393,6 @@ export class ScaffoldCard extends HTMLElement {
     }
   }
 
-  private escapeHtml(text: string): string {
-    return text
-      .replace(/&/g, '&amp;')
-      .replace(/</g, '&lt;')
-      .replace(/>/g, '&gt;')
-      .replace(/"/g, '&quot;')
-      .replace(/'/g, '&#039;');
-  }
 }
 
 if (!customElements.get('scaffold-card')) {

@@ -15,6 +15,7 @@
  */
 
 import { Event } from '../types';
+import { escapeHtml, formatTimestamp } from '../utils/cardHelpers';
 
 export function renderPlanCard(event: Event): string {
   console.log('🎨 [PlanCard] renderPlanCard called');
@@ -55,7 +56,7 @@ export function renderPlanCard(event: Event): string {
         <div class="card-header">
           <span class="icon">📋</span>
           <span class="title">Plan Error</span>
-          <span class="timestamp">${formatTime(event.timestamp)}</span>
+          <span class="timestamp">${formatTimestamp(event.timestamp)}</span>
         </div>
         <div class="card-body">
           <p class="error-message">Plan data is missing or malformed.</p>
@@ -162,7 +163,7 @@ export function renderPlanCard(event: Event): string {
         <span class="icon">${cardIcon}</span>
         <span class="title">${cardTitle}</span>
         ${versionBadgeHtml}
-        <span class="timestamp">${formatTime(event.timestamp)}</span>
+        <span class="timestamp">${formatTimestamp(event.timestamp)}</span>
       </div>
       <div class="card-body">
         <div class="plan-goal">
@@ -355,26 +356,3 @@ export function renderPlanCard(event: Event): string {
   `;
 }
 
-/**
- * Format timestamp to human-readable time
- */
-function formatTime(timestamp: string): string {
-  const date = new Date(timestamp);
-  return date.toLocaleTimeString('en-US', {
-    hour: '2-digit',
-    minute: '2-digit',
-    second: '2-digit',
-  });
-}
-
-/**
- * Escape HTML to prevent XSS
- */
-function escapeHtml(text: string): string {
-  return text
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#039;');
-}
