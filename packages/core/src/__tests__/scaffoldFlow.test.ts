@@ -503,6 +503,66 @@ describe('deriveScaffoldFlowState (Replay Safety)', () => {
     expect(state?.scaffoldId).toBe('scaffold_abc');
   });
 
+  it('should prefer latest decision event when both legacy and new types exist', () => {
+    const t1 = '2026-02-10T10:00:00.000Z';
+    const t2 = '2026-02-10T10:00:01.000Z';
+    const t3 = '2026-02-10T10:00:02.000Z';
+    const events: Event[] = [
+      {
+        event_id: 'e1',
+        task_id: 'task-123',
+        timestamp: t1,
+        type: 'scaffold_started',
+        mode: 'PLAN',
+        stage: 'plan',
+        payload: {
+          scaffold_id: 'scaffold_abc',
+          run_id: 'run-123',
+          user_prompt: 'create a new app',
+          created_at_iso: t1,
+        },
+        evidence_ids: [],
+        parent_event_id: null,
+      },
+      {
+        event_id: 'e2',
+        task_id: 'task-123',
+        timestamp: t2,
+        type: 'decision_point_needed',
+        mode: 'PLAN',
+        stage: 'plan',
+        payload: {
+          decision_type: 'scaffold_approval',
+          scaffold_id: 'scaffold_abc',
+        },
+        evidence_ids: [],
+        parent_event_id: null,
+      },
+      {
+        event_id: 'e3',
+        task_id: 'task-123',
+        timestamp: t3,
+        type: 'scaffold_decision_requested',
+        mode: 'PLAN',
+        stage: 'plan',
+        payload: {
+          scaffold_id: 'scaffold_abc',
+          title: 'Create new project',
+          description: 'Review proposal',
+          options: [],
+          context: { flow: 'scaffold', scaffold_id: 'scaffold_abc' },
+        },
+        evidence_ids: [],
+        parent_event_id: null,
+      },
+    ];
+
+    const state = deriveScaffoldFlowState(events);
+    expect(state?.status).toBe('awaiting_decision');
+    // Should use the latest event's timestamp (scaffold_decision_requested), not the legacy one
+    expect(state?.lastEventAt).toBe(t3);
+  });
+
   it('should prefer scaffold_decision_requested over legacy decision_point_needed', () => {
     const now = new Date().toISOString();
     const events: Event[] = [

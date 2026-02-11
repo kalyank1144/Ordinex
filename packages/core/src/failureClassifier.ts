@@ -388,11 +388,12 @@ function isFileNotFoundError(msg: string): boolean {
 }
 
 function isDirMissingError(msg: string): boolean {
-  // Must not match the generic "no such file or directory" ENOENT message.
-  // Only match when "directory" is the specific subject (e.g., "ENOENT: directory not found",
-  // "no such directory", "directory does not exist").
-  if (/no\s+such\s+file\s+or\s+directory/i.test(msg)) return false;
-  return /directory\s+not\s+found|no\s+such\s+directory|directory\s+does\s+not\s+exist|ENOENT.*\bdirectory\b/i.test(msg);
+  // Explicit directory-related error messages
+  if (/directory\s+not\s+found|no\s+such\s+directory|directory\s+does\s+not\s+exist/i.test(msg)) return true;
+  // ENOENT with directory operations (scandir, readdir, mkdir, rmdir, opendir)
+  // e.g. "ENOENT: no such file or directory, scandir '/path/to/dir'"
+  if (/ENOENT/i.test(msg) && /\b(scandir|readdir|mkdir|rmdir|opendir)\b/i.test(msg)) return true;
+  return false;
 }
 
 function isPermissionError(msg: string): boolean {

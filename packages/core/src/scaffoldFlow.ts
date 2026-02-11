@@ -881,14 +881,15 @@ export function deriveScaffoldFlowState(events: Event[]): ScaffoldFlowState | nu
   }
   
   // Check for decision point (scaffold_decision_requested or legacy decision_point_needed)
-  const decisionEvent = events.find(
-    e => (e.type === 'scaffold_decision_requested' &&
-          e.payload.scaffold_id === payload.scaffold_id) ||
-         (e.type === 'decision_point_needed' &&
-          e.payload.decision_type === 'scaffold_approval' &&
-          (e.payload.scaffold_id === payload.scaffold_id ||
-           (e.payload.context as any)?.scaffold_id === payload.scaffold_id))
-  );
+  // Use reverse search to pick the latest matching event when both legacy and new types exist
+  const decisionMatcher = (e: Event) =>
+    (e.type === 'scaffold_decision_requested' &&
+     e.payload.scaffold_id === payload.scaffold_id) ||
+    (e.type === 'decision_point_needed' &&
+     e.payload.decision_type === 'scaffold_approval' &&
+     (e.payload.scaffold_id === payload.scaffold_id ||
+      (e.payload.context as any)?.scaffold_id === payload.scaffold_id));
+  const decisionEvent = events.findLast?.(decisionMatcher) ?? [...events].reverse().find(decisionMatcher);
   
   if (decisionEvent) {
     return {

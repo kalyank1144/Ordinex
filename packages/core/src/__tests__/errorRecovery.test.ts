@@ -384,6 +384,16 @@ describe('D) Modify non-existent file', () => {
       expect(result.code).toBe('DIR_MISSING');
     });
 
+    it('classifies ENOENT scandir as DIR_MISSING not FILE_NOT_FOUND', () => {
+      const error = new Error("ENOENT: no such file or directory, scandir '/app/src/components'");
+      const context = createTestContext({ stage: 'preflight' });
+
+      const result = classifyError(error, context);
+
+      expect(result.category).toBe('WORKSPACE_STATE');
+      expect(result.code).toBe('DIR_MISSING');
+    });
+
     it('classifies permission errors', () => {
       const error = new Error('EACCES: permission denied');
       const context = createTestContext({ stage: 'apply', file: '/root/secret' });
