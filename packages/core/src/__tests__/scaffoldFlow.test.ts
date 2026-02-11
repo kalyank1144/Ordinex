@@ -207,39 +207,37 @@ describe('ScaffoldFlowCoordinator', () => {
       expect(proposalEvent?.payload.summary).toContain('Vite');
     });
 
-    it('should emit decision_point_needed event', async () => {
+    it('should emit scaffold_decision_requested event', async () => {
       await coordinator.startScaffoldFlow('run-123', 'create a new app');
-      
-      const decisionEvent = publishedEvents.find(e => e.type === 'decision_point_needed');
+
+      const decisionEvent = publishedEvents.find(e => e.type === 'scaffold_decision_requested');
       expect(decisionEvent).toBeDefined();
-      expect(decisionEvent?.payload.decision_type).toBe('scaffold_approval');
+      expect(decisionEvent?.payload.scaffold_id).toBeDefined();
       expect(decisionEvent?.payload.options).toBeDefined();
     });
 
     it('should include Proceed and Cancel options', async () => {
       await coordinator.startScaffoldFlow('run-123', 'create a new app');
-      
-      const decisionEvent = publishedEvents.find(e => e.type === 'decision_point_needed');
+
+      const decisionEvent = publishedEvents.find(e => e.type === 'scaffold_decision_requested');
       const options = decisionEvent?.payload.options as any[];
-      
-      const proceedOption = options?.find(o => o.action === 'proceed');
-      const cancelOption = options?.find(o => o.action === 'cancel');
-      
+
+      const proceedOption = options?.find((o: any) => o.action === 'proceed');
+      const cancelOption = options?.find((o: any) => o.action === 'cancel');
+
       expect(proceedOption).toBeDefined();
       expect(proceedOption?.primary).toBe(true);
       expect(cancelOption).toBeDefined();
     });
 
-    it('should include disabled Change Style option', async () => {
+    it('should include Change Style option', async () => {
       await coordinator.startScaffoldFlow('run-123', 'create a new app');
-      
-      const decisionEvent = publishedEvents.find(e => e.type === 'decision_point_needed');
+
+      const decisionEvent = publishedEvents.find(e => e.type === 'scaffold_decision_requested');
       const options = decisionEvent?.payload.options as any[];
-      
-      const changeStyleOption = options?.find(o => o.action === 'change_style');
+
+      const changeStyleOption = options?.find((o: any) => o.action === 'change_style');
       expect(changeStyleOption).toBeDefined();
-      expect(changeStyleOption?.disabled).toBe(true);
-      expect(changeStyleOption?.disabledReason).toContain('35.4');
     });
 
     it('should update state to awaiting_decision', async () => {
@@ -301,15 +299,15 @@ describe('ScaffoldFlowCoordinator', () => {
     });
   });
 
-  describe('handleUserAction - change_style', () => {
-    it('should treat change_style as cancel in 35.1', async () => {
+  describe('handleStyleChange', () => {
+    it('should show style picker and keep flow in awaiting_decision', async () => {
       await coordinator.startScaffoldFlow('run-123', 'create a new app');
-      const state = await coordinator.handleUserAction('change_style');
-      
-      expect(state.completionStatus).toBe('cancelled');
-      expect(publishedEvents.some(e => 
-        e.type === 'scaffold_completed' && 
-        (e.payload.reason as string).includes('35.4')
+      const state = await coordinator.handleStyleChange();
+
+      expect(state.status).toBe('awaiting_decision');
+      expect(coordinator.isStylePickerActive()).toBe(true);
+      expect(publishedEvents.some(e =>
+        e.type === 'scaffold_style_selection_requested'
       )).toBe(true);
     });
   });

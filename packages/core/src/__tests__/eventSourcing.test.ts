@@ -532,7 +532,8 @@ describe('Integration: Full Event Sourcing Flow', () => {
     // Verify state reconstructed correctly
     expect(state.task_id).toBe(taskId);
     expect(state.mode).toBe('PLAN');
-    expect(state.status).toBe('complete');
+    // plan_created in PLAN mode sets status to 'paused' (awaiting approval)
+    expect(state.status).toBe('paused');
   });
 
   it('should maintain order and consistency across operations', async () => {

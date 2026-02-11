@@ -27,6 +27,16 @@ export function getUtilsJs(): string {
         });
       }
 
+      function formatDuration(ms) {
+        if (!ms || ms < 0) return '0s';
+        var seconds = Math.floor(ms / 1000);
+        if (seconds < 60) return seconds + 's';
+        var minutes = Math.floor(seconds / 60);
+        if (minutes < 60) return minutes + 'm ' + (seconds % 60) + 's';
+        var hours = Math.floor(minutes / 60);
+        return hours + 'h ' + (minutes % 60) + 'm';
+      }
+
       function humanizeModelName(modelId) {
         if (!modelId) return '';
         var modelMap = {

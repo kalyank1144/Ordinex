@@ -7,6 +7,8 @@
  * - All tool activity is observable
  */
 
+import { describe, test, expect, beforeEach, afterEach } from 'vitest';
+
 import { EventBus } from '../eventBus';
 import { EventStore } from '../eventStore';
 import { ModeManager } from '../modeManager';
@@ -55,7 +57,7 @@ describe('ToolExecutor', () => {
   });
 
   describe('Mode Gating Enforcement', () => {
-    test('read tools are blocked in ANSWER mode', async () => {
+    test('read tools are allowed in ANSWER mode but may fail on missing file', async () => {
       modeManager.setMode('ANSWER');
 
       const invocation: ToolInvocation = {
@@ -65,14 +67,16 @@ describe('ToolExecutor', () => {
         requiresApproval: false,
       };
 
-      await expect(toolExecutor.executeTool(invocation)).rejects.toThrow(
-        /not permitted in ANSWER mode/
-      );
+      // read_file IS permitted in ANSWER mode (MODE_PERMISSIONS.ANSWER includes 'read_file'),
+      // so the tool proceeds but fails because the file doesn't exist.
+      const result = await toolExecutor.executeTool(invocation);
+      expect(result.success).toBe(false);
+      expect(result.error).toBeDefined();
 
-      // Verify mode_violation was emitted
+      // Verify NO mode_violation was emitted (read is allowed in ANSWER)
       const events = eventStore.getEventsByTaskId(taskId);
       const violations = events.filter(e => e.type === 'mode_violation');
-      expect(violations.length).toBe(1);
+      expect(violations.length).toBe(0);
     });
 
     test('write tools are blocked in PLAN mode', async () => {
@@ -365,7 +369,7 @@ describe('ToolExecutor', () => {
       const invocation: ToolInvocation = {
         toolName: 'executeCommand',
         category: 'exec',
-        inputs: { 
+        inputs: {
           command: 'curl -H "Authorization: Bearer secret-token"',
           token: 'super-secret',
           password: 'my-password'
@@ -373,28 +377,40 @@ describe('ToolExecutor', () => {
         requiresApproval: true,
       };
 
+      // Start execution (will block on approval)
       const executionPromise = toolExecutor.executeTool(invocation);
+
+      // Wait for approval_requested to be emitted
       await new Promise(resolve => setTimeout(resolve, 50));
 
+      // tool_start is emitted AFTER approval resolves, so we must approve first
+      const pendingApprovals = approvalManager.getPendingApprovals();
+      expect(pendingApprovals.length).toBe(1);
+
+      // Approve the request so execution proceeds and tool_start is emitted
+      await approvalManager.resolveApproval(
+        taskId,
+        'MISSION',
+        'test',
+        pendingApprovals[0].approval_id,
+        'approved'
+      );
+
+      // Wait for tool execution to complete
+      const result = await executionPromise;
+      expect(result.success).toBe(true);
+
+      // Now check tool_start events for redacted inputs
       const events = eventStore.getEventsByTaskId(taskId);
       const toolStarts = events.filter(e => e.type === 'tool_start');
-      
+      expect(toolStarts.length).toBe(1);
+
       // Verify sensitive inputs are redacted
       expect(toolStarts[0].payload.inputs).toEqual({
         command: 'curl -H "Authorization: Bearer secret-token"',
         token: '[REDACTED]',
         password: '[REDACTED]'
       });
-
-      // Cleanup
-      const pendingApprovals = approvalManager.getPendingApprovals();
-      await approvalManager.denyApproval(
-        taskId,
-        'MISSION',
-        'test',
-        pendingApprovals[0].approval_id
-      );
-      await executionPromise.catch(() => {}); // Ignore error
     });
   });
 

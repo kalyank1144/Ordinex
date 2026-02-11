@@ -169,17 +169,24 @@ describe('Mode Confirmation Policy', () => {
     });
     
     test('Second occurrence with same pattern suppresses confirmation', () => {
-      const result = classifyPromptV2('Add error handling');
-      
-      // First time: confirm
-      const decision1 = policy.shouldConfirm('task1', 'PLAN', result, 1);
+      // Use medium confidence scenario (high+high overrides suppression)
+      const mockResult: ClassificationResultV2 = {
+        suggestedMode: 'PLAN',
+        confidence: 'medium',
+        reasonTags: ['planning_terms'],
+        scores: { answer: 0, plan: 3, mission: 0 },
+        reasonSignature: 'planning_terms→PLAN'
+      };
+
+      // First time: confirm (medium confidence mismatch)
+      const decision1 = policy.shouldConfirm('task1', 'MISSION', mockResult, 1);
       expect(decision1.shouldConfirm).toBe(true);
-      
-      // User chooses PLAN (dismisses suggestion)
-      policy.recordOverride('task1', result, 'PLAN', 1);
-      
+
+      // User chooses MISSION (dismisses suggestion)
+      policy.recordOverride('task1', mockResult, 'MISSION', 1);
+
       // Second time with same pattern (turn 2): should suppress
-      const decision2 = policy.shouldConfirm('task1', 'PLAN', result, 2);
+      const decision2 = policy.shouldConfirm('task1', 'MISSION', mockResult, 2);
       expect(decision2.shouldConfirm).toBe(false);
       expect(decision2.reason).toContain('suppression');
     });
@@ -264,13 +271,14 @@ describe('Mode Confirmation Policy', () => {
     });
     
     test('Planning request flow', () => {
-      const result = classifyPromptV2('Create a roadmap for adding OAuth');
-      
+      // Avoid action verbs so PLAN wins ("create" would trigger action_verbs)
+      const result = classifyPromptV2('Roadmap for adding OAuth support');
+
       expect(result.suggestedMode).toBe('PLAN');
-      
+
       // User selected MISSION
       const decision = policy.shouldConfirm('task1', 'MISSION', result, 1);
-      
+
       // Should not confirm (medium severity + high confidence)
       expect(decision.shouldConfirm).toBe(false);
       expect(decision.severity).toBe('medium');

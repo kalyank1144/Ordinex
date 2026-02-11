@@ -199,7 +199,8 @@ export function getRenderersJs(): string {
         'process_started', 'process_ready', 'process_output', 'process_stopped', 'process_failed',
         'execution_paused', 'execution_resumed', 'execution_stopped',
         'generated_tool_proposed',
-        'task_interrupted',
+        'task_interrupted', 'task_recovery_started', 'task_discarded',
+        'undo_performed', 'recovery_action_taken',
         'scope_expansion_requested', 'scope_expansion_resolved',
         'next_steps_shown',
         'autonomy_loop_detected',
@@ -1477,6 +1478,117 @@ export function getRenderersJs(): string {
           \`;
         }
 
+        // Step 47: Crash recovery cards — inline versions matching CrashRecoveryCard.ts
+        if (event.type === 'task_interrupted') {
+          const p = event.payload;
+          const tId = (p.task_id) || event.task_id;
+          const isLikelyCrash = !!p.is_likely_crash;
+          const recommendedAction = p.recommended_action || '';
+          const options = (p.options) || [];
+          const lastCheckpointId = p.last_checkpoint_id || null;
+          const mode = p.mode || 'ANSWER';
+          const stage = p.stage || 'none';
+          const eventCount = p.event_count || 0;
+          const timeSinceMs = p.time_since_interruption_ms || 0;
+          const reason = p.reason || '';
+          const title = isLikelyCrash ? 'Interrupted Task Found' : 'Paused Task Found';
+          const icon = isLikelyCrash ? '⚠️' : '⏸️';
+          const borderColor = isLikelyCrash ? 'var(--vscode-charts-orange)' : 'var(--vscode-charts-yellow)';
+          const timeSinceStr = formatDuration(timeSinceMs);
+          const buttonsHtml = options
+            .filter(function(opt) { return opt.enabled; })
+            .map(function(opt) {
+              const isRec = opt.id === recommendedAction;
+              const btnCls = isRec ? 'approval-btn approve' : 'approval-btn';
+              const cpArg = opt.id === 'restore_checkpoint' && lastCheckpointId
+                ? ", '" + escapeJsString(lastCheckpointId) + "'"
+                : '';
+              return '<button class="' + btnCls + '" onclick="handleCrashRecovery(\'' + escapeJsString(tId) + "', '" + escapeJsString(opt.id) + "'" + cpArg + ')" style="flex:1;padding:8px 12px;border:none;cursor:pointer;border-radius:3px;background:' + (isRec ? 'var(--vscode-button-background)' : 'var(--vscode-button-secondaryBackground)') + ';color:' + (isRec ? 'var(--vscode-button-foreground)' : 'var(--vscode-button-secondaryForeground)') + ';">' + escapeHtml(opt.label) + (isRec ? ' (Recommended)' : '') + '</button>';
+            }).join('');
+          return \`
+            <div class="approval-card" data-task-id="\${escapeHtml(tId)}" style="border: 2px solid \${borderColor};">
+              <div class="approval-card-header">
+                <div class="approval-card-header-left">
+                  <span class="approval-icon">\${icon}</span>
+                  <div class="approval-card-title">
+                    <div class="approval-type-label">\${escapeHtml(title)}</div>
+                    <div class="approval-id">Task: \${escapeHtml(String(tId).substring(0, 12))}...</div>
+                  </div>
+                </div>
+              </div>
+              <div class="approval-card-body">
+                <div class="approval-summary">\${escapeHtml(reason)}</div>
+                <div class="approval-details" style="margin: 8px 0;">
+                  <div class="detail-row"><span class="detail-label">Mode:</span><span class="detail-value">\${escapeHtml(mode)}</span></div>
+                  <div class="detail-row"><span class="detail-label">Stage:</span><span class="detail-value">\${escapeHtml(stage)}</span></div>
+                  <div class="detail-row"><span class="detail-label">Events:</span><span class="detail-value">\${eventCount}</span></div>
+                  <div class="detail-row"><span class="detail-label">Interrupted:</span><span class="detail-value">\${timeSinceStr} ago</span></div>
+                </div>
+              </div>
+              <div class="approval-card-actions" style="display: flex; gap: 8px; margin-top: 8px;">
+                \${buttonsHtml}
+              </div>
+            </div>
+          \`;
+        }
+        if (event.type === 'task_recovery_started') {
+          const action = event.payload.action || 'resume';
+          return \`
+            <div class="event-card">
+              <div class="event-card-header">
+                <span class="event-icon" style="color: var(--vscode-charts-green)">▶️</span>
+                <span class="event-type">Task Resumed</span>
+                <span class="event-timestamp">\${formatTimestamp(event.timestamp)}</span>
+              </div>
+              <div class="event-summary">Task recovered via: \${escapeHtml(action)}</div>
+            </div>
+          \`;
+        }
+        if (event.type === 'task_discarded') {
+          return \`
+            <div class="event-card">
+              <div class="event-card-header">
+                <span class="event-icon" style="color: var(--vscode-descriptionForeground)">🗑️</span>
+                <span class="event-type">Task Discarded</span>
+                <span class="event-timestamp">\${formatTimestamp(event.timestamp)}</span>
+              </div>
+              <div class="event-summary">Interrupted task cleared — ready for a fresh start</div>
+            </div>
+          \`;
+        }
+
+        // Step 48: Undo performed card
+        if (event.type === 'undo_performed') {
+          const filesRestored = event.payload.files_restored || [];
+          const groupId = event.payload.group_id || '';
+          return \`
+            <div class="event-card" style="border-left-color: var(--vscode-charts-blue);">
+              <div class="event-card-header">
+                <span class="event-icon" style="color: var(--vscode-charts-blue)">↩️</span>
+                <span class="event-type">Undo Applied</span>
+                <span class="event-timestamp">\${formatTimestamp(event.timestamp)}</span>
+              </div>
+              <div class="event-summary">\${filesRestored.length} file(s) restored\${groupId ? ' (group: ' + escapeHtml(groupId.substring(0, 8)) + '...)' : ''}</div>
+            </div>
+          \`;
+        }
+
+        // Step 49: Recovery action taken card
+        if (event.type === 'recovery_action_taken') {
+          const cmd = event.payload.command || event.payload.action || '';
+          const success = event.payload.success !== false;
+          return \`
+            <div class="event-card" style="border-left-color: \${success ? 'var(--vscode-charts-green)' : 'var(--vscode-charts-red)'};">
+              <div class="event-card-header">
+                <span class="event-icon" style="color: \${success ? 'var(--vscode-charts-green)' : 'var(--vscode-charts-red)'}">\${success ? '🔧' : '❌'}</span>
+                <span class="event-type">Recovery Action</span>
+                <span class="event-timestamp">\${formatTimestamp(event.timestamp)}</span>
+              </div>
+              <div class="event-summary">\${escapeHtml(cmd)} — \${success ? 'succeeded' : 'failed'}</div>
+            </div>
+          \`;
+        }
+
         // Special handling for decision_point_needed - render action buttons
         if (event.type === 'decision_point_needed') {
           return renderDecisionPointCard(event);
@@ -2271,6 +2383,110 @@ export function getRenderersJs(): string {
               const overridesApplied = e.payload.overrides_applied;
               return \`Applied to \${usedIn}\${overridesApplied ? ' (with overrides)' : ''}\`;
             }
+          },
+          // Step 47: Crash recovery (fallback — primary rendering is in renderEventCard special handlers)
+          task_interrupted: {
+            icon: '⚠️',
+            title: 'Task Interrupted',
+            color: 'var(--vscode-charts-orange)',
+            getSummary: (e) => e.payload.reason || 'Interrupted task detected'
+          },
+          task_recovery_started: {
+            icon: '▶️',
+            title: 'Task Resumed',
+            color: 'var(--vscode-charts-green)',
+            getSummary: (e) => \`Recovered via: \${e.payload.action || 'resume'}\`
+          },
+          task_discarded: {
+            icon: '🗑️',
+            title: 'Task Discarded',
+            color: 'var(--vscode-descriptionForeground)',
+            getSummary: () => 'Interrupted task cleared'
+          },
+          // Step 48: Undo
+          undo_performed: {
+            icon: '↩️',
+            title: 'Undo Applied',
+            color: 'var(--vscode-charts-blue)',
+            getSummary: (e) => {
+              const files = (e.payload.files_restored || []).length;
+              return \`\${files} file(s) restored\`;
+            }
+          },
+          // Step 49: Error recovery
+          recovery_action_taken: {
+            icon: '🔧',
+            title: 'Recovery Action',
+            color: 'var(--vscode-charts-green)',
+            getSummary: (e) => {
+              const cmd = e.payload.command || e.payload.action || '';
+              const success = e.payload.success !== false;
+              return \`\${cmd} — \${success ? 'succeeded' : 'failed'}\`;
+            }
+          },
+          // W3: Autonomy loop detection
+          autonomy_loop_detected: {
+            icon: '🔄',
+            title: 'Loop Detected',
+            color: 'var(--vscode-charts-red)',
+            getSummary: (e) => \`Type: \${e.payload.loop_type || 'unknown'}\`
+          },
+          autonomy_downgraded: {
+            icon: '⬇️',
+            title: 'Autonomy Downgraded',
+            color: 'var(--vscode-charts-orange)',
+            getSummary: (e) => \`\${e.payload.from_level || '?'} → \${e.payload.to_level || '?'}\`
+          },
+          // V9: Mode policy
+          mode_changed: {
+            icon: '🔀',
+            title: 'Mode Changed',
+            color: 'var(--vscode-charts-purple)',
+            getSummary: (e) => \`\${e.payload.from || '?'} → \${e.payload.to || '?'}\`
+          },
+          mode_violation: {
+            icon: '🚫',
+            title: 'Mode Violation',
+            color: 'var(--vscode-charts-red)',
+            getSummary: (e) => e.payload.reason || 'Unauthorized mode transition'
+          },
+          // V2-V5: Solution captured
+          solution_captured: {
+            icon: '💡',
+            title: 'Solution Captured',
+            color: 'var(--vscode-charts-green)',
+            getSummary: (e) => e.payload.title || 'Solution saved to memory'
+          },
+          // V6-V8: Generated tools
+          generated_tool_proposed: {
+            icon: '🔧',
+            title: 'Tool Proposed',
+            color: 'var(--vscode-charts-yellow)',
+            getSummary: (e) => e.payload.tool_name || 'New tool proposed'
+          },
+          generated_tool_approved: {
+            icon: '✅',
+            title: 'Tool Approved',
+            color: 'var(--vscode-charts-green)',
+            getSummary: (e) => e.payload.tool_name || 'Tool approved'
+          },
+          generated_tool_run_started: {
+            icon: '▶️',
+            title: 'Tool Running',
+            color: 'var(--vscode-charts-blue)',
+            getSummary: (e) => e.payload.tool_name || 'Running tool'
+          },
+          generated_tool_run_completed: {
+            icon: '✅',
+            title: 'Tool Run Complete',
+            color: 'var(--vscode-charts-green)',
+            getSummary: (e) => e.payload.tool_name || 'Tool run completed'
+          },
+          generated_tool_run_failed: {
+            icon: '❌',
+            title: 'Tool Run Failed',
+            color: 'var(--vscode-charts-red)',
+            getSummary: (e) => e.payload.error || 'Tool execution failed'
           }
         };
         return eventCardMap[type];

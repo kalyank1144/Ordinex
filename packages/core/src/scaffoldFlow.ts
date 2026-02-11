@@ -879,12 +879,14 @@ export function deriveScaffoldFlowState(events: Event[]): ScaffoldFlowState | nu
     };
   }
   
-  // Check for decision point
+  // Check for decision point (scaffold_decision_requested or legacy decision_point_needed)
   const decisionEvent = events.find(
-    e => e.type === 'decision_point_needed' &&
-         e.payload.decision_type === 'scaffold_approval' &&
-         (e.payload.scaffold_id === payload.scaffold_id ||
-          (e.payload.context as any)?.scaffold_id === payload.scaffold_id)
+    e => (e.type === 'scaffold_decision_requested' &&
+          e.payload.scaffold_id === payload.scaffold_id) ||
+         (e.type === 'decision_point_needed' &&
+          e.payload.decision_type === 'scaffold_approval' &&
+          (e.payload.scaffold_id === payload.scaffold_id ||
+           (e.payload.context as any)?.scaffold_id === payload.scaffold_id))
   );
   
   if (decisionEvent) {

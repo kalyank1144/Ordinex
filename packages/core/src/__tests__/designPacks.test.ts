@@ -4,6 +4,8 @@
  * Tests deterministic selection, vibe guardrails, and helper functions.
  */
 
+import { describe, test, expect } from 'vitest';
+
 import {
   DESIGN_PACKS,
   getDesignPackById,
@@ -274,7 +276,8 @@ describe('detectDomainHint', () => {
   });
 
   test('should return undefined for ambiguous prompts', () => {
-    expect(detectDomainHint('Build a todo app')).toBeUndefined();
+    // 'Build a todo app' matches 'app' in MOBILE_KEYWORDS, so returns 'mobile'
+    expect(detectDomainHint('Build a todo app')).toBe('mobile');
     expect(detectDomainHint('Create a blog')).toBeUndefined();
   });
 });

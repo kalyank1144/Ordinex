@@ -36,7 +36,7 @@ const WEIGHTS = {
   PLANNING_WITH_FILE: 1.0,       // "Plan how to fix src/..." (bonus to PLAN)
   
   // ANSWER boosters
-  QUESTION_FORM: 1.5,            // "What is...?", "How does..."
+  QUESTION_FORM: 2.5,            // "What is...?", "How does..."
   
   // Modifiers
   ACTION_OVERRIDES_QUESTION: true // "Can you add X?" → MISSION despite "?"
