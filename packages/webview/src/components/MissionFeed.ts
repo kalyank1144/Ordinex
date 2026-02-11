@@ -1356,7 +1356,7 @@ export const EVENT_CARD_MAP: Record<EventType, EventCardConfig> = {
  */
 const INLINE_APPROVAL_TYPES = new Set([
   'plan_approval', 'apply_diff', 'diff',
-  'generated_tool', 'generated_tool_run', 'scope_expansion'
+  'generated_tool', 'generated_tool_run'
 ]);
 
 /**
@@ -1377,7 +1377,7 @@ const USER_TIER_EVENTS = new Set<EventType>([
   'scaffold_blocked',
   'process_started', 'process_ready', 'process_output', 'process_stopped', 'process_failed',
   'execution_paused', 'execution_resumed', 'execution_stopped',
-  'generated_tool_proposed',
+  'generated_tool_proposed', 'generated_tool_run_started', 'generated_tool_run_completed', 'generated_tool_run_failed',
   'task_interrupted',
   'scope_expansion_requested', 'scope_expansion_resolved',
   'next_steps_shown',

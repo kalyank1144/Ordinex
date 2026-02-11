@@ -237,7 +237,7 @@ export class ScopeManager {
     const approvalId = `scope_exp_${Date.now()}`;
 
     // Emit scope_expansion_requested event
-    this.eventBus.publish({
+    await this.eventBus.publish({
       event_id: `evt_${Date.now()}_${Math.random()}`,
       task_id: taskId,
       timestamp: new Date().toISOString(),
@@ -260,15 +260,15 @@ export class ScopeManager {
   /**
    * Resolve scope expansion (after user approval/denial)
    */
-  resolveScopeExpansion(
+  async resolveScopeExpansion(
     taskId: string,
     mode: string,
     stage: string,
     approvalId: string,
     approved: boolean,
     request: ScopeExpansionRequest
-  ): void {
-    this.eventBus.publish({
+  ): Promise<void> {
+    await this.eventBus.publish({
       event_id: `evt_${Date.now()}_${Math.random()}`,
       task_id: taskId,
       timestamp: new Date().toISOString(),

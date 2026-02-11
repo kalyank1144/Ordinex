@@ -734,8 +734,9 @@ export function isPathWithinTarget(targetDir: string, writePath: string): boolea
   const resolvedTarget = path.resolve(targetDir);
   const resolvedWrite = path.resolve(writePath);
   
-  // Ensure writePath starts with targetDir
-  return resolvedWrite.startsWith(resolvedTarget + path.sep) || 
+  // Ensure writePath starts with targetDir (avoid double separator for root '/')
+  const prefix = resolvedTarget.endsWith(path.sep) ? resolvedTarget : resolvedTarget + path.sep;
+  return resolvedWrite.startsWith(prefix) ||
          resolvedWrite === resolvedTarget;
 }
 

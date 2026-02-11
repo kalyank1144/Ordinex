@@ -222,22 +222,22 @@ export function classifyError(
     suggested_action = 'RETRY_SAME';
     user_message = 'Response missing required fields. Retrying...';
   }
-  // 3. Check for workspace/file errors
-  else if (isFileNotFoundError(rawError)) {
-    category = 'WORKSPACE_STATE';
-    code = 'FILE_NOT_FOUND';
-    retryable = false;
-    suggested_action = 'ASK_USER';
-    user_message = context.file 
-      ? `File not found: ${context.file}`
-      : 'Required file not found';
-  }
+  // 3. Check for workspace/file errors (DIR_MISSING before FILE_NOT_FOUND — more specific first)
   else if (isDirMissingError(rawError)) {
     category = 'WORKSPACE_STATE';
     code = 'DIR_MISSING';
     retryable = false;
     suggested_action = 'ASK_USER';
     user_message = 'Required directory does not exist';
+  }
+  else if (isFileNotFoundError(rawError)) {
+    category = 'WORKSPACE_STATE';
+    code = 'FILE_NOT_FOUND';
+    retryable = false;
+    suggested_action = 'ASK_USER';
+    user_message = context.file
+      ? `File not found: ${context.file}`
+      : 'Required file not found';
   }
   else if (isPermissionError(rawError)) {
     category = 'PERMISSION';
@@ -388,7 +388,11 @@ function isFileNotFoundError(msg: string): boolean {
 }
 
 function isDirMissingError(msg: string): boolean {
-  return /ENOENT.*directory|directory\s+not\s+found|no\s+such\s+directory/i.test(msg);
+  // Must not match the generic "no such file or directory" ENOENT message.
+  // Only match when "directory" is the specific subject (e.g., "ENOENT: directory not found",
+  // "no such directory", "directory does not exist").
+  if (/no\s+such\s+file\s+or\s+directory/i.test(msg)) return false;
+  return /directory\s+not\s+found|no\s+such\s+directory|directory\s+does\s+not\s+exist|ENOENT.*\bdirectory\b/i.test(msg);
 }
 
 function isPermissionError(msg: string): boolean {

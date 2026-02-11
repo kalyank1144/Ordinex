@@ -512,10 +512,7 @@ describe('preflightDetection', () => {
     });
 
     it('handles root target', () => {
-      // Root '/' + path.sep = '//' so paths under root don't match the startsWith check.
-      // The implementation treats root as not a valid scaffold target.
-      expect(isPathWithinTarget('/', '/any/path/file.ts')).toBe(false);
-      // But root === root is still true
+      expect(isPathWithinTarget('/', '/any/path/file.ts')).toBe(true);
       expect(isPathWithinTarget('/', '/')).toBe(true);
     });
 

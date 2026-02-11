@@ -90,11 +90,10 @@ describe('extractAppName', () => {
     expect(extractAppName('Create app called MyAwesomeApp')).toBe('myawesomeapp');
   });
 
-  it('rejects invalid names', () => {
-    // The pattern /app\s+["']?([a-zA-Z][a-zA-Z0-9_-]*)["']?/i matches first,
-    // capturing 'called' (length >= 2) before 'x' is reached.
-    // So 'called' passes validation and is returned instead of the default.
-    expect(extractAppName('Create app called x')).toBe('called');
+  it('rejects invalid names and falls back to default', () => {
+    // "x" is too short (length < 2), and "called" is a connector keyword
+    // blocked by APP_NAME_BLOCKLIST, so extraction falls back to default.
+    expect(extractAppName('Create app called x')).toBe('my-app');
   });
 });
 

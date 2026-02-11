@@ -146,6 +146,16 @@ const APP_NAME_PATTERNS = [
 ];
 
 /**
+ * Keywords that should never be extracted as app names.
+ * These are connector words that can appear after "app" or "project" in prompts.
+ */
+const APP_NAME_BLOCKLIST = new Set([
+  'called', 'named', 'name', 'for', 'from', 'with', 'using',
+  'in', 'to', 'the', 'a', 'an', 'that', 'which', 'and',
+  'app', 'project', 'application', 'new', 'create', 'build',
+]);
+
+/**
  * Default app name when extraction fails
  */
 export const DEFAULT_APP_NAME = 'my-app';
@@ -163,8 +173,8 @@ export function extractAppName(userPrompt: string): string {
     const match = cleanedPrompt.match(pattern);
     if (match && match[1]) {
       const name = match[1].toLowerCase().replace(/[^a-z0-9-]/g, '-');
-      // Validate: must start with letter, reasonable length
-      if (/^[a-z]/.test(name) && name.length >= 2 && name.length <= 50) {
+      // Validate: must start with letter, reasonable length, not a connector keyword
+      if (/^[a-z]/.test(name) && name.length >= 2 && name.length <= 50 && !APP_NAME_BLOCKLIST.has(name)) {
         return name;
       }
     }

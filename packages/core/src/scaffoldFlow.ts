@@ -828,8 +828,9 @@ function buildScaffoldDecisionOptions(): ScaffoldDecisionOptions {
  */
 export function isScaffoldDecisionPoint(event: Event): boolean {
   return (
-    event.type === 'decision_point_needed' &&
-    event.payload.decision_type === 'scaffold_approval'
+    event.type === 'scaffold_decision_requested' ||
+    (event.type === 'decision_point_needed' &&
+     event.payload.decision_type === 'scaffold_approval')
   );
 }
 

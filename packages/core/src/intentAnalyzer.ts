@@ -156,11 +156,11 @@ const STRUCTURE_PATTERNS = [
  * Ambiguous reference patterns ("this", "it", etc.)
  */
 const REFERENCE_PATTERNS = [
-  /\b(this|it|that|these|those)\b(?!\s+(is|are|was|were|will|would|should|could|can|might|may))/gi,
-  /\bthe (file|function|class|method|component|module)\b/gi,
-  /\bsame (file|thing|approach)\b/gi,
-  /\bhere\b/gi,
-  /\b(above|below|previous|last)\b/gi,
+  /\b(this|it|that|these|those)\b(?!\s+(is|are|was|were|will|would|should|could|can|might|may))/i,
+  /\bthe (file|function|class|method|component|module)\b/i,
+  /\bsame (file|thing|approach)\b/i,
+  /\bhere\b/i,
+  /\b(above|below|previous|last)\b/i,
 ];
 
 /**

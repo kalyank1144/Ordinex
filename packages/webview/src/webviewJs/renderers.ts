@@ -198,7 +198,7 @@ export function getRenderersJs(): string {
         'scaffold_blocked',
         'process_started', 'process_ready', 'process_output', 'process_stopped', 'process_failed',
         'execution_paused', 'execution_resumed', 'execution_stopped',
-        'generated_tool_proposed',
+        'generated_tool_proposed', 'generated_tool_run_started', 'generated_tool_run_completed', 'generated_tool_run_failed',
         'task_interrupted', 'task_recovery_started', 'task_discarded',
         'undo_performed', 'recovery_action_taken',
         'scope_expansion_requested', 'scope_expansion_resolved',
@@ -661,7 +661,7 @@ export function getRenderersJs(): string {
       // These do NOT need a standalone ApprovalCard — suppress both event card + ApprovalCard
       const INLINE_APPROVAL_TYPES = new Set([
         'plan_approval', 'apply_diff', 'diff',
-        'generated_tool', 'generated_tool_run', 'scope_expansion'
+        'generated_tool', 'generated_tool_run'
       ]);
 
       // Mission Timeline Rendering — R1 tiered

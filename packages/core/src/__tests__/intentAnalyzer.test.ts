@@ -137,13 +137,11 @@ describe('IntentAnalyzer', () => {
     });
 
     describe('CLARIFY - Missing Information', () => {
-      it('should select QUICK_ACTION for ambiguous "this" reference without context', () => {
-        // "Fix this" without context resolves to QUICK_ACTION (trivial scope)
-        // because the regex g-flag state in REFERENCE_PATTERNS causes the
-        // ambiguous-reference check in checkCompleteness to miss the match
-        // after resolveReferences already consumed it.
+      it('should select CLARIFY for ambiguous "this" reference without context', () => {
+        // "Fix this" without context has an unresolved ambiguous reference ("this"),
+        // so the analyzer correctly asks the user what they mean.
         const result = analyzeIntent('Fix this');
-        expect(result.behavior).toBe('QUICK_ACTION');
+        expect(result.behavior).toBe('CLARIFY');
       });
 
       it('should select CLARIFY for vague scope without file', () => {
@@ -176,9 +174,8 @@ describe('IntentAnalyzer', () => {
 
       it('should select QUICK_ACTION for mixed explain + fix intent with file reference', () => {
         // "Explain and fix the error in src/index.ts" has both explain and action signals,
-        // but the file reference resolves the ambiguity and the conflict check in
-        // checkCompleteness may not trigger due to regex g-flag state, resulting in
-        // QUICK_ACTION (small scope with explicit file).
+        // but the explicit file reference makes the action score dominant (6 vs 4),
+        // so conflict=false and scope detection yields QUICK_ACTION (single file).
         const result = analyzeIntent('Explain and fix the error in src/index.ts');
         expect(result.behavior).toBe('QUICK_ACTION');
       });
@@ -274,26 +271,14 @@ describe('IntentAnalyzer', () => {
     });
 
     it('should resolve from lastOpenEditor if no diff', () => {
-      // NOTE: REFERENCE_PATTERNS use the /g flag, so lastIndex state persists
-      // across calls within the same test run. When this test runs after other
-      // tests that called resolveReferences, the regex lastIndex may be non-zero,
-      // causing the ambiguous reference check to miss "this" in "Update this".
-      // In that case, it falls back to extractReferencedFiles which finds nothing,
-      // returning resolved=false. We reset the regex state to test the intended path.
       const context: IntentAnalysisContext = {
         clarificationAttempts: 0,
         lastOpenEditor: 'src/editor.ts',
       };
       const result = resolveReferences('Update this', context);
-      // Due to regex /g flag state from prior test calls, the ambiguous reference
-      // may not be detected, causing resolved=false instead of resolving from editor.
-      // Accept either outcome: resolved via editor or unresolved.
-      if (result.resolved) {
-        expect(result.source).toBe('last_open_editor');
-        expect(result.files).toContain('src/editor.ts');
-      } else {
-        expect(result.resolved).toBe(false);
-      }
+      expect(result.resolved).toBe(true);
+      expect(result.source).toBe('last_open_editor');
+      expect(result.files).toContain('src/editor.ts');
     });
 
     it('should resolve from lastArtifactProposed as fallback', () => {

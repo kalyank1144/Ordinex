@@ -373,17 +373,15 @@ describe('D) Modify non-existent file', () => {
       expect(result.user_message).toContain('missing.ts');
     });
 
-    it('classifies directory not found error', () => {
+    it('classifies directory not found error as DIR_MISSING', () => {
       const error = new Error('ENOENT: directory not found');
       const context = createTestContext({ stage: 'preflight' });
 
       const result = classifyError(error, context);
 
-      // isFileNotFoundError matches ENOENT before isDirMissingError (requires ENOENT.*directory)
-      // Since isFileNotFoundError's /ENOENT/ pattern matches first in the classification chain,
-      // this error is classified as FILE_NOT_FOUND
+      // isDirMissingError (more specific) is checked before isFileNotFoundError (broad ENOENT)
       expect(result.category).toBe('WORKSPACE_STATE');
-      expect(result.code).toBe('FILE_NOT_FOUND');
+      expect(result.code).toBe('DIR_MISSING');
     });
 
     it('classifies permission errors', () => {
