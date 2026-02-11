@@ -746,7 +746,27 @@ export async function handleNextStepSelected(
   webview: vscode.Webview,
 ): Promise<void> {
   const LOG_PREFIX = '[Ordinex:NextStep]';
-  const { scaffoldId, suggestionId, kind, suggestion } = message;
+
+  // Normalize snake_case → camelCase (S2 ScaffoldCompleteCard sends snake_case)
+  const scaffoldId = message.scaffoldId || message.scaffold_id || '';
+  const suggestionId = message.suggestionId || message.step_id || '';
+  let kind: string = message.kind || '';
+  let suggestion: any = message.suggestion || {};
+
+  // S3: Handle S2 default buttons — step_id shortcuts without explicit kind
+  if (!kind && suggestionId === 'dev_server') {
+    kind = 'command';
+    suggestion = {
+      command: message.command || 'npm run dev',
+      projectPath: ctx.pendingVerifyTargetDir || '',
+    };
+  } else if (!kind && suggestionId === 'open_editor') {
+    kind = 'editor';
+  } else if (!kind && message.command) {
+    // Dynamic next steps with command field
+    kind = 'command';
+    suggestion = { command: message.command, projectPath: ctx.pendingVerifyTargetDir || '' };
+  }
 
   console.log(`${LOG_PREFIX} Action selected: kind=${kind}, suggestionId=${suggestionId}`);
 
@@ -973,6 +993,19 @@ export async function handleNextStepSelected(
           await vscode.env.openExternal(vscode.Uri.parse(url));
         } else {
           vscode.window.showWarningMessage('No URL available to open.');
+        }
+        break;
+      }
+
+      case 'editor': {
+        // S3: Open project folder in editor
+        const editorPath = suggestion?.projectPath || ctx.pendingVerifyTargetDir;
+        if (editorPath) {
+          console.log(`${LOG_PREFIX} Opening in editor: ${editorPath}`);
+          const uri = vscode.Uri.file(editorPath);
+          await vscode.commands.executeCommand('vscode.openFolder', uri, { forceNewWindow: false });
+        } else {
+          vscode.window.showWarningMessage('No project path available to open.');
         }
         break;
       }

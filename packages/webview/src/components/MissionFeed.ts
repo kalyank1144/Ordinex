@@ -1375,7 +1375,7 @@ const USER_TIER_EVENTS = new Set<EventType>([
   'mission_started', 'mission_completed', 'mission_cancelled', 'mission_paused',
   'scaffold_proposal_created', 'scaffold_completed', 'scaffold_cancelled',
   'scaffold_blocked',
-  'process_started', 'process_ready',
+  'process_started', 'process_ready', 'process_output', 'process_stopped', 'process_failed',
   'execution_paused', 'execution_resumed', 'execution_stopped',
   'generated_tool_proposed',
   'task_interrupted',

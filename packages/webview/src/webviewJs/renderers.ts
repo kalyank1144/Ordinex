@@ -196,7 +196,7 @@ export function getRenderersJs(): string {
         'mission_started', 'mission_completed', 'mission_cancelled', 'mission_paused',
         'scaffold_proposal_created', 'scaffold_completed', 'scaffold_cancelled',
         'scaffold_blocked',
-        'process_started', 'process_ready',
+        'process_started', 'process_ready', 'process_output', 'process_stopped', 'process_failed',
         'execution_paused', 'execution_resumed', 'execution_stopped',
         'generated_tool_proposed',
         'task_interrupted',
@@ -529,6 +529,133 @@ export function getRenderersJs(): string {
         if (logsTab) logsTab.click();
       };
 
+      // ===== S3: INLINE PROCESS CARD STATE + RENDERING =====
+      // Manages process card state for in-place updates in the inline JS path.
+      const __processStates = {};
+      const __PROCESS_MAX_LINES = 50;
+
+      function renderProcessCardInline(event) {
+        const p = event.payload || {};
+        const processId = p.process_id || event.event_id;
+        __processStates[processId] = {
+          processId: processId,
+          command: p.command || 'unknown command',
+          projectPath: p.project_path || '',
+          status: 'starting',
+          port: null,
+          exitCode: null,
+          error: null,
+          outputLines: [],
+          startedAt: event.timestamp
+        };
+        return buildProcessCardInlineHtml(__processStates[processId]);
+      }
+
+      function updateProcessCardInline(event) {
+        const p = event.payload || {};
+        const processId = p.process_id;
+        if (!processId || !__processStates[processId]) return { handled: false };
+        const st = __processStates[processId];
+        switch (event.type) {
+          case 'process_ready':
+            st.status = 'ready';
+            if (p.port) st.port = p.port;
+            break;
+          case 'process_output':
+            var lines = p.lines || [];
+            st.outputLines = st.outputLines.concat(lines);
+            if (st.outputLines.length > __PROCESS_MAX_LINES) {
+              st.outputLines = st.outputLines.slice(-__PROCESS_MAX_LINES);
+            }
+            if (st.status === 'starting') st.status = 'running';
+            break;
+          case 'process_stopped':
+            st.status = 'stopped';
+            if (p.exit_code !== undefined) st.exitCode = p.exit_code;
+            break;
+          case 'process_failed':
+            st.status = 'failed';
+            st.error = p.error || 'Unknown error';
+            break;
+          default:
+            return { handled: false };
+        }
+        return { handled: true, processId: processId };
+      }
+
+      function getProcessCardInlineHtml(processId) {
+        var st = __processStates[processId];
+        if (!st) return null;
+        return buildProcessCardInlineHtml(st);
+      }
+
+      function buildProcessCardInlineHtml(st) {
+        var statusCfg = {
+          starting: { label: 'Starting...', bg: 'var(--vscode-charts-blue)', icon: '\u23F3' },
+          running:  { label: 'Running',     bg: 'var(--vscode-charts-blue)', icon: '\u{1F504}' },
+          ready:    { label: 'Ready',       bg: 'var(--vscode-charts-green)', icon: '\u2705' },
+          stopped:  { label: 'Stopped',     bg: 'var(--vscode-charts-yellow)', icon: '\u23F9\uFE0F' },
+          failed:   { label: 'Failed',      bg: 'var(--vscode-charts-red)', icon: '\u274C' }
+        };
+        var borderColors = {
+          starting: 'var(--vscode-charts-blue)', running: 'var(--vscode-charts-blue)',
+          ready: 'var(--vscode-charts-green)', stopped: 'var(--vscode-charts-yellow)',
+          failed: 'var(--vscode-charts-red)'
+        };
+        var cfg = statusCfg[st.status] || statusCfg.starting;
+        var bc = borderColors[st.status] || borderColors.starting;
+        var isAlive = st.status === 'starting' || st.status === 'running' || st.status === 'ready';
+        var hasPort = !!st.port;
+
+        // Status badge
+        var badge = '<span style="display:inline-block;background:' + cfg.bg + ';color:#fff;padding:2px 8px;border-radius:10px;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:0.5px">' + cfg.label + '</span>';
+
+        // Shorten path
+        var shortPath = st.projectPath;
+        var parts = shortPath.replace(/\\\\/g, '/').split('/');
+        if (parts.length > 3) shortPath = '.../' + parts.slice(-2).join('/');
+
+        // Info line
+        var infoHtml = '';
+        if (shortPath) infoHtml += '<span>\u{1F4C1} ' + escapeHtml(shortPath) + '</span>';
+        if (hasPort) infoHtml += '<span style="color:var(--vscode-charts-green);font-weight:700">\u{1F310} localhost:' + st.port + '</span>';
+        if (st.exitCode !== undefined) infoHtml += '<span>Exit code: ' + st.exitCode + '</span>';
+        if (st.error) infoHtml += '<span style="color:var(--vscode-errorForeground)">' + escapeHtml(st.error) + '</span>';
+
+        // Output
+        var outputHtml = '';
+        var totalLines = st.outputLines.length;
+        if (totalLines > 0) {
+          var allText = st.outputLines.map(function(l) { return escapeHtml(l); }).join('\\n');
+          outputHtml = '<details style="margin-bottom:8px"><summary style="cursor:pointer;font-size:10px;font-weight:700;color:var(--vscode-descriptionForeground);user-select:none;margin-bottom:4px">OUTPUT (' + totalLines + ' line' + (totalLines !== 1 ? 's' : '') + ')</summary>' +
+            '<pre style="background:var(--vscode-textCodeBlock-background);border:1px solid var(--vscode-input-border);border-radius:4px;padding:8px;margin:4px 0 0 0;font-family:monospace;font-size:10px;line-height:1.5;overflow-x:auto;max-height:300px;overflow-y:auto;white-space:pre-wrap;word-break:break-all;color:var(--vscode-foreground)">' + allText + '</pre></details>';
+        } else if (isAlive) {
+          outputHtml = '<div style="font-size:11px;color:var(--vscode-descriptionForeground);font-style:italic;margin-bottom:8px">Waiting for output...</div>';
+        }
+
+        // Actions
+        var actionsHtml = '';
+        if (hasPort) {
+          actionsHtml += '<button onclick="processCardAction(\\'open_browser\\',\\'' + escapeHtml(st.processId) + '\\',' + st.port + ')" style="background:var(--vscode-button-background);color:var(--vscode-button-foreground);border:none;padding:4px 10px;border-radius:4px;cursor:pointer;font-size:11px;font-weight:600">\u{1F310} Open in Browser</button>';
+        }
+        if (isAlive) {
+          actionsHtml += '<button onclick="processCardAction(\\'terminate\\',\\'' + escapeHtml(st.processId) + '\\')" style="background:var(--vscode-statusBarItem-errorBackground,#c53434);color:var(--vscode-statusBarItem-errorForeground,#fff);border:none;padding:4px 10px;border-radius:4px;cursor:pointer;font-size:11px;font-weight:600">\u23F9 Terminate</button>';
+        }
+
+        return '<div class="process-card" data-process-id="' + escapeHtml(st.processId) + '" style="background:var(--vscode-editor-inactiveSelectionBackground);border:2px solid ' + bc + ';border-radius:6px;padding:12px;margin-bottom:12px">' +
+          '<div style="display:flex;align-items:center;gap:8px;margin-bottom:10px">' +
+            '<span style="font-size:18px">' + cfg.icon + '</span>' +
+            '<code style="font-family:monospace;font-size:12px;font-weight:700;color:var(--vscode-foreground);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1">' + escapeHtml(st.command) + '</code>' +
+            badge +
+          '</div>' +
+          '<div style="font-size:11px;color:var(--vscode-descriptionForeground);margin-bottom:8px;display:flex;align-items:center;gap:12px">' + infoHtml + '</div>' +
+          outputHtml +
+          '<div style="display:flex;gap:8px;padding-top:8px;border-top:1px solid var(--vscode-panel-border);flex-wrap:wrap">' + actionsHtml + '</div>' +
+        '</div>';
+      }
+
+      var PROCESS_FOLLOW_UP_EVENTS = new Set(['process_ready', 'process_output', 'process_stopped', 'process_failed']);
+
       // I3: Approval types that have inline buttons in their triggering card
       // These do NOT need a standalone ApprovalCard — suppress both event card + ApprovalCard
       const INLINE_APPROVAL_TYPES = new Set([
@@ -618,6 +745,30 @@ export function getRenderersJs(): string {
 
           // I3: Skip awaiting_plan_approval pause (redundant, PlanCard handles approval inline)
           if (event.type === 'execution_paused' && event.payload.reason === 'awaiting_plan_approval') {
+            continue;
+          }
+
+          // S3: Render process_started as a rich ProcessCard
+          if (event.type === 'process_started') {
+            items.push(renderProcessCardInline(event));
+            continue;
+          }
+
+          // S3: Process follow-up events — update existing card in-place, don't render new card
+          if (PROCESS_FOLLOW_UP_EVENTS.has(event.type)) {
+            var procResult = updateProcessCardInline(event);
+            if (procResult.handled && procResult.processId) {
+              var newHtml = getProcessCardInlineHtml(procResult.processId);
+              if (newHtml) {
+                var existingEl = document.querySelector('.process-card[data-process-id="' + procResult.processId + '"]');
+                if (existingEl) {
+                  var wrapper = document.createElement('div');
+                  wrapper.innerHTML = newHtml;
+                  var newEl = wrapper.firstElementChild;
+                  if (newEl) existingEl.replaceWith(newEl);
+                }
+              }
+            }
             continue;
           }
 
