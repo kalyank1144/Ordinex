@@ -9,7 +9,7 @@ import { escapeHtml, formatTimestamp } from '../utils/cardHelpers';
 /**
  * Render a diff proposed card with actions
  */
-export function renderDiffProposedCard(event: Event, taskId: string): string {
+export function renderDiffProposedCard(event: Event, taskId: string, pendingApprovalId?: string): string {
   // FIX: files_changed can be either string[] or object[]
   const rawFilesChanged = event.payload.files_changed;
   let filesChanged: Array<{path: string; additions?: number; deletions?: number}> = [];
@@ -84,15 +84,29 @@ export function renderDiffProposedCard(event: Event, taskId: string): string {
       ` : ''}
       
       <div class="diff-actions">
-        <button 
-          class="diff-action-button view-diff-btn" 
+        <button
+          class="diff-action-button view-diff-btn"
           data-event-id="${event.event_id}"
           data-diff-id="${diffId}"
         >
           👁️ View Diff
         </button>
-        <button 
-          class="diff-action-button apply-diff-btn" 
+        ${pendingApprovalId ? `
+        <button
+          class="approval-btn approve"
+          onclick="handleApproval('${pendingApprovalId}', 'approved')"
+        >
+          ✓ Accept Changes
+        </button>
+        <button
+          class="approval-btn reject"
+          onclick="handleApproval('${pendingApprovalId}', 'rejected')"
+        >
+          ✗ Reject
+        </button>
+        ` : `
+        <button
+          class="diff-action-button apply-diff-btn"
           data-event-id="${event.event_id}"
           data-diff-id="${diffId}"
           data-task-id="${taskId}"
@@ -100,11 +114,14 @@ export function renderDiffProposedCard(event: Event, taskId: string): string {
         >
           ✅ Apply Diff
         </button>
+        `}
       </div>
-      
+
+      ${pendingApprovalId ? '' : `
       <div class="diff-warning">
         ⚠️ No files will be modified until you click "Request Apply" and approve the changes.
       </div>
+      `}
     </div>
   `;
 }

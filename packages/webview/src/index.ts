@@ -69,7 +69,7 @@ function getScaffoldCardScript(): string {
   }
 
   try {
-    const scriptPath = join(__dirname, 'components', 'ScaffoldCard.js');
+    const scriptPath = join(__dirname, 'components', 'ScaffoldCard.bundle.js');
     const rawScript = readFileSync(scriptPath, 'utf8');
     const sanitizedScript = rawScript
       .replace(/<\/script>/g, '<\\/script>')

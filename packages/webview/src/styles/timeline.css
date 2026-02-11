@@ -232,6 +232,38 @@
   padding-left: 38px;
 }
 
+/* I2: AI assistant bubble */
+.assistant-bubble {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  margin-bottom: 12px;
+  animation: fadeIn 0.2s ease-in;
+}
+.assistant-bubble-avatar {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  background: var(--vscode-charts-purple);
+  color: #fff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 16px;
+  flex-shrink: 0;
+  margin-top: 2px;
+}
+.assistant-bubble-content {
+  flex: 1;
+  min-width: 0;
+}
+.assistant-bubble-meta {
+  font-size: 10px;
+  color: var(--vscode-descriptionForeground);
+  margin-top: 4px;
+  padding-left: 38px;
+}
+
 .event-card.expanded {
   background: var(--vscode-list-hoverBackground);
 }
