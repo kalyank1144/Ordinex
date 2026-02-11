@@ -12,7 +12,7 @@ import { renderTestResultCard, renderNoTestRunnerCard, renderRunTestsButton } fr
 import { renderContextCollectedCard, renderAnswerStreamCard } from './AnswerCard';
 import { renderPlanCard } from './PlanCard';
 import { renderApprovalCard } from './ApprovalCard';
-import { getPendingApprovalById } from '../selectors/approvalSelectors';
+import { getPendingApprovalById, getPendingApprovals } from '../selectors/approvalSelectors';
 import { renderClarificationCard } from './ClarificationCard';
 import { isScaffoldEvent } from './ScaffoldCard';
 import { renderPreflightDecisionCard } from './PreflightDecisionCard';
@@ -366,20 +366,25 @@ export const EVENT_CARD_MAP: Record<EventType, EventCardConfig> = {
     color: 'var(--vscode-charts-blue)',
     getSummary: (e) => {
       const num = e.payload.iteration as number;
-      return `Iteration #${num || '?'}`;
+      const max = e.payload.max_iterations as number;
+      return `Iterating... (attempt ${num || '?'}${max ? '/' + max : ''})`;
     }
   },
   repair_attempted: {
     icon: '🔧',
     title: 'Repair Attempted',
     color: 'var(--vscode-charts-orange)',
-    getSummary: (e) => (e.payload.repair_type as string) || 'Attempting repair'
+    getSummary: (e) => `Attempting fix${e.payload.repair_type ? ': ' + e.payload.repair_type : ''}`
   },
   iteration_failed: {
     icon: '❌',
     title: 'Iteration Failed',
     color: 'var(--vscode-charts-red)',
-    getSummary: (e) => (e.payload.reason as string) || 'Iteration failed'
+    getSummary: (e) => {
+      const iter = e.payload.iteration as number;
+      const reason = e.payload.reason as string || '';
+      return `Attempt ${iter || '?'} failed${reason ? ': ' + reason.substring(0, 50) : ''}`;
+    }
   },
   iteration_succeeded: {
     icon: '✅',
@@ -509,7 +514,8 @@ export const EVENT_CARD_MAP: Record<EventType, EventCardConfig> = {
     color: 'var(--vscode-charts-orange)',
     getSummary: (e) => {
       const attempt = e.payload.attempt as number || 1;
-      return `Attempt #${attempt}`;
+      const max = e.payload.max_attempts as number;
+      return `Attempting fix... (attempt ${attempt}${max ? '/' + max : ''})`;
     }
   },
   repair_attempt_completed: {
@@ -1345,6 +1351,15 @@ export const EVENT_CARD_MAP: Record<EventType, EventCardConfig> = {
 } as Record<EventType, EventCardConfig>;
 
 /**
+ * I3: Approval types that have inline buttons in their triggering card.
+ * These do NOT need a standalone ApprovalCard — suppress both event card + ApprovalCard.
+ */
+const INLINE_APPROVAL_TYPES = new Set([
+  'plan_approval', 'apply_diff', 'diff',
+  'generated_tool', 'generated_tool_run', 'scope_expansion'
+]);
+
+/**
  * R1: Event tier classification — determines visibility in Mission tab
  * 'user' = full card (always visible), 'progress' = collapsible group, 'system' = Logs only
  */
@@ -1549,7 +1564,13 @@ export function renderEventCard(event: Event, taskId?: string): string {
   }
   
   if (event.type === 'tool_start' && event.payload.tool === 'llm_answer' && taskId) {
-    return renderAnswerStreamCard(event, taskId);
+    // I2: Wrap in assistant bubble
+    return `
+      <div class="assistant-bubble">
+        <div class="assistant-bubble-avatar">\u2726</div>
+        <div class="assistant-bubble-content">${renderAnswerStreamCard(event, taskId)}</div>
+      </div>
+    `;
   }
   
   // Skip rendering stream_delta events (they're handled by real-time streaming)
@@ -1642,12 +1663,33 @@ export function renderEventCard(event: Event, taskId?: string): string {
     // Check if this looks like a structured plan with goal and steps
     if (plan && typeof plan === 'object' && plan.goal && plan.steps && Array.isArray(plan.steps)) {
       console.log('✅ [MissionFeed] Rendering PlanCard');
-      return renderPlanCard(event);
+      // I2: Wrap in assistant bubble
+      return `
+        <div class="assistant-bubble">
+          <div class="assistant-bubble-avatar">\u2726</div>
+          <div class="assistant-bubble-content">${renderPlanCard(event)}</div>
+        </div>
+        <div class="assistant-bubble-meta">${formatTimestamp(event.timestamp)}</div>
+      `;
     } else {
       console.log('❌ [MissionFeed] NOT rendering PlanCard - condition failed');
     }
   }
-  
+
+  // I2: plan_revised — wrap in assistant bubble (same pattern as plan_created)
+  if (event.type === 'plan_revised') {
+    const plan = (event.payload.plan || event.payload) as any;
+    if (plan && typeof plan === 'object' && plan.goal && plan.steps && Array.isArray(plan.steps)) {
+      return `
+        <div class="assistant-bubble">
+          <div class="assistant-bubble-avatar">\u2726</div>
+          <div class="assistant-bubble-content">${renderPlanCard(event)}</div>
+        </div>
+        <div class="assistant-bubble-meta">${formatTimestamp(event.timestamp)}</div>
+      `;
+    }
+  }
+
   // Use specialized card renderers for specific event types
   if (event.type === 'diff_proposed' && taskId) {
     return renderDiffProposedCard(event, taskId);
@@ -1829,9 +1871,12 @@ export function renderMissionTimeline(events: Event[]): string {
   let diffAppliedSeen = false;
   let testStageEntered = false;
   let testAlreadyRun = false;
-  
+
   // Extract taskId from first event
   const taskId = events.length > 0 ? events[0].task_id : undefined;
+
+  // I3: Pre-compute pending approvals for inline approval rendering
+  const pendingApprovals = getPendingApprovals(events);
 
   for (let i = 0; i < events.length; i++) {
     const event = events[i];
@@ -1841,7 +1886,17 @@ export function renderMissionTimeline(events: Event[]): string {
     if (event.type === 'stream_delta' || event.type === 'stream_complete') {
       continue;
     }
-    
+
+    // I3: Skip rendering approval_requested event card for types handled inline
+    if (event.type === 'approval_requested' && INLINE_APPROVAL_TYPES.has(event.payload.approval_type as string || '')) {
+      continue;
+    }
+
+    // I3: Skip awaiting_plan_approval pause (redundant, PlanCard handles approval inline)
+    if (event.type === 'execution_paused' && event.payload.reason === 'awaiting_plan_approval') {
+      continue;
+    }
+
     // Insert stage header when stage changes
     if (event.type === 'stage_changed' && event.payload.to) {
       const newStage = event.payload.to as Stage;
@@ -1865,6 +1920,84 @@ export function renderMissionTimeline(events: Event[]): string {
       testAlreadyRun = true;
     }
 
+    // I3: Intercept plan_created/plan_revised to pass pending approval to PlanCard
+    if (event.type === 'plan_created' || event.type === 'plan_revised') {
+      const plan = (event.payload.plan || event.payload) as any;
+      if (plan && typeof plan === 'object' && plan.goal && plan.steps && Array.isArray(plan.steps)) {
+        const planApproval = pendingApprovals.find((p: { approvalType: string; requestEvent: Event }) =>
+          p.approvalType === 'plan_approval' &&
+          p.requestEvent.payload.details && (p.requestEvent.payload.details as any).plan_id === event.event_id
+        );
+        items.push(`
+          <div class="assistant-bubble">
+            <div class="assistant-bubble-avatar">\u2726</div>
+            <div class="assistant-bubble-content">${renderPlanCard(event, planApproval?.approvalId)}</div>
+          </div>
+          <div class="assistant-bubble-meta">${formatTimestamp(event.timestamp)}</div>
+        `);
+        continue;
+      }
+    }
+
+    // I3: Intercept diff_proposed to pass pending approval for inline Accept/Reject
+    if (event.type === 'diff_proposed' && taskId) {
+      const diffId = (event.payload.diff_id || event.payload.proposal_id) as string || '';
+      const diffApproval = pendingApprovals.find((p: { approvalType: string; requestEvent: Event }) =>
+        (p.approvalType === 'apply_diff' || p.approvalType === 'diff') &&
+        (!(p.requestEvent.payload.details as any)?.diff_id || (p.requestEvent.payload.details as any).diff_id === diffId)
+      );
+      items.push(renderDiffProposedCard(event, taskId, diffApproval?.approvalId));
+      continue;
+    }
+
+    // I5: Intercept test_completed — compact green banner if all pass, expanded card if failures
+    if (event.type === 'test_completed') {
+      const passed = (event.payload.pass_count || event.payload.passed || 0) as number;
+      const failed = (event.payload.fail_count || event.payload.failed || 0) as number;
+      const total = passed + failed;
+
+      if (failed === 0 && total > 0) {
+        items.push(`
+          <div class="event-card" style="border-left: 3px solid var(--vscode-charts-green, #4caf50); padding: 10px 14px;">
+            <div style="display: flex; align-items: center; gap: 8px;">
+              <span style="color: var(--vscode-charts-green, #4caf50); font-size: 16px;">\u2705</span>
+              <span style="font-size: 13px; font-weight: 600; color: var(--vscode-charts-green, #4caf50);">All ${total} test${total !== 1 ? 's' : ''} passed</span>
+              <span class="event-timestamp">${formatTimestamp(event.timestamp)}</span>
+            </div>
+          </div>
+        `);
+        continue;
+      }
+
+      if (failed > 0) {
+        const failingTests = (event.payload.failing_tests || []) as string[];
+        let failListHtml = '';
+        if (failingTests.length > 0) {
+          const listItems = failingTests.slice(0, 10).map((t: string) =>
+            `<li style="margin: 2px 0; font-size: 12px; color: var(--vscode-errorForeground, #f44336);">${escapeHtml(String(t))}</li>`
+          ).join('');
+          failListHtml = `<ul style="margin: 6px 0 0; padding-left: 20px;">${listItems}</ul>`;
+          if (failingTests.length > 10) {
+            failListHtml += `<div style="font-size: 11px; color: var(--vscode-descriptionForeground); margin-top: 4px;">...and ${failingTests.length - 10} more</div>`;
+          }
+        }
+        items.push(`
+          <div class="event-card" style="border-left: 3px solid var(--vscode-charts-red, #f44336); padding: 12px 14px;">
+            <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 6px;">
+              <span style="font-size: 16px;">\u274C</span>
+              <span style="font-size: 13px; font-weight: 600; color: var(--vscode-charts-red, #f44336);">${failed} of ${total} test${total !== 1 ? 's' : ''} failed</span>
+              <span class="event-timestamp">${formatTimestamp(event.timestamp)}</span>
+            </div>
+            <div style="font-size: 12px; color: var(--vscode-charts-green, #4caf50); margin-bottom: 4px;">\u2713 ${passed} passed</div>
+            ${failListHtml}
+            <div style="font-size: 11px; color: var(--vscode-descriptionForeground); margin-top: 8px; font-style: italic;">Check terminal output for full details</div>
+          </div>
+        `);
+        continue;
+      }
+      // total === 0 or no data: fall through to generic card
+    }
+
     // Render event card with taskId for specialized renderers
     const renderedCard = renderEventCard(event, taskId);
     if (renderedCard) {
@@ -1872,13 +2005,15 @@ export function renderMissionTimeline(events: Event[]): string {
     }
 
     // INLINE APPROVAL RENDERING: After approval_requested, render inline approval card
+    // I3: Only for types NOT handled inline by their triggering card (e.g. terminal)
     if (event.type === 'approval_requested' && taskId) {
       const approvalId = event.payload.approval_id as string;
-      
+      const approvalType = (event.payload.approval_type as string) || '';
+
       // Check if this approval is still pending (not yet resolved)
       const isPending = getPendingApprovalById(events, approvalId);
-      
-      if (isPending) {
+
+      if (isPending && !INLINE_APPROVAL_TYPES.has(approvalType)) {
         // Render inline approval card
         items.push(renderApprovalCard({
           approvalEvent: event,

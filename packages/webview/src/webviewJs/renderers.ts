@@ -248,9 +248,9 @@ export function getRenderersJs(): string {
           case 'step_started': return \`Step \${(p.step_index || 0) + 1}: \${p.description || 'processing...'}\`;
           case 'step_completed': return \`Step \${(p.step_index || 0) + 1} \${p.success ? 'completed' : 'failed'}\`;
           case 'step_failed': return \`Step \${(p.step_index || 0) + 1} failed\`;
-          case 'iteration_started': return \`Iteration #\${p.iteration || '?'}\`;
+          case 'iteration_started': return \`Iterating... (attempt \${p.iteration || '?'}\${p.max_iterations ? '/' + p.max_iterations : ''})\`;
           case 'iteration_succeeded': return 'Iteration passed';
-          case 'iteration_failed': return \`Iteration failed: \${p.reason || ''}\`;
+          case 'iteration_failed': return \`Attempt \${p.iteration || '?'} failed\${p.reason ? ': ' + String(p.reason).substring(0, 50) : ''}\`;
           case 'scaffold_apply_started': return 'Creating project files...';
           case 'scaffold_applied': return \`\${p.files_created || 0} file(s) created\`;
           case 'scaffold_started': return 'Scaffold starting...';
@@ -274,9 +274,9 @@ export function getRenderersJs(): string {
           }
           case 'tool_start': return \`\${p.tool || p.tool_name || 'tool'}\${p.target ? ': ' + p.target : ''}\`;
           case 'tool_end': return \`\${p.tool || p.tool_name || 'tool'} finished\`;
-          case 'repair_attempt_started': return \`Repair attempt #\${p.attempt || 1}\`;
+          case 'repair_attempt_started': return \`Attempting fix... (attempt \${p.attempt || 1}\${p.max_attempts ? '/' + p.max_attempts : ''})\`;
           case 'repair_attempt_completed': return p.success ? 'Repair successful' : 'Repair failed';
-          case 'repair_attempted': return p.repair_type || 'Attempting repair';
+          case 'repair_attempted': return \`Attempting fix\${p.repair_type ? ': ' + p.repair_type : ''}\`;
           case 'test_started': return \`Running tests: \${(p.command || '').substring(0, 40)}\`;
           case 'verify_started': return 'Starting verification...';
           case 'verify_completed': return p.success ? 'Verification passed' : 'Verification failed';
@@ -309,9 +309,25 @@ export function getRenderersJs(): string {
         if (types.some(t => t.startsWith('scaffold_autofix'))) return 'Auto-fixing issues...';
         if (types.some(t => t.startsWith('feature_'))) return 'Generating features...';
         if (types.some(t => t.startsWith('scaffold_'))) return 'Setting up project...';
-        if (types.some(t => t.startsWith('iteration_'))) return 'Iterating...';
+        if (types.some(t => t.startsWith('iteration_'))) {
+          var lastIter = progressEvents.filter(function(e) { return e.type === 'iteration_started' || e.type === 'iteration_failed'; }).pop();
+          if (lastIter && lastIter.payload) {
+            var iter = lastIter.payload.iteration || '?';
+            var maxIter = lastIter.payload.max_iterations;
+            return 'Iterating... (attempt ' + iter + (maxIter ? '/' + maxIter : '') + ')';
+          }
+          return 'Iterating...';
+        }
         if (types.some(t => t.startsWith('step_'))) return 'Executing steps...';
-        if (types.some(t => t.startsWith('repair_'))) return 'Repairing...';
+        if (types.some(t => t.startsWith('repair_'))) {
+          var lastRepair = progressEvents.filter(function(e) { return e.type === 'repair_attempt_started'; }).pop();
+          if (lastRepair && lastRepair.payload) {
+            var att = lastRepair.payload.attempt || 1;
+            var maxAtt = lastRepair.payload.max_attempts;
+            return 'Fixing errors... (attempt ' + att + (maxAtt ? '/' + maxAtt : '') + ')';
+          }
+          return 'Fixing errors...';
+        }
         if (types.some(t => t === 'command_started' || t === 'command_completed')) return 'Running commands...';
         if (types.some(t => t === 'tool_start' || t === 'tool_end')) return 'Working...';
         if (types.some(t => t.startsWith('retrieval_') || t === 'context_collected')) return 'Gathering context...';
@@ -513,6 +529,13 @@ export function getRenderersJs(): string {
         if (logsTab) logsTab.click();
       };
 
+      // I3: Approval types that have inline buttons in their triggering card
+      // These do NOT need a standalone ApprovalCard — suppress both event card + ApprovalCard
+      const INLINE_APPROVAL_TYPES = new Set([
+        'plan_approval', 'apply_diff', 'diff',
+        'generated_tool', 'generated_tool_run', 'scope_expansion'
+      ]);
+
       // Mission Timeline Rendering — R1 tiered
       function renderMissionTimeline(events) {
         if (events.length === 0) {
@@ -588,6 +611,16 @@ export function getRenderersJs(): string {
             }
           }
 
+          // I3: Skip rendering approval_requested event card for types handled inline
+          if (event.type === 'approval_requested' && INLINE_APPROVAL_TYPES.has(event.payload.approval_type || '')) {
+            continue;
+          }
+
+          // I3: Skip awaiting_plan_approval pause (redundant, PlanCard handles approval inline)
+          if (event.type === 'execution_paused' && event.payload.reason === 'awaiting_plan_approval') {
+            continue;
+          }
+
           // I1: Render intent_received as a user chat bubble
           if (event.type === 'intent_received') {
             const prompt = event.payload.prompt || '';
@@ -601,14 +634,106 @@ export function getRenderersJs(): string {
             continue;
           }
 
+          // I2+I3: Render plan_created/plan_revised as assistant bubble wrapping PlanCard
+          // I3: If a pending plan_approval exists for this plan, pass approvalId so buttons resolve directly
+          if (event.type === 'plan_created' || event.type === 'plan_revised') {
+            const planApproval = pendingApprovals.find(p =>
+              p.approvalType === 'plan_approval' &&
+              p.requestEvent.payload.details && p.requestEvent.payload.details.plan_id === event.event_id
+            );
+            const cardHtml = planApproval
+              ? renderPlanCardWithApproval(event, planApproval.approvalId)
+              : renderEventCard(event);
+            items.push(\`
+              <div class="assistant-bubble">
+                <div class="assistant-bubble-avatar">\u2726</div>
+                <div class="assistant-bubble-content">\${cardHtml}</div>
+              </div>
+              <div class="assistant-bubble-meta">\${formatTimestamp(event.timestamp)}</div>
+            \`);
+            continue;
+          }
+
+          // I3: Render diff_proposed with inline Accept/Reject buttons when pending approval exists
+          if (event.type === 'diff_proposed') {
+            const diffId = event.payload.diff_id || event.payload.proposal_id || '';
+            const diffApproval = pendingApprovals.find(p =>
+              (p.approvalType === 'apply_diff' || p.approvalType === 'diff') &&
+              (!p.requestEvent.payload.details || !p.requestEvent.payload.details.diff_id || p.requestEvent.payload.details.diff_id === diffId)
+            );
+            const cardHtml = renderEventCard(event);
+            if (diffApproval) {
+              const approvalButtons = \`
+                <div style="display: flex; gap: 8px; margin-top: 8px; padding: 0 12px 10px;">
+                  <button class="approval-btn approve" onclick="handleApproval('\${diffApproval.approvalId}', 'approved')">✓ Accept Changes</button>
+                  <button class="approval-btn reject" onclick="handleApproval('\${diffApproval.approvalId}', 'rejected')">✗ Reject</button>
+                </div>
+              \`;
+              items.push(cardHtml + approvalButtons);
+            } else {
+              items.push(cardHtml);
+            }
+            continue;
+          }
+
+          // I5: Intercept test_completed — compact green banner if all pass, expanded card if failures
+          if (event.type === 'test_completed') {
+            const passed = event.payload.pass_count || event.payload.passed || 0;
+            const failed = event.payload.fail_count || event.payload.failed || 0;
+            const total = passed + failed;
+
+            if (failed === 0 && total > 0) {
+              items.push(\`
+                <div class="event-card" style="border-left: 3px solid var(--vscode-charts-green, #4caf50); padding: 10px 14px;">
+                  <div style="display: flex; align-items: center; gap: 8px;">
+                    <span style="color: var(--vscode-charts-green, #4caf50); font-size: 16px;">\u2705</span>
+                    <span style="font-size: 13px; font-weight: 600; color: var(--vscode-charts-green, #4caf50);">All \${total} test\${total !== 1 ? 's' : ''} passed</span>
+                    <span class="event-timestamp">\${formatTimestamp(event.timestamp)}</span>
+                  </div>
+                </div>
+              \`);
+              continue;
+            }
+
+            if (failed > 0) {
+              const failingTests = event.payload.failing_tests || [];
+              let failListHtml = '';
+              if (failingTests.length > 0) {
+                const listItems = failingTests.slice(0, 10).map(function(t) {
+                  return '<li style="margin: 2px 0; font-size: 12px; color: var(--vscode-errorForeground, #f44336);">' + escapeHtml(String(t)) + '</li>';
+                }).join('');
+                failListHtml = '<ul style="margin: 6px 0 0; padding-left: 20px;">' + listItems + '</ul>';
+                if (failingTests.length > 10) {
+                  failListHtml += '<div style="font-size: 11px; color: var(--vscode-descriptionForeground); margin-top: 4px;">...and ' + (failingTests.length - 10) + ' more</div>';
+                }
+              }
+              items.push(\`
+                <div class="event-card" style="border-left: 3px solid var(--vscode-charts-red, #f44336); padding: 12px 14px;">
+                  <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 6px;">
+                    <span style="font-size: 16px;">\u274C</span>
+                    <span style="font-size: 13px; font-weight: 600; color: var(--vscode-charts-red, #f44336);">\${failed} of \${total} test\${total !== 1 ? 's' : ''} failed</span>
+                    <span class="event-timestamp">\${formatTimestamp(event.timestamp)}</span>
+                  </div>
+                  <div style="font-size: 12px; color: var(--vscode-charts-green, #4caf50); margin-bottom: 4px;">\u2713 \${passed} passed</div>
+                  \${failListHtml}
+                  <div style="font-size: 11px; color: var(--vscode-descriptionForeground); margin-top: 8px; font-style: italic;">Check terminal output for full details</div>
+                </div>
+              \`);
+              continue;
+            }
+            // total === 0 or no data: fall through to generic card
+          }
+
           // Render event card
           items.push(renderEventCard(event));
 
           // INLINE APPROVAL: After approval_requested event, render inline approval card
+          // I3: Only for types NOT handled inline by their triggering card (e.g. terminal)
           if (event.type === 'approval_requested') {
             const approvalId = event.payload.approval_id;
+            const approvalType = event.payload.approval_type || '';
             const isPending = pendingApprovals.find(p => p.approvalId === approvalId);
-            if (isPending) {
+            if (isPending && !INLINE_APPROVAL_TYPES.has(approvalType)) {
               items.push(renderApprovalCard(event));
             }
           }
@@ -647,9 +772,14 @@ export function getRenderersJs(): string {
             }
           }
 
-          // Show streaming answer card after tool_start for llm_answer
+          // I2: Show streaming answer card after tool_start for llm_answer, wrapped in assistant bubble
           if (event.type === 'tool_start' && event.payload.tool === 'llm_answer' && state.streamingAnswer && state.streamingAnswer.text) {
-            items.push(renderStreamingAnswerCard());
+            items.push(\`
+              <div class="assistant-bubble">
+                <div class="assistant-bubble-avatar">\u2726</div>
+                <div class="assistant-bubble-content">\${renderStreamingAnswerCard()}</div>
+              </div>
+            \`);
           }
         }
 
@@ -811,6 +941,27 @@ export function getRenderersJs(): string {
             </div>
           </div>
         \`;
+      }
+
+      // I3: Render PlanCard with inline approval buttons (replaces "Approve Plan" with direct approval resolution)
+      function renderPlanCardWithApproval(event, approvalId) {
+        var baseHtml = renderPlanCard(event, event.payload);
+        // Replace the "Approve Plan" button onclick to resolve the pending approval directly
+        baseHtml = baseHtml.replace(
+          /onclick="handleRequestPlanApproval\([^)]*\)"/,
+          'onclick="handleApproval(\\\'' + approvalId + '\\\', \\\'approved\\\')"'
+        );
+        // Replace the "Cancel" button to reject the approval
+        baseHtml = baseHtml.replace(
+          /onclick="handleCancelPlan\([^)]*\)"/,
+          'onclick="handleApproval(\\\'' + approvalId + '\\\', \\\'rejected\\\')"'
+        );
+        // Add a visual indicator that approval is pending
+        baseHtml = baseHtml.replace(
+          '<span class="event-type" style="font-size: 13px; font-weight: 700;">Plan Created</span>',
+          '<span class="event-type" style="font-size: 13px; font-weight: 700;">Plan Created</span><span style="margin-left: 8px; padding: 2px 8px; border-radius: 10px; font-size: 10px; font-weight: 600; background: var(--vscode-charts-orange); color: #fff;">Awaiting Approval</span>'
+        );
+        return baseHtml;
       }
 
       // Render Clarification Card (PLAN mode v2)
@@ -1126,6 +1277,8 @@ export function getRenderersJs(): string {
           'scaffold_proposal_created',
           'scaffold_decision_requested',
           'scaffold_decision_resolved',
+          'scaffold_apply_started',
+          'scaffold_applied',
           'scaffold_style_selection_requested',
           'scaffold_style_selected',
           'scaffold_blocked',
@@ -1137,9 +1290,9 @@ export function getRenderersJs(): string {
           'scaffold_preflight_resolution_selected',
           'scaffold_quality_gates_passed',
           'scaffold_quality_gates_failed',
+          'scaffold_checkpoint_created',
           'scaffold_checkpoint_restored',
-          // Step 45: Settings
-          'settings_changed'
+          'scaffold_apply_completed',
         ];
         
         if (scaffoldEventTypes.includes(event.type)) {
