@@ -771,9 +771,12 @@ export class ScaffoldFlowCoordinator {
  * Exported for reuse in extension handlers (preflight, create command, post-scaffold).
  */
 export function extractAppNameFromPrompt(prompt: string): string {
-  // Try to extract quoted names
+  // Try to extract quoted names (sanitize to prevent path traversal / shell injection)
   const quotedMatch = prompt.match(/["']([^"']+)["']/);
-  if (quotedMatch) return quotedMatch[1].toLowerCase().replace(/\s+/g, '-');
+  if (quotedMatch) {
+    const sanitized = quotedMatch[1].toLowerCase().replace(/\s+/g, '-').replace(/[^a-z0-9-]/g, '');
+    if (sanitized) return sanitized;
+  }
 
   // Try patterns like "create/build X app/project"
   const appMatch = prompt.match(/(?:create|build|make|scaffold)\s+(?:a\s+)?(?:new\s+)?([a-zA-Z0-9-_]+)\s+(?:app|project|site|website)/i);
@@ -783,7 +786,8 @@ export function extractAppNameFromPrompt(prompt: string): string {
   const words = prompt.toLowerCase().split(/\s+/);
   const keywords = ['create', 'build', 'make', 'new', 'scaffold', 'a', 'an', 'the', 'app', 'project'];
   const meaningfulWord = words.find(w => !keywords.includes(w) && w.length > 2);
-  return meaningfulWord ? meaningfulWord.replace(/[^a-z0-9-]/g, '') : 'my-app';
+  const sanitizedWord = meaningfulWord ? meaningfulWord.replace(/[^a-z0-9-]/g, '') : '';
+  return sanitizedWord || 'my-app';
 }
 
 /**

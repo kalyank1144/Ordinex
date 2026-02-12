@@ -36,7 +36,7 @@ const WEIGHTS = {
   PLANNING_WITH_FILE: 1.0,       // "Plan how to fix src/..." (bonus to PLAN)
   
   // ANSWER boosters
-  QUESTION_FORM: 3.0,            // "What is...?", "How does..."
+  QUESTION_FORM: 2.0,            // "What is...?", "How does..." (low priority, overridden by action/planning)
   
   // Modifiers
   ACTION_OVERRIDES_QUESTION: true // "Can you add X?" → MISSION despite "?"
@@ -251,6 +251,12 @@ function computeScores(features: Features): {
       // Reduce ANSWER score when action intent present
       answerScore *= 0.5;
     }
+  }
+
+  // PLANNING OVERRIDES QUESTION rule
+  // "What's the best strategy for migration?" → PLAN despite question form
+  if (features.hasQuestionForm && features.hasPlanningTerms) {
+    answerScore *= 0.5;
   }
   
   return { answer: answerScore, plan: planScore, mission: missionScore };
