@@ -194,8 +194,8 @@ export function getRenderersJs(): string {
         'decision_point_needed',
         'clarification_presented', 'clarification_received',
         'mission_started', 'mission_completed', 'mission_cancelled', 'mission_paused',
-        'scaffold_proposal_created', 'scaffold_completed', 'scaffold_cancelled',
-        'scaffold_blocked',
+        'scaffold_decision_requested', 'scaffold_completed', 'scaffold_cancelled',
+        'scaffold_blocked', 'scaffold_style_selection_requested',
         'process_started', 'process_ready', 'process_output', 'process_stopped', 'process_failed',
         'execution_paused', 'execution_resumed', 'execution_stopped',
         'generated_tool_proposed', 'generated_tool_run_started', 'generated_tool_run_completed', 'generated_tool_run_failed',
@@ -214,7 +214,7 @@ export function getRenderersJs(): string {
         'step_started', 'step_completed', 'step_failed',
         'iteration_started', 'iteration_succeeded', 'iteration_failed',
         'scaffold_apply_started', 'scaffold_applied',
-        'scaffold_started',
+        'scaffold_started', 'scaffold_proposal_created',
         'feature_extraction_started', 'feature_extraction_completed',
         'feature_code_generating', 'feature_code_applied', 'feature_code_error',
         'scaffold_verify_started', 'scaffold_verify_step_completed', 'scaffold_verify_completed',
@@ -232,7 +232,10 @@ export function getRenderersJs(): string {
         'scaffold_preflight_checks_started', 'scaffold_preflight_checks_completed',
         'scaffold_quality_gates_passed', 'scaffold_quality_gates_failed',
         'scaffold_apply_completed',
-        'scaffold_target_chosen'
+        'scaffold_target_chosen',
+        'scaffold_style_selected',
+        'scaffold_checkpoint_created', 'scaffold_checkpoint_restored',
+        'scaffold_preflight_resolution_selected'
       ]);
 
       function getEventTier(eventType) {
@@ -1503,7 +1506,7 @@ export function getRenderersJs(): string {
               const cpArg = opt.id === 'restore_checkpoint' && lastCheckpointId
                 ? ", '" + escapeJsString(lastCheckpointId) + "'"
                 : '';
-              return '<button class="' + btnCls + '" onclick="handleCrashRecovery(\'' + escapeJsString(tId) + "', '" + escapeJsString(opt.id) + "'" + cpArg + ')" style="flex:1;padding:8px 12px;border:none;cursor:pointer;border-radius:3px;background:' + (isRec ? 'var(--vscode-button-background)' : 'var(--vscode-button-secondaryBackground)') + ';color:' + (isRec ? 'var(--vscode-button-foreground)' : 'var(--vscode-button-secondaryForeground)') + ';">' + escapeHtml(opt.label) + (isRec ? ' (Recommended)' : '') + '</button>';
+              return '<button class="' + btnCls + '" onclick="handleCrashRecovery(\\'' + escapeJsString(tId) + '\\', \\'' + escapeJsString(opt.id) + '\\'' + cpArg + ')" style="flex:1;padding:8px 12px;border:none;cursor:pointer;border-radius:3px;background:' + (isRec ? 'var(--vscode-button-background)' : 'var(--vscode-button-secondaryBackground)') + ';color:' + (isRec ? 'var(--vscode-button-foreground)' : 'var(--vscode-button-secondaryForeground)') + ';">' + escapeHtml(opt.label) + (isRec ? ' (Recommended)' : '') + '</button>';
             }).join('');
           return \`
             <div class="approval-card" data-task-id="\${escapeHtml(tId)}" style="border: 2px solid \${borderColor};">

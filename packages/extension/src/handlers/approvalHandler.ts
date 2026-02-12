@@ -21,7 +21,9 @@ import {
   processContinueRunResponse,
   selectRecipe,
   runPreflightChecksWithEvents,
+  extractAppNameFromPrompt,
 } from 'core';
+import * as path from 'path';
 import * as vscode from 'vscode';
 
 // ---------------------------------------------------------------------------
@@ -442,7 +444,12 @@ export async function handleResolveDecisionPoint(
             const scaffoldIntentEvent = scaffoldEvents.find((e: Event) => e.type === 'intent_received');
             const scaffoldPrompt = (scaffoldIntentEvent?.payload.prompt as string) || 'Create a new project';
 
-            // Step 43: Run preflight checks
+            // Extract app name from user prompt (e.g. "create new todo app" → "todo")
+            const scaffoldAppName = extractAppNameFromPrompt(scaffoldPrompt);
+            console.log(`[handleResolveDecisionPoint] Extracted app name: "${scaffoldAppName}" from prompt: "${scaffoldPrompt}"`);
+
+            // Step 43: Run preflight checks — target the SUBDIRECTORY where the project will be created
+            const scaffoldTargetDir = path.join(scaffoldWorkspaceRoot, scaffoldAppName);
             const preflightEventBus = new EventBus(ctx.eventStore!);
             preflightEventBus.subscribe(async () => {
               await ctx.sendEventsToWebview(webview, task_id);
@@ -460,10 +467,10 @@ export async function handleResolveDecisionPoint(
             };
 
             const preflightInput: PreflightChecksInput = {
-              targetDir: scaffoldWorkspaceRoot,
+              targetDir: scaffoldTargetDir,
               workspaceRoot: scaffoldWorkspaceRoot,
               plannedFiles: ['package.json', 'src/index.ts', 'tsconfig.json'], // placeholder
-              appName: 'my-app',
+              appName: scaffoldAppName,
             };
 
             const preflightResult = await runPreflightChecksWithEvents(preflightInput, preflightCtx);
@@ -505,6 +512,14 @@ export async function handleResolveDecisionPoint(
             const recipeSelection = selectRecipe(scaffoldPrompt);
             console.log(`[handleResolveDecisionPoint] Recipe selected: ${recipeSelection.recipe_id}`);
 
+            // Build non-interactive create command with app name from prompt
+            const createCmd =
+              recipeSelection.recipe_id === 'nextjs_app_router'
+                ? `npx --yes create-next-app@latest ${scaffoldAppName} --typescript --tailwind --eslint --app --src-dir --use-npm --import-alias "@/*"`
+                : recipeSelection.recipe_id === 'vite_react'
+                  ? `npm create vite@latest ${scaffoldAppName} -- --template react-ts`
+                  : `npx --yes create-expo-app ${scaffoldAppName} --template blank-typescript`;
+
             // Emit scaffold_decision_resolved event to indicate recipe selection
             await ctx.emitEvent({
               event_id: ctx.generateId(),
@@ -516,12 +531,13 @@ export async function handleResolveDecisionPoint(
               payload: {
                 decision: 'proceed',
                 recipe_id: recipeSelection.recipe_id,
+                app_name: scaffoldAppName,
                 next_steps:
                   recipeSelection.recipe_id === 'nextjs_app_router'
-                    ? ['npx create-next-app@latest my-app', 'cd my-app', 'npm run dev']
+                    ? [createCmd, `cd ${scaffoldAppName}`, 'npm run dev']
                     : recipeSelection.recipe_id === 'vite_react'
-                      ? ['npm create vite@latest my-app -- --template react-ts', 'cd my-app', 'npm install', 'npm run dev']
-                      : ['npx create-expo-app my-app', 'cd my-app', 'npx expo start'],
+                      ? [createCmd, `cd ${scaffoldAppName}`, 'npm install', 'npm run dev']
+                      : [createCmd, `cd ${scaffoldAppName}`, 'npx expo start'],
               },
               evidence_ids: [],
               parent_event_id: null,
@@ -536,14 +552,6 @@ export async function handleResolveDecisionPoint(
               'expo': 'Expo',
             };
 
-            // Determine the create command based on recipe
-            const createCmd =
-              recipeSelection.recipe_id === 'nextjs_app_router'
-                ? 'npx create-next-app@latest my-app'
-                : recipeSelection.recipe_id === 'vite_react'
-                  ? 'npm create vite@latest my-app -- --template react-ts'
-                  : 'npx create-expo-app my-app';
-
             // Emit scaffold_apply_started event
             await ctx.emitEvent({
               event_id: ctx.generateId(),
@@ -555,7 +563,8 @@ export async function handleResolveDecisionPoint(
               payload: {
                 recipe_id: recipeSelection.recipe_id,
                 command: createCmd,
-                target_directory: scaffoldWorkspaceRoot,
+                target_directory: scaffoldTargetDir,
+                app_name: scaffoldAppName,
               },
               evidence_ids: [],
               parent_event_id: null,
@@ -563,11 +572,11 @@ export async function handleResolveDecisionPoint(
 
             await ctx.sendEventsToWebview(webview, task_id);
 
-            // V9: Scaffold writes require MISSION mode (prompt escalation)
-            if (!await ctx.enforceMissionMode('scaffold_write', task_id)) {
-              await ctx.sendEventsToWebview(webview, task_id);
-              return;
-            }
+            // V9: User clicked "Proceed" — escalate to MISSION for file creation (user-initiated)
+            await ctx.setModeWithEvent('MISSION', task_id, {
+              reason: 'Scaffold approved by user — escalating to MISSION for file creation',
+              user_initiated: true,
+            });
 
             // Create terminal and RUN the scaffold command automatically
             console.log('[handleResolveDecisionPoint] Auto-running scaffold command:', createCmd);
@@ -578,6 +587,37 @@ export async function handleResolveDecisionPoint(
             });
             terminal.show(true); // Show terminal with focus
             terminal.sendText(createCmd);
+
+            // Track scaffold terminal for failure detection
+            const scaffoldTerminalRef = terminal;
+            const scaffoldTargetPkg = path.join(scaffoldWorkspaceRoot, scaffoldAppName, 'package.json');
+            const terminalCloseListener = vscode.window.onDidCloseTerminal(async (closedTerminal) => {
+              if (closedTerminal !== scaffoldTerminalRef) return;
+              terminalCloseListener.dispose();
+              // Give filesystem a moment to flush
+              await new Promise(r => setTimeout(r, 1000));
+              const fs = await import('fs');
+              if (!fs.existsSync(scaffoldTargetPkg)) {
+                console.error('[handleResolveDecisionPoint] Scaffold terminal closed before project was created');
+                await ctx.emitEvent({
+                  event_id: ctx.generateId(),
+                  task_id: task_id,
+                  timestamp: new Date().toISOString(),
+                  type: 'scaffold_progress' as any,
+                  mode: ctx.currentMode,
+                  stage: ctx.currentStage,
+                  payload: {
+                    scaffold_id: scaffoldIdFromEvents,
+                    status: 'error',
+                    message: 'Scaffold terminal closed before project was created. Please try again.',
+                  },
+                  evidence_ids: [],
+                  parent_event_id: null,
+                });
+                await ctx.sendEventsToWebview(webview, task_id);
+                vscode.window.showErrorMessage('Scaffold terminal closed before project was created. Please try again.');
+              }
+            });
 
             // START POST-SCAFFOLD ORCHESTRATION
             // Polls for project completion, applies design pack, emits next_steps_shown
@@ -636,7 +676,7 @@ export async function handleResolveDecisionPoint(
                 taskId: task_id,
                 scaffoldId: scaffoldIdForPost,
                 targetDirectory: scaffoldWorkspaceRoot,
-                appName: 'my-app', // TODO: Extract from createCmd
+                appName: scaffoldAppName,
                 recipeId: recipeSelection.recipe_id as any,
                 designPackId: designPackIdForPost,
                 eventBus: postScaffoldEventBus,

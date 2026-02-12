@@ -613,6 +613,7 @@ export {
   deriveScaffoldFlowState,
   generatePlaceholderSummary,
   buildScaffoldDecisionOptions,
+  extractAppNameFromPrompt,
 } from './scaffoldFlow';
 
 export type {

@@ -141,7 +141,8 @@ export interface ScaffoldDecisionOptions {
 export class ScaffoldFlowCoordinator {
   private eventBus: EventBus;
   private state: ScaffoldFlowState | null = null;
-  
+  private lastProposalPayload: Record<string, unknown> | null = null;
+
   constructor(eventBus: EventBus) {
     this.eventBus = eventBus;
   }
@@ -338,22 +339,10 @@ export class ScaffoldFlowCoordinator {
   }
   
   /**
-   * Extract app name from user prompt (simple heuristic)
+   * Extract app name from user prompt (delegates to standalone function)
    */
   private extractAppNameFromPrompt(prompt: string): string {
-    // Try to extract quoted names
-    const quotedMatch = prompt.match(/["']([^"']+)["']/);
-    if (quotedMatch) return quotedMatch[1].toLowerCase().replace(/\s+/g, '-');
-    
-    // Try patterns like "create/build X app/project"
-    const appMatch = prompt.match(/(?:create|build|make|scaffold)\s+(?:a\s+)?(?:new\s+)?([a-zA-Z0-9-_]+)\s+(?:app|project|site|website)/i);
-    if (appMatch) return appMatch[1].toLowerCase();
-    
-    // Fallback: use first meaningful word
-    const words = prompt.toLowerCase().split(/\s+/);
-    const keywords = ['create', 'build', 'make', 'new', 'scaffold', 'a', 'an', 'the', 'app', 'project'];
-    const meaningfulWord = words.find(w => !keywords.includes(w) && w.length > 2);
-    return meaningfulWord ? meaningfulWord.replace(/[^a-z0-9-]/g, '') : 'my-app';
+    return extractAppNameFromPrompt(prompt);
   }
   
   // =========================================================================
@@ -462,7 +451,10 @@ export class ScaffoldFlowCoordinator {
     };
     
     await this.eventBus.publish(event);
-    
+
+    // Cache proposal data for use by emitScaffoldDecisionRequested
+    this.lastProposalPayload = payload;
+
     // Update state
     this.state.status = 'proposal_created';
     this.state.lastEventAt = event.timestamp;
@@ -470,9 +462,12 @@ export class ScaffoldFlowCoordinator {
   
   private async emitScaffoldDecisionRequested(): Promise<void> {
     if (!this.state) return;
-    
+
     const decisionOptions = buildScaffoldDecisionOptions();
-    
+
+    // Include proposal data so the decision card can render full proposal details + action buttons
+    const proposalData = this.lastProposalPayload || {};
+
     const event: Event = {
       event_id: randomUUID(),
       task_id: this.state.runId,
@@ -481,6 +476,7 @@ export class ScaffoldFlowCoordinator {
       mode: 'PLAN' as Mode,
       stage: 'plan' as Stage,
       payload: {
+        ...proposalData,
         scaffold_id: this.state.scaffoldId,
         title: 'Create new project',
         description: `Ready to scaffold a new project based on: "${this.state.userPrompt.substring(0, 100)}"`,
@@ -498,7 +494,7 @@ export class ScaffoldFlowCoordinator {
       evidence_ids: [],
       parent_event_id: null,
     };
-    
+
     await this.eventBus.publish(event);
   }
   
@@ -756,7 +752,10 @@ export class ScaffoldFlowCoordinator {
     };
     
     await this.eventBus.publish(event);
-    
+
+    // Cache proposal data for use by emitScaffoldDecisionRequested
+    this.lastProposalPayload = payload;
+
     // Update state
     this.state.currentRecipeId = recipeSelection.recipe_id;
     this.state.lastEventAt = event.timestamp;
@@ -766,6 +765,26 @@ export class ScaffoldFlowCoordinator {
 // ============================================================================
 // HELPER FUNCTIONS
 // ============================================================================
+
+/**
+ * Extract app name from user prompt (simple heuristic)
+ * Exported for reuse in extension handlers (preflight, create command, post-scaffold).
+ */
+export function extractAppNameFromPrompt(prompt: string): string {
+  // Try to extract quoted names
+  const quotedMatch = prompt.match(/["']([^"']+)["']/);
+  if (quotedMatch) return quotedMatch[1].toLowerCase().replace(/\s+/g, '-');
+
+  // Try patterns like "create/build X app/project"
+  const appMatch = prompt.match(/(?:create|build|make|scaffold)\s+(?:a\s+)?(?:new\s+)?([a-zA-Z0-9-_]+)\s+(?:app|project|site|website)/i);
+  if (appMatch) return appMatch[1].toLowerCase();
+
+  // Fallback: use first meaningful word
+  const words = prompt.toLowerCase().split(/\s+/);
+  const keywords = ['create', 'build', 'make', 'new', 'scaffold', 'a', 'an', 'the', 'app', 'project'];
+  const meaningfulWord = words.find(w => !keywords.includes(w) && w.length > 2);
+  return meaningfulWord ? meaningfulWord.replace(/[^a-z0-9-]/g, '') : 'my-app';
+}
 
 /**
  * Generate a placeholder summary from user prompt
@@ -889,7 +908,7 @@ export function deriveScaffoldFlowState(events: Event[]): ScaffoldFlowState | nu
      e.payload.decision_type === 'scaffold_approval' &&
      (e.payload.scaffold_id === payload.scaffold_id ||
       (e.payload.context as any)?.scaffold_id === payload.scaffold_id));
-  const decisionEvent = events.findLast?.(decisionMatcher) ?? [...events].reverse().find(decisionMatcher);
+  const decisionEvent = [...events].reverse().find(decisionMatcher);
   
   if (decisionEvent) {
     return {

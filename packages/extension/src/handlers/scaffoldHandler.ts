@@ -37,6 +37,7 @@ import {
   getProcessManager,
   generateProcessId,
   detectProcessType,
+  extractAppNameFromPrompt,
 } from 'core';
 
 // ---------------------------------------------------------------------------
@@ -266,7 +267,10 @@ export async function handlePreflightProceed(
   }
 
   const taskId = ctx.currentTaskId;
-  const targetDir = preflightInput?.targetDir || vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+  // Always use workspace root as the base — create commands run from here
+  // (the create command itself creates the appName subdirectory)
+  const workspaceRoot = preflightInput?.workspaceRoot || vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+  const targetDir = workspaceRoot; // terminal cwd and post-scaffold targetDirectory
 
   if (!targetDir) {
     vscode.window.showErrorMessage('No target directory determined');
@@ -299,8 +303,25 @@ export async function handlePreflightProceed(
     const intentEvent = events.find((e: Event) => e.type === 'intent_received');
     const scaffoldPrompt = (intentEvent?.payload.prompt as string) || 'Create a new project';
 
+    // Extract app name from user prompt
+    const appName = extractAppNameFromPrompt(scaffoldPrompt);
+    console.log(`${LOG_PREFIX} Extracted app name: "${appName}" from prompt: "${scaffoldPrompt}"`);
+
     const recipeSelection = selectRecipe(scaffoldPrompt);
     console.log(`${LOG_PREFIX} Recipe selected: ${recipeSelection.recipe_id}`);
+
+    // Build non-interactive create command
+    const recipeNames: Record<string, string> = {
+      'nextjs_app_router': 'Next.js',
+      'vite_react': 'Vite + React',
+      'expo': 'Expo',
+    };
+
+    const createCmd = recipeSelection.recipe_id === 'nextjs_app_router'
+      ? `npx --yes create-next-app@latest ${appName} --typescript --tailwind --eslint --app --src-dir --use-npm --import-alias "@/*"`
+      : recipeSelection.recipe_id === 'vite_react'
+      ? `npm create vite@latest ${appName} -- --template react-ts`
+      : `npx --yes create-expo-app ${appName} --template blank-typescript`;
 
     await ctx.emitEvent({
       event_id: ctx.generateId(),
@@ -312,6 +333,7 @@ export async function handlePreflightProceed(
       payload: {
         decision: 'proceed',
         recipe_id: recipeSelection.recipe_id,
+        app_name: appName,
         target_directory: targetDir,
       },
       evidence_ids: [],
@@ -319,19 +341,6 @@ export async function handlePreflightProceed(
     });
 
     await ctx.sendEventsToWebview(webview, taskId);
-
-    // Emit scaffold_apply_started
-    const recipeNames: Record<string, string> = {
-      'nextjs_app_router': 'Next.js',
-      'vite_react': 'Vite + React',
-      'expo': 'Expo',
-    };
-
-    const createCmd = recipeSelection.recipe_id === 'nextjs_app_router'
-      ? 'npx create-next-app@latest my-app'
-      : recipeSelection.recipe_id === 'vite_react'
-      ? 'npm create vite@latest my-app -- --template react-ts'
-      : 'npx create-expo-app my-app';
 
     // Emit checkpoint_created event
     await ctx.emitEvent({
@@ -367,11 +376,11 @@ export async function handlePreflightProceed(
 
     await ctx.sendEventsToWebview(webview, taskId);
 
-    // V9: Scaffold writes require MISSION mode (prompt escalation)
-    if (!await ctx.enforceMissionMode('scaffold_write', taskId)) {
-      await ctx.sendEventsToWebview(webview, taskId);
-      return;
-    }
+    // V9: User clicked "Proceed" — escalate to MISSION for file creation (user-initiated)
+    await ctx.setModeWithEvent('MISSION', taskId, {
+      reason: 'Scaffold approved by user — escalating to MISSION for file creation',
+      user_initiated: true,
+    });
 
     // Run scaffold in terminal
     const terminal = vscode.window.createTerminal({
@@ -380,6 +389,36 @@ export async function handlePreflightProceed(
     });
     terminal.show(true);
     terminal.sendText(createCmd);
+
+    // Track scaffold terminal for failure detection
+    const scaffoldTerminalRef = terminal;
+    const scaffoldTargetPkg = path.join(targetDir, appName, 'package.json');
+    const scaffoldIdForClose = message.scaffoldId || ctx.generateId();
+    const terminalCloseListener = vscode.window.onDidCloseTerminal(async (closedTerminal) => {
+      if (closedTerminal !== scaffoldTerminalRef) return;
+      terminalCloseListener.dispose();
+      await new Promise(r => setTimeout(r, 1000));
+      if (!fs.existsSync(scaffoldTargetPkg)) {
+        console.error(`${LOG_PREFIX} Scaffold terminal closed before project was created`);
+        await ctx.emitEvent({
+          event_id: ctx.generateId(),
+          task_id: taskId,
+          timestamp: new Date().toISOString(),
+          type: 'scaffold_progress' as any,
+          mode: ctx.currentMode,
+          stage: ctx.currentStage,
+          payload: {
+            scaffold_id: scaffoldIdForClose,
+            status: 'error',
+            message: 'Scaffold terminal closed before project was created. Please try again.',
+          },
+          evidence_ids: [],
+          parent_event_id: null,
+        });
+        await ctx.sendEventsToWebview(webview, taskId);
+        vscode.window.showErrorMessage('Scaffold terminal closed before project was created. Please try again.');
+      }
+    });
 
     // Emit scaffold_applied
     await ctx.emitEvent({
@@ -447,7 +486,7 @@ export async function handlePreflightProceed(
           taskId: taskId,
           scaffoldId: scaffoldId,
           targetDirectory: targetDir,
-          appName: 'my-app',
+          appName: appName,
           recipeId: recipeSelection.recipe_id as any,
           designPackId: designPackIdForPost,
           eventBus: postScaffoldEventBus,
