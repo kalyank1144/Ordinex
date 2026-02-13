@@ -166,11 +166,11 @@ describe('Vision Policy', () => {
 
   describe('getSkipReasonMessage', () => {
     it('should return user-friendly messages', () => {
-      expect(getSkipReasonMessage('disabled')).toBe('Vision analysis is disabled');
-      expect(getSkipReasonMessage('no_references')).toBe('No references to analyze');
-      expect(getSkipReasonMessage('replay_mode')).toBe('Using cached analysis (replay mode)');
-      // 'user_declined' may not be in VisionSkipReason - test as any for message mapping
-      expect(getSkipReasonMessage('user_declined' as any)).toBe('User declined analysis');
+      expect(getSkipReasonMessage('disabled')).toBe('Vision analysis is disabled. Enable it in settings: ordinex.references.visionMode');
+      expect(getSkipReasonMessage('no_references')).toBe('No images or URLs were provided');
+      expect(getSkipReasonMessage('replay_mode')).toBe('Vision analysis is not re-run during replay. Using cached tokens from evidence.');
+      // 'user_skipped' is the current skip reason (was 'user_declined')
+      expect(getSkipReasonMessage('user_skipped' as any)).toBe('You chose to skip vision analysis');
     });
   });
 });

@@ -4,6 +4,7 @@
  */
 
 import { Evidence } from '../types';
+import { escapeHtml } from '../utils/cardHelpers';
 
 /**
  * Render evidence viewer modal/overlay
@@ -190,14 +191,3 @@ function formatFullTimestamp(isoString: string): string {
   });
 }
 
-/**
- * Escape HTML
- */
-function escapeHtml(text: string): string {
-  return text
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#039;');
-}

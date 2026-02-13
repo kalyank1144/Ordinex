@@ -10,6 +10,8 @@
  * 6. plan_large_detected → warning_raised with correct code/kind
  */
 
+import { describe, it, expect } from 'vitest';
+
 import {
   normalizeEvent,
   normalizeEvents,

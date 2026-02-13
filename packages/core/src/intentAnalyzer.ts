@@ -146,21 +146,21 @@ const PLAN_PATTERNS = [
  * Structural signals that usually imply an editable target
  */
 const STRUCTURE_PATTERNS = [
-  /```[\s\S]*?```/g,
-  /\b(stack trace|traceback|exception|error:)\b/gi,
-  /\bline \d+\b/gi,
-  /\b(diff|patch)\b/gi,
+  /```[\s\S]*?```/,
+  /\b(stack trace|traceback|exception|error:)\b/i,
+  /\bline \d+\b/i,
+  /\b(diff|patch)\b/i,
 ];
 
 /**
  * Ambiguous reference patterns ("this", "it", etc.)
  */
 const REFERENCE_PATTERNS = [
-  /\b(this|it|that|these|those)\b(?!\s+(is|are|was|were|will|would|should|could|can|might|may))/gi,
-  /\bthe (file|function|class|method|component|module)\b/gi,
-  /\bsame (file|thing|approach)\b/gi,
-  /\bhere\b/gi,
-  /\b(above|below|previous|last)\b/gi,
+  /\b(this|it|that|these|those)\b(?!\s+(is|are|was|were|will|would|should|could|can|might|may))/i,
+  /\bthe (file|function|class|method|component|module)\b/i,
+  /\bsame (file|thing|approach)\b/i,
+  /\bhere\b/i,
+  /\b(above|below|previous|last)\b/i,
 ];
 
 /**

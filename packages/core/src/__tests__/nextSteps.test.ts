@@ -4,6 +4,8 @@
  * Tests for post-scaffold next steps suggestions and routing.
  */
 
+import { describe, it, expect } from 'vitest';
+
 import {
   getNextStepsForRecipe,
   getNextStepById,

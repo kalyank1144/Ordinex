@@ -6,7 +6,7 @@
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "scripts": {
-    "build": "tsc -p ./",
+    "build": "tsc -p ./ && cp -r src/styles dist/styles && cat dist/scaffoldRenderers/helpers.js dist/scaffoldRenderers/designPackTokens.js dist/scaffoldRenderers/statusCard.js dist/scaffoldRenderers/proposal.js dist/scaffoldRenderers/preflight.js dist/scaffoldRenderers/execution.js dist/scaffoldRenderers/styles.js dist/components/ScaffoldCard.js > dist/components/ScaffoldCard.bundle.js",
     "clean": "rm -rf dist",
     "test": "echo 'No tests yet'"
   },

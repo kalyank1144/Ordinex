@@ -1,0 +1,146 @@
+/* ===== CLARIFICATION CARD (PLAN mode v2) ===== */
+.clarification-card {
+  background: var(--vscode-editor-background);
+  border: 1px solid var(--vscode-panel-border);
+  border-radius: 8px;
+  padding: 16px;
+  margin: 12px 0;
+}
+
+.clarification-card[data-state="selecting"] .clarification-btn:not(.selected) {
+  opacity: 0.5;
+  pointer-events: none;
+}
+
+.clarification-card[data-state="processing"] .clarification-options,
+.clarification-card[data-state="processing"] .clarification-skip {
+  display: none;
+}
+
+.clarification-card[data-state="processing"] .clarification-processing {
+  display: flex !important;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 20px;
+  color: var(--vscode-descriptionForeground);
+}
+
+.clarification-card-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-weight: 600;
+  font-size: 14px;
+  color: var(--vscode-editor-foreground);
+}
+
+.clarification-icon {
+  font-size: 18px;
+}
+
+.clarification-card-subtitle {
+  font-size: 12px;
+  color: var(--vscode-descriptionForeground);
+  margin: 8px 0 16px 0;
+}
+
+.clarification-options {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.clarification-btn {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  padding: 12px;
+  background: var(--vscode-button-secondaryBackground);
+  border: 1px solid var(--vscode-panel-border);
+  border-radius: 6px;
+  cursor: pointer;
+  text-align: left;
+  color: var(--vscode-editor-foreground);
+  transition: background 0.15s, border-color 0.15s;
+}
+
+.clarification-btn:hover {
+  background: var(--vscode-button-secondaryHoverBackground);
+  border-color: var(--vscode-focusBorder);
+}
+
+.clarification-btn:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
+.clarification-btn.selected {
+  border-color: var(--vscode-focusBorder);
+  background: var(--vscode-button-secondaryHoverBackground);
+}
+
+.clarification-btn-content {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  flex: 1;
+}
+
+.clarification-btn-title {
+  font-weight: 600;
+  font-size: 13px;
+}
+
+.clarification-btn-desc {
+  font-size: 11px;
+  color: var(--vscode-descriptionForeground);
+}
+
+.clarification-btn-evidence {
+  font-size: 10px;
+  color: var(--vscode-textLink-foreground);
+  font-style: italic;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 280px;
+}
+
+.clarification-btn-spinner {
+  animation: spin 1s linear infinite;
+}
+
+.clarification-skip {
+  margin-top: 12px;
+  text-align: center;
+}
+
+.clarification-skip-link {
+  background: none;
+  border: none;
+  color: var(--vscode-textLink-foreground);
+  font-size: 12px;
+  cursor: pointer;
+  padding: 4px 8px;
+}
+
+.clarification-skip-link:hover {
+  text-decoration: underline;
+}
+
+.clarification-processing {
+  padding: 20px;
+  text-align: center;
+}
+
+.processing-spinner {
+  animation: spin 1s linear infinite;
+  display: inline-block;
+}
+
+@keyframes spin {
+  0% { transform: rotate(0deg); }
+  100% { transform: rotate(360deg); }
+}

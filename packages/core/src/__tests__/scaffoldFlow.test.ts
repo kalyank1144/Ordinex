@@ -207,39 +207,37 @@ describe('ScaffoldFlowCoordinator', () => {
       expect(proposalEvent?.payload.summary).toContain('Vite');
     });
 
-    it('should emit decision_point_needed event', async () => {
+    it('should emit scaffold_decision_requested event', async () => {
       await coordinator.startScaffoldFlow('run-123', 'create a new app');
-      
-      const decisionEvent = publishedEvents.find(e => e.type === 'decision_point_needed');
+
+      const decisionEvent = publishedEvents.find(e => e.type === 'scaffold_decision_requested');
       expect(decisionEvent).toBeDefined();
-      expect(decisionEvent?.payload.decision_type).toBe('scaffold_approval');
+      expect(decisionEvent?.payload.scaffold_id).toBeDefined();
       expect(decisionEvent?.payload.options).toBeDefined();
     });
 
     it('should include Proceed and Cancel options', async () => {
       await coordinator.startScaffoldFlow('run-123', 'create a new app');
-      
-      const decisionEvent = publishedEvents.find(e => e.type === 'decision_point_needed');
+
+      const decisionEvent = publishedEvents.find(e => e.type === 'scaffold_decision_requested');
       const options = decisionEvent?.payload.options as any[];
-      
-      const proceedOption = options?.find(o => o.action === 'proceed');
-      const cancelOption = options?.find(o => o.action === 'cancel');
-      
+
+      const proceedOption = options?.find((o: any) => o.action === 'proceed');
+      const cancelOption = options?.find((o: any) => o.action === 'cancel');
+
       expect(proceedOption).toBeDefined();
       expect(proceedOption?.primary).toBe(true);
       expect(cancelOption).toBeDefined();
     });
 
-    it('should include disabled Change Style option', async () => {
+    it('should include Change Style option', async () => {
       await coordinator.startScaffoldFlow('run-123', 'create a new app');
-      
-      const decisionEvent = publishedEvents.find(e => e.type === 'decision_point_needed');
+
+      const decisionEvent = publishedEvents.find(e => e.type === 'scaffold_decision_requested');
       const options = decisionEvent?.payload.options as any[];
-      
-      const changeStyleOption = options?.find(o => o.action === 'change_style');
+
+      const changeStyleOption = options?.find((o: any) => o.action === 'change_style');
       expect(changeStyleOption).toBeDefined();
-      expect(changeStyleOption?.disabled).toBe(true);
-      expect(changeStyleOption?.disabledReason).toContain('35.4');
     });
 
     it('should update state to awaiting_decision', async () => {
@@ -301,15 +299,15 @@ describe('ScaffoldFlowCoordinator', () => {
     });
   });
 
-  describe('handleUserAction - change_style', () => {
-    it('should treat change_style as cancel in 35.1', async () => {
+  describe('handleStyleChange', () => {
+    it('should show style picker and keep flow in awaiting_decision', async () => {
       await coordinator.startScaffoldFlow('run-123', 'create a new app');
-      const state = await coordinator.handleUserAction('change_style');
-      
-      expect(state.completionStatus).toBe('cancelled');
-      expect(publishedEvents.some(e => 
-        e.type === 'scaffold_completed' && 
-        (e.payload.reason as string).includes('35.4')
+      const state = await coordinator.handleStyleChange();
+
+      expect(state.status).toBe('awaiting_decision');
+      expect(coordinator.isStylePickerActive()).toBe(true);
+      expect(publishedEvents.some(e =>
+        e.type === 'scaffold_style_selection_requested'
       )).toBe(true);
     });
   });
@@ -416,7 +414,7 @@ describe('deriveScaffoldFlowState (Replay Safety)', () => {
     expect(state?.status).toBe('proposal_created');
   });
 
-  it('should derive awaiting_decision state', () => {
+  it('should derive awaiting_decision state from legacy decision_point_needed', () => {
     const now = new Date().toISOString();
     const events: Event[] = [
       {
@@ -450,7 +448,158 @@ describe('deriveScaffoldFlowState (Replay Safety)', () => {
         parent_event_id: null,
       },
     ];
-    
+
+    const state = deriveScaffoldFlowState(events);
+    expect(state?.status).toBe('awaiting_decision');
+  });
+
+  it('should derive awaiting_decision state from scaffold_decision_requested', () => {
+    const now = new Date().toISOString();
+    const events: Event[] = [
+      {
+        event_id: 'e1',
+        task_id: 'task-123',
+        timestamp: now,
+        type: 'scaffold_started',
+        mode: 'PLAN',
+        stage: 'plan',
+        payload: {
+          scaffold_id: 'scaffold_abc',
+          run_id: 'run-123',
+          user_prompt: 'create a new app',
+          created_at_iso: now,
+        },
+        evidence_ids: [],
+        parent_event_id: null,
+      },
+      {
+        event_id: 'e2',
+        task_id: 'task-123',
+        timestamp: now,
+        type: 'scaffold_decision_requested',
+        mode: 'PLAN',
+        stage: 'plan',
+        payload: {
+          scaffold_id: 'scaffold_abc',
+          title: 'Create new project',
+          description: 'Review the scaffold proposal',
+          options: [
+            { label: 'Proceed', action: 'proceed', description: 'Start building', primary: true },
+            { label: 'Cancel', action: 'cancel', description: 'Cancel scaffold' },
+          ],
+          context: {
+            flow: 'scaffold',
+            scaffold_id: 'scaffold_abc',
+            user_prompt: 'create a new app',
+          },
+        },
+        evidence_ids: [],
+        parent_event_id: null,
+      },
+    ];
+
+    const state = deriveScaffoldFlowState(events);
+    expect(state?.status).toBe('awaiting_decision');
+    expect(state?.scaffoldId).toBe('scaffold_abc');
+  });
+
+  it('should prefer latest decision event when both legacy and new types exist', () => {
+    const t1 = '2026-02-10T10:00:00.000Z';
+    const t2 = '2026-02-10T10:00:01.000Z';
+    const t3 = '2026-02-10T10:00:02.000Z';
+    const events: Event[] = [
+      {
+        event_id: 'e1',
+        task_id: 'task-123',
+        timestamp: t1,
+        type: 'scaffold_started',
+        mode: 'PLAN',
+        stage: 'plan',
+        payload: {
+          scaffold_id: 'scaffold_abc',
+          run_id: 'run-123',
+          user_prompt: 'create a new app',
+          created_at_iso: t1,
+        },
+        evidence_ids: [],
+        parent_event_id: null,
+      },
+      {
+        event_id: 'e2',
+        task_id: 'task-123',
+        timestamp: t2,
+        type: 'decision_point_needed',
+        mode: 'PLAN',
+        stage: 'plan',
+        payload: {
+          decision_type: 'scaffold_approval',
+          scaffold_id: 'scaffold_abc',
+        },
+        evidence_ids: [],
+        parent_event_id: null,
+      },
+      {
+        event_id: 'e3',
+        task_id: 'task-123',
+        timestamp: t3,
+        type: 'scaffold_decision_requested',
+        mode: 'PLAN',
+        stage: 'plan',
+        payload: {
+          scaffold_id: 'scaffold_abc',
+          title: 'Create new project',
+          description: 'Review proposal',
+          options: [],
+          context: { flow: 'scaffold', scaffold_id: 'scaffold_abc' },
+        },
+        evidence_ids: [],
+        parent_event_id: null,
+      },
+    ];
+
+    const state = deriveScaffoldFlowState(events);
+    expect(state?.status).toBe('awaiting_decision');
+    // Should use the latest event's timestamp (scaffold_decision_requested), not the legacy one
+    expect(state?.lastEventAt).toBe(t3);
+  });
+
+  it('should prefer scaffold_decision_requested over legacy decision_point_needed', () => {
+    const now = new Date().toISOString();
+    const events: Event[] = [
+      {
+        event_id: 'e1',
+        task_id: 'task-123',
+        timestamp: now,
+        type: 'scaffold_started',
+        mode: 'PLAN',
+        stage: 'plan',
+        payload: {
+          scaffold_id: 'scaffold_abc',
+          run_id: 'run-123',
+          user_prompt: 'create a new app',
+          created_at_iso: now,
+        },
+        evidence_ids: [],
+        parent_event_id: null,
+      },
+      {
+        event_id: 'e2',
+        task_id: 'task-123',
+        timestamp: now,
+        type: 'scaffold_decision_requested',
+        mode: 'PLAN',
+        stage: 'plan',
+        payload: {
+          scaffold_id: 'scaffold_abc',
+          title: 'Create new project',
+          options: [],
+        },
+        evidence_ids: [],
+        parent_event_id: null,
+      },
+    ];
+
+    // Both event types should produce the same awaiting_decision state
     const state = deriveScaffoldFlowState(events);
     expect(state?.status).toBe('awaiting_decision');
   });
@@ -502,7 +651,25 @@ describe('deriveScaffoldFlowState (Replay Safety)', () => {
 
 describe('Helper Functions', () => {
   describe('isScaffoldDecisionPoint', () => {
-    it('should return true for scaffold_approval decision points', () => {
+    it('should return true for scaffold_decision_requested events', () => {
+      const event: Event = {
+        event_id: 'e1',
+        task_id: 'task-123',
+        timestamp: new Date().toISOString(),
+        type: 'scaffold_decision_requested',
+        mode: 'PLAN',
+        stage: 'plan',
+        payload: {
+          decision_type: 'scaffold_approval',
+        },
+        evidence_ids: [],
+        parent_event_id: null,
+      };
+
+      expect(isScaffoldDecisionPoint(event)).toBe(true);
+    });
+
+    it('should return true for legacy scaffold_approval decision points', () => {
       const event: Event = {
         event_id: 'e1',
         task_id: 'task-123',

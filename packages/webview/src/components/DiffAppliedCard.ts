@@ -4,6 +4,7 @@
  */
 
 import { Event } from '../types';
+import { escapeHtml, formatTimestamp } from '../utils/cardHelpers';
 
 /**
  * Render a diff applied card showing successful application.
@@ -150,23 +151,3 @@ export function renderDiffAppliedCard(event: Event, undoGroupId?: string): strin
   `;
 }
 
-/**
- * Utility functions
- */
-function formatTimestamp(isoString: string): string {
-  const date = new Date(isoString);
-  return date.toLocaleTimeString('en-US', { 
-    hour: '2-digit', 
-    minute: '2-digit',
-    second: '2-digit'
-  });
-}
-
-function escapeHtml(text: string): string {
-  return text
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#039;');
-}

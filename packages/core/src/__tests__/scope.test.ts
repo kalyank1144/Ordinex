@@ -270,7 +270,7 @@ describe('ScopeManager', () => {
       };
       const approvalId = 'approval_123';
 
-      scopeManager.resolveScopeExpansion(taskId, 'MISSION', 'edit', approvalId, true, request);
+      await scopeManager.resolveScopeExpansion(taskId, 'MISSION', 'edit', approvalId, true, request);
 
       const events = eventStore.getEventsByTaskId(taskId);
       expect(events).toHaveLength(1);

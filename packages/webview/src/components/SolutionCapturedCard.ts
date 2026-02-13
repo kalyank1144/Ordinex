@@ -5,6 +5,7 @@
  */
 
 import { Event } from '../types';
+import { escapeHtml, formatTimestamp } from '../utils/cardHelpers';
 
 export function renderSolutionCapturedCard(event: Event): string {
   const problem = (event.payload.problem as string) || 'Unknown problem';
@@ -159,20 +160,3 @@ export function renderSolutionCapturedCard(event: Event): string {
   `;
 }
 
-function formatTimestamp(isoString: string): string {
-  const date = new Date(isoString);
-  return date.toLocaleTimeString('en-US', {
-    hour: '2-digit',
-    minute: '2-digit',
-    second: '2-digit',
-  });
-}
-
-function escapeHtml(text: string): string {
-  return text
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#039;');
-}

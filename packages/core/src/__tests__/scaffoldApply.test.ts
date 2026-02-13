@@ -14,6 +14,12 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { EventEmitter } from 'events';
 
+// Make fs properties configurable so vi.spyOn works
+vi.mock('fs', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('fs')>();
+  return { ...actual };
+});
+
 import {
   checkScaffoldConflicts,
   filterForMergeSafeOnly,

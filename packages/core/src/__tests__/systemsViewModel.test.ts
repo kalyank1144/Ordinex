@@ -5,6 +5,8 @@
  * Ensures replay-safe behavior: same events → identical output.
  */
 
+import { describe, it, expect } from 'vitest';
+
 import {
   reduceToSystemsViewModel,
   getTopRetrievedFiles,

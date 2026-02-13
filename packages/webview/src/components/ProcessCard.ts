@@ -11,6 +11,7 @@
  */
 
 import { Event } from '../types';
+import { escapeHtml, escapeAttr } from '../utils/cardHelpers';
 
 // ============================================================================
 // TYPES
@@ -365,15 +366,3 @@ function shortenPath(p: string): string {
   return '.../' + parts.slice(-2).join('/');
 }
 
-function escapeHtml(text: string): string {
-  return text
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#039;');
-}
-
-function escapeAttr(text: string): string {
-  return text.replace(/'/g, "\\'").replace(/"/g, '\\"');
-}

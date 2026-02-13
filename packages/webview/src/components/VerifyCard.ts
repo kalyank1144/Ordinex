@@ -20,6 +20,8 @@ declare const customElements: {
   define(name: string, ctor: any): void;
 };
 
+import { escapeHtml } from '../utils/cardHelpers';
+
 type HTMLButtonElement = any;
 
 type VerifyEvent = {
@@ -73,7 +75,7 @@ export class VerifyCard extends HTMLElement {
         body = this.renderSkipped(payload);
         break;
       default:
-        body = `<div class="verify-card">Unknown verify event: ${this.escapeHtml(String(event.type))}</div>`;
+        body = `<div class="verify-card">Unknown verify event: ${escapeHtml(String(event.type))}</div>`;
         break;
     }
 
@@ -91,7 +93,7 @@ export class VerifyCard extends HTMLElement {
         <div class="commands">
           ${commands.map((cmd: any) => `
             <div class="command-item">
-              <code>${this.escapeHtml(cmd.name || cmd.command || '')}</code>
+              <code>${escapeHtml(cmd.name || cmd.command || '')}</code>
             </div>
           `).join('')}
         </div>
@@ -103,7 +105,7 @@ export class VerifyCard extends HTMLElement {
         <div class="header">
           <span class="icon">🔍</span>
           <h3>Running Verification</h3>
-          <span class="badge">${this.escapeHtml(String(policyMode))}</span>
+          <span class="badge">${escapeHtml(String(policyMode))}</span>
         </div>
         ${commandsHtml}
         <p class="status">Executing ${count} command(s)...</p>
@@ -122,12 +124,12 @@ export class VerifyCard extends HTMLElement {
     const failedDetails = !isPassed && failedCommand
       ? `
         <div class="error-details">
-          <p><strong>Failed command:</strong> <code>${this.escapeHtml(String(failedCommand))}</code></p>
-          ${exitCode !== undefined ? `<p><strong>Exit code:</strong> ${this.escapeHtml(String(exitCode))}</p>` : ''}
+          <p><strong>Failed command:</strong> <code>${escapeHtml(String(failedCommand))}</code></p>
+          ${exitCode !== undefined ? `<p><strong>Exit code:</strong> ${escapeHtml(String(exitCode))}</p>` : ''}
         </div>
         <div class="actions">
-          ${transcriptId ? `<button class="btn-secondary" data-action="view-logs" data-transcript-id="${this.escapeHtml(String(transcriptId))}">View Logs</button>` : ''}
-          <button class="btn-primary" data-action="propose-fix" data-event-id="${this.escapeHtml(String(event.event_id || ''))}">Propose Fix</button>
+          ${transcriptId ? `<button class="btn-secondary" data-action="view-logs" data-transcript-id="${escapeHtml(String(transcriptId))}">View Logs</button>` : ''}
+          <button class="btn-primary" data-action="propose-fix" data-event-id="${escapeHtml(String(event.event_id || ''))}">Propose Fix</button>
         </div>
       `
       : `
@@ -159,7 +161,7 @@ export class VerifyCard extends HTMLElement {
         <div class="commands">
           ${commands.map((cmd: any) => `
             <div class="command-item">
-              <code>${this.escapeHtml(cmd.name || cmd.command || '')}</code>
+              <code>${escapeHtml(cmd.name || cmd.command || '')}</code>
             </div>
           `).join('')}
         </div>
@@ -172,12 +174,12 @@ export class VerifyCard extends HTMLElement {
           <span class="icon">🔍</span>
           <h3>Verification Available</h3>
         </div>
-        <p class="description">${this.escapeHtml(String(summary))}</p>
+        <p class="description">${escapeHtml(String(summary))}</p>
         ${commandsHtml}
         <div class="actions">
-          <button class="btn-primary" data-action="run-verify" data-event-id="${this.escapeHtml(String(event.event_id || ''))}">Run Verification</button>
-          <button class="btn-secondary" data-action="skip-once" data-event-id="${this.escapeHtml(String(event.event_id || ''))}">Skip Once</button>
-          <button class="btn-text" data-action="disable-verify" data-event-id="${this.escapeHtml(String(event.event_id || ''))}">Disable</button>
+          <button class="btn-primary" data-action="run-verify" data-event-id="${escapeHtml(String(event.event_id || ''))}">Run Verification</button>
+          <button class="btn-secondary" data-action="skip-once" data-event-id="${escapeHtml(String(event.event_id || ''))}">Skip Once</button>
+          <button class="btn-text" data-action="disable-verify" data-event-id="${escapeHtml(String(event.event_id || ''))}">Disable</button>
         </div>
       </div>
     `;
@@ -191,7 +193,7 @@ export class VerifyCard extends HTMLElement {
           <span class="icon">⏭️</span>
           <h3>Verification Skipped</h3>
         </div>
-        <p class="description">${this.escapeHtml(String(reason))}</p>
+        <p class="description">${escapeHtml(String(reason))}</p>
       </div>
     `;
   }
@@ -285,14 +287,6 @@ export class VerifyCard extends HTMLElement {
     `;
   }
 
-  private escapeHtml(text: string): string {
-    return text
-      .replace(/&/g, '&amp;')
-      .replace(/</g, '&lt;')
-      .replace(/>/g, '&gt;')
-      .replace(/"/g, '&quot;')
-      .replace(/'/g, '&#039;');
-  }
 }
 
 if (!customElements.get('verify-card')) {

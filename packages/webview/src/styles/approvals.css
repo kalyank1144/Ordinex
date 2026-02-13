@@ -1,0 +1,191 @@
+/* ===== APPROVAL CARDS ===== */
+.approval-card {
+  background: var(--vscode-inputValidation-warningBackground);
+  border: 2px solid var(--vscode-charts-yellow);
+  border-radius: 6px;
+  padding: 14px;
+  margin-bottom: 12px;
+  animation: pulseGlow 2s ease-in-out infinite;
+}
+
+@keyframes pulseGlow {
+  0%, 100% { box-shadow: 0 0 8px rgba(255, 193, 7, 0.3); }
+  50% { box-shadow: 0 0 16px rgba(255, 193, 7, 0.6); }
+}
+
+.approval-card-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 12px;
+}
+
+.approval-card-header-left {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex: 1;
+}
+
+.approval-icon {
+  font-size: 24px;
+  flex-shrink: 0;
+}
+
+.approval-card-title {
+  flex: 1;
+}
+
+.approval-type-label {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--vscode-foreground);
+  margin-bottom: 2px;
+}
+
+.approval-id {
+  font-size: 10px;
+  color: var(--vscode-descriptionForeground);
+  font-family: monospace;
+}
+
+.risk-badge {
+  padding: 4px 10px;
+  border-radius: 12px;
+  font-size: 9px;
+  font-weight: 700;
+  color: #fff;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  flex-shrink: 0;
+}
+
+.approval-card-body {
+  margin-bottom: 12px;
+}
+
+.approval-summary {
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--vscode-foreground);
+  margin-bottom: 10px;
+  font-weight: 500;
+}
+
+.approval-details {
+  background: var(--vscode-input-background);
+  border: 1px solid var(--vscode-input-border);
+  border-radius: 4px;
+  padding: 10px;
+  margin-bottom: 8px;
+}
+
+.detail-row {
+  margin: 6px 0;
+  font-size: 11px;
+  display: flex;
+  gap: 8px;
+}
+
+.detail-row:first-child {
+  margin-top: 0;
+}
+
+.detail-row:last-child {
+  margin-bottom: 0;
+}
+
+.detail-label {
+  color: var(--vscode-descriptionForeground);
+  font-weight: 600;
+  min-width: 80px;
+}
+
+.detail-value {
+  color: var(--vscode-foreground);
+  flex: 1;
+  word-break: break-word;
+}
+
+.detail-value code {
+  background: var(--vscode-textCodeBlock-background);
+  padding: 2px 6px;
+  border-radius: 3px;
+  font-size: 10px;
+}
+
+.approval-evidence {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  color: var(--vscode-charts-blue);
+  margin-top: 8px;
+}
+
+.approval-card-actions {
+  display: flex;
+  gap: 10px;
+}
+
+.approval-btn {
+  flex: 1;
+  padding: 8px 16px;
+  font-size: 12px;
+  font-weight: 700;
+  border-radius: 4px;
+  cursor: pointer;
+  border: none;
+  transition: all 0.15s ease;
+}
+
+.approval-btn.approve {
+  background: var(--vscode-charts-green);
+  color: #fff;
+}
+
+.approval-btn.approve:hover {
+  background: #28a745;
+  transform: translateY(-1px);
+  box-shadow: 0 2px 8px rgba(40, 167, 69, 0.4);
+}
+
+.approval-btn.reject {
+  background: var(--vscode-charts-red);
+  color: #fff;
+}
+
+.approval-btn.reject:hover {
+  background: #dc3545;
+  transform: translateY(-1px);
+  box-shadow: 0 2px 8px rgba(220, 53, 69, 0.4);
+}
+
+.approval-section-header {
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--vscode-charts-yellow);
+  margin: 16px 0 12px 0;
+  padding-bottom: 6px;
+  border-bottom: 2px solid var(--vscode-charts-yellow);
+}
+
+.approval-warning {
+  background: var(--vscode-inputValidation-warningBackground);
+  border: 1px solid var(--vscode-inputValidation-warningBorder);
+  border-radius: 4px;
+  padding: 8px 10px;
+  margin-bottom: 8px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 11px;
+  color: var(--vscode-editor-warningForeground);
+}
+
+.approval-warning-icon {
+  font-size: 16px;
+  flex-shrink: 0;
+}

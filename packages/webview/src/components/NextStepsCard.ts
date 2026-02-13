@@ -10,6 +10,8 @@
  * IMPORTANT: This is NOT a chat message dump. It's a focused momentum UX panel.
  */
 
+import { escapeHtml } from '../utils/cardHelpers';
+
 declare class HTMLElement {
   shadowRoot: any;
   attachShadow(init: { mode: 'open' | 'closed' }): any;
@@ -183,14 +185,14 @@ export class NextStepsCard extends HTMLElement {
       <button 
         class="action-btn ${isPrimary ? 'primary' : 'secondary'} ${isLoading ? 'loading' : ''}"
         data-action="select-step"
-        data-step-id="${this.escapeHtml(suggestion.id)}"
-        data-step-kind="${this.escapeHtml(suggestion.kind)}"
+        data-step-id="${escapeHtml(suggestion.id)}"
+        data-step-kind="${escapeHtml(suggestion.kind)}"
         ${isLoading ? 'disabled' : ''}
       >
         <span class="btn-icon">${isLoading ? '⏳' : icon}</span>
         <span class="btn-content">
-          <span class="btn-title">${this.escapeHtml(suggestion.title)}</span>
-          ${suggestion.description ? `<span class="btn-desc">${this.escapeHtml(suggestion.description)}</span>` : ''}
+          <span class="btn-title">${escapeHtml(suggestion.title)}</span>
+          ${suggestion.description ? `<span class="btn-desc">${escapeHtml(suggestion.description)}</span>` : ''}
         </span>
         ${kindBadge ? `<span class="kind-badge ${suggestion.kind}">${kindBadge}</span>` : ''}
       </button>
@@ -205,12 +207,12 @@ export class NextStepsCard extends HTMLElement {
       <button 
         class="quick-link ${isLoading ? 'loading' : ''}"
         data-action="select-step"
-        data-step-id="${this.escapeHtml(suggestion.id)}"
-        data-step-kind="${this.escapeHtml(suggestion.kind)}"
+        data-step-id="${escapeHtml(suggestion.id)}"
+        data-step-kind="${escapeHtml(suggestion.kind)}"
         ${isLoading ? 'disabled' : ''}
       >
         <span class="link-icon">${isLoading ? '⏳' : icon}</span>
-        <span class="link-text">${this.escapeHtml(suggestion.title)}</span>
+        <span class="link-text">${escapeHtml(suggestion.title)}</span>
       </button>
     `;
   }
@@ -538,14 +540,6 @@ export class NextStepsCard extends HTMLElement {
     `;
   }
 
-  private escapeHtml(text: string): string {
-    return String(text)
-      .replace(/&/g, '&amp;')
-      .replace(/</g, '&lt;')
-      .replace(/>/g, '&gt;')
-      .replace(/"/g, '&quot;')
-      .replace(/'/g, '&#039;');
-  }
 }
 
 // Register custom element

@@ -5,6 +5,8 @@
  * and non-empty directory safety checks.
  */
 
+import { describe, it, expect } from 'vitest';
+
 import {
   extractAppName,
   detectMonorepoType,
@@ -88,8 +90,9 @@ describe('extractAppName', () => {
     expect(extractAppName('Create app called MyAwesomeApp')).toBe('myawesomeapp');
   });
 
-  it('rejects invalid names', () => {
-    // Too short
+  it('rejects invalid names and falls back to default', () => {
+    // "x" is too short (length < 2), and "called" is a connector keyword
+    // blocked by APP_NAME_BLOCKLIST, so extraction falls back to default.
     expect(extractAppName('Create app called x')).toBe('my-app');
   });
 });

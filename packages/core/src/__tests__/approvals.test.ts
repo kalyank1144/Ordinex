@@ -299,19 +299,20 @@ describe('ApprovalManager', () => {
   });
 
   describe('Error Handling', () => {
-    it('should throw error when resolving non-existent approval', async () => {
-      await expect(
-        approvalManager.resolveApproval(
-          taskId,
-          'MISSION',
-          'edit',
-          'non-existent-id',
-          'approved'
-        )
-      ).rejects.toThrow('No pending approval found');
+    it('should be idempotent when resolving non-existent approval', async () => {
+      // resolveApproval is idempotent: logs warning and returns for non-existent IDs
+      await approvalManager.resolveApproval(
+        taskId,
+        'MISSION',
+        'edit',
+        'non-existent-id',
+        'approved'
+      );
+      // Should not throw - idempotent behavior
+      expect(approvalManager.hasPendingApprovals()).toBe(false);
     });
 
-    it('should not allow duplicate resolution of same approval', async () => {
+    it('should be idempotent on duplicate resolution of same approval', async () => {
       const approvalPromise = approvalManager.requestApproval(
         taskId,
         'MISSION',
@@ -324,7 +325,7 @@ describe('ApprovalManager', () => {
       await new Promise(resolve => setTimeout(resolve, 50));
 
       const request = approvalManager.getPendingApprovals()[0];
-      
+
       // Resolve once
       await approvalManager.resolveApproval(
         taskId,
@@ -336,16 +337,16 @@ describe('ApprovalManager', () => {
 
       await approvalPromise;
 
-      // Try to resolve again - should fail
-      await expect(
-        approvalManager.resolveApproval(
-          taskId,
-          'MISSION',
-          'edit',
-          request.approval_id,
-          'approved'
-        )
-      ).rejects.toThrow('No pending approval found');
+      // Try to resolve again - should be a no-op (idempotent)
+      await approvalManager.resolveApproval(
+        taskId,
+        'MISSION',
+        'edit',
+        request.approval_id,
+        'approved'
+      );
+      // Should not throw - idempotent behavior
+      expect(approvalManager.hasPendingApprovals()).toBe(false);
     });
   });
 

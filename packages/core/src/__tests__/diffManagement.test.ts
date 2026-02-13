@@ -7,6 +7,8 @@
  * - No silent writes
  */
 
+import { describe, test, expect, beforeEach, afterEach } from 'vitest';
+
 import { EventBus } from '../eventBus';
 import { EventStore } from '../eventStore';
 import { ModeManager } from '../modeManager';

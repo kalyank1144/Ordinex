@@ -10,6 +10,7 @@
  */
 
 import type { ScopeSummary } from '../types';
+import { escapeHtml } from '../utils/cardHelpers';
 
 export interface ScopeSummaryProps {
   summary: ScopeSummary;
@@ -200,11 +201,3 @@ export function getScopeSummaryStyles(): string {
   `;
 }
 
-function escapeHtml(text: string): string {
-  return text
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#039;');
-}

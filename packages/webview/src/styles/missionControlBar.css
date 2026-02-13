@@ -1,0 +1,134 @@
+/* ===== MISSION CONTROL BAR (Bottom Sticky) ===== */
+.mission-control-bar {
+  display: none;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 12px;
+  background: var(--vscode-sideBar-background);
+  border-top: 1px solid var(--vscode-panel-border);
+  border-bottom: 1px solid var(--vscode-panel-border);
+  height: 32px;
+  flex-shrink: 0;
+}
+
+.mission-control-bar.visible {
+  display: flex;
+}
+
+.mission-control-bar.running {
+  border-top-color: var(--vscode-charts-blue);
+  animation: missionBarPulse 2s ease-in-out infinite;
+}
+
+.mission-control-bar.complete {
+  border-top-color: var(--vscode-charts-green);
+  background: var(--vscode-inputValidation-infoBackground);
+}
+
+.mission-control-bar.all-done {
+  border-top-color: var(--vscode-charts-green);
+  background: linear-gradient(90deg, var(--vscode-inputValidation-infoBackground) 0%, var(--vscode-sideBar-background) 100%);
+}
+
+@keyframes missionBarPulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.85; }
+}
+
+.mcb-status {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  font-weight: 600;
+  flex-shrink: 0;
+}
+
+.mcb-status-icon {
+  font-size: 14px;
+}
+
+.mcb-status-icon.spinning {
+  animation: spin 1s linear infinite;
+}
+
+.mcb-count {
+  color: var(--vscode-foreground);
+  font-weight: 700;
+}
+
+.mcb-divider {
+  width: 1px;
+  height: 16px;
+  background: var(--vscode-panel-border);
+  flex-shrink: 0;
+}
+
+.mcb-mission-name {
+  font-size: 11px;
+  color: var(--vscode-foreground);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex: 1;
+  min-width: 60px;
+}
+
+.mcb-progress {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+}
+
+.mcb-progress-bar {
+  width: 50px;
+  height: 4px;
+  background: var(--vscode-panel-border);
+  border-radius: 2px;
+  overflow: hidden;
+}
+
+.mcb-progress-fill {
+  height: 100%;
+  background: var(--vscode-charts-blue);
+  border-radius: 2px;
+  transition: width 0.3s ease;
+}
+
+.mcb-progress-fill.complete {
+  background: var(--vscode-charts-green);
+}
+
+.mcb-cta {
+  padding: 3px 10px;
+  font-size: 10px;
+  font-weight: 700;
+  border-radius: 3px;
+  cursor: pointer;
+  border: none;
+  white-space: nowrap;
+  flex-shrink: 0;
+  transition: all 0.15s ease;
+}
+
+.mcb-cta.start {
+  background: var(--vscode-charts-green);
+  color: #fff;
+}
+
+.mcb-cta.start:hover {
+  background: #28a745;
+}
+
+.mcb-cta.running {
+  background: var(--vscode-button-secondaryBackground);
+  color: var(--vscode-button-secondaryForeground);
+  cursor: default;
+}
+
+.mcb-cta.done {
+  background: transparent;
+  color: var(--vscode-charts-green);
+  border: 1px solid var(--vscode-charts-green);
+}

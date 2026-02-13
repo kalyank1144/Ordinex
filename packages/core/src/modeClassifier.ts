@@ -36,7 +36,7 @@ const WEIGHTS = {
   PLANNING_WITH_FILE: 1.0,       // "Plan how to fix src/..." (bonus to PLAN)
   
   // ANSWER boosters
-  QUESTION_FORM: 1.5,            // "What is...?", "How does..."
+  QUESTION_FORM: 2.0,            // "What is...?", "How does..." (low priority, overridden by action/planning)
   
   // Modifiers
   ACTION_OVERRIDES_QUESTION: true // "Can you add X?" → MISSION despite "?"
@@ -244,11 +244,14 @@ function computeScores(features: Features): {
     }
   }
   
-  // ACTION OVERRIDES QUESTION rule
-  // "Can you help me add X?" → MISSION despite question form
-  if (WEIGHTS.ACTION_OVERRIDES_QUESTION) {
-    if (features.hasQuestionForm && (features.hasActionVerbs || features.hasConversationalAction)) {
-      // Reduce ANSWER score when action intent present
+  // QUESTION OVERRIDE rules (mutually exclusive to avoid compounding answerScore reduction)
+  // Only one *= 0.5 should fire per prompt.
+  if (features.hasQuestionForm) {
+    if (WEIGHTS.ACTION_OVERRIDES_QUESTION && (features.hasActionVerbs || features.hasConversationalAction)) {
+      // "Can you help me add X?" → MISSION despite question form
+      answerScore *= 0.5;
+    } else if (features.hasPlanningTerms) {
+      // "What's the best strategy for migration?" → PLAN despite question form
       answerScore *= 0.5;
     }
   }

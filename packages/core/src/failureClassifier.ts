@@ -222,22 +222,22 @@ export function classifyError(
     suggested_action = 'RETRY_SAME';
     user_message = 'Response missing required fields. Retrying...';
   }
-  // 3. Check for workspace/file errors
-  else if (isFileNotFoundError(rawError)) {
-    category = 'WORKSPACE_STATE';
-    code = 'FILE_NOT_FOUND';
-    retryable = false;
-    suggested_action = 'ASK_USER';
-    user_message = context.file 
-      ? `File not found: ${context.file}`
-      : 'Required file not found';
-  }
+  // 3. Check for workspace/file errors (DIR_MISSING before FILE_NOT_FOUND — more specific first)
   else if (isDirMissingError(rawError)) {
     category = 'WORKSPACE_STATE';
     code = 'DIR_MISSING';
     retryable = false;
     suggested_action = 'ASK_USER';
     user_message = 'Required directory does not exist';
+  }
+  else if (isFileNotFoundError(rawError)) {
+    category = 'WORKSPACE_STATE';
+    code = 'FILE_NOT_FOUND';
+    retryable = false;
+    suggested_action = 'ASK_USER';
+    user_message = context.file
+      ? `File not found: ${context.file}`
+      : 'Required file not found';
   }
   else if (isPermissionError(rawError)) {
     category = 'PERMISSION';
@@ -388,7 +388,12 @@ function isFileNotFoundError(msg: string): boolean {
 }
 
 function isDirMissingError(msg: string): boolean {
-  return /ENOENT.*directory|directory\s+not\s+found|no\s+such\s+directory/i.test(msg);
+  // Explicit directory-related error messages
+  if (/directory\s+not\s+found|no\s+such\s+directory|directory\s+does\s+not\s+exist/i.test(msg)) return true;
+  // ENOENT with directory operations (scandir, readdir, mkdir, rmdir, opendir)
+  // e.g. "ENOENT: no such file or directory, scandir '/path/to/dir'"
+  if (/ENOENT/i.test(msg) && /\b(scandir|readdir|mkdir|rmdir|opendir)\b/i.test(msg)) return true;
+  return false;
 }
 
 function isPermissionError(msg: string): boolean {
@@ -554,7 +559,6 @@ const ERROR_TYPE_PATTERNS: Array<{
       /failed\s+to\s+compile/i,
       /build\s+failed/i,
       /tsc.*error/i,
-      /error\s+TS\d+/i,
       /SyntaxError/,
       /ReferenceError.*not\s+defined/i,
     ],

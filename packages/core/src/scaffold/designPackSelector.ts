@@ -82,8 +82,8 @@ const ENTERPRISE_KEYWORDS = [
  * Domain keywords that suggest mobile apps
  */
 const MOBILE_KEYWORDS = [
-  'mobile', 'app', 'ios', 'android', 'expo', 'react native',
-  'phone', 'tablet', 'native',
+  'mobile', 'mobile app', 'ios', 'android', 'expo', 'react native',
+  'phone', 'tablet', 'native app',
 ];
 
 /**
@@ -94,13 +94,13 @@ const MOBILE_KEYWORDS = [
 export function detectDomainHint(userPrompt: string): 'enterprise' | 'mobile' | 'consumer' | undefined {
   const prompt = userPrompt.toLowerCase();
   
-  // Check for enterprise keywords
-  if (ENTERPRISE_KEYWORDS.some(kw => prompt.includes(kw))) {
+  // Check for enterprise keywords (word-boundary match to avoid substring false positives)
+  if (ENTERPRISE_KEYWORDS.some(kw => new RegExp(`\\b${kw}\\b`).test(prompt))) {
     return 'enterprise';
   }
-  
-  // Check for mobile keywords
-  if (MOBILE_KEYWORDS.some(kw => prompt.includes(kw))) {
+
+  // Check for mobile keywords (word-boundary match to avoid substring false positives)
+  if (MOBILE_KEYWORDS.some(kw => new RegExp(`\\b${kw}\\b`).test(prompt))) {
     return 'mobile';
   }
   

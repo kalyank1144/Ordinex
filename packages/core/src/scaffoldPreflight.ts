@@ -146,6 +146,16 @@ const APP_NAME_PATTERNS = [
 ];
 
 /**
+ * Keywords that should never be extracted as app names.
+ * These are connector words that can appear after "app" or "project" in prompts.
+ */
+const APP_NAME_BLOCKLIST = new Set([
+  'called', 'named', 'name', 'for', 'from', 'with', 'using',
+  'in', 'to', 'the', 'a', 'an', 'that', 'which', 'and',
+  'app', 'project', 'application', 'new', 'create', 'build',
+]);
+
+/**
  * Default app name when extraction fails
  */
 export const DEFAULT_APP_NAME = 'my-app';
@@ -158,19 +168,55 @@ export const DEFAULT_APP_NAME = 'my-app';
  */
 export function extractAppName(userPrompt: string): string {
   const cleanedPrompt = userPrompt.trim();
-  
+
+  // Step 1: Quoted multi-word names after explicit naming keywords
+  // e.g., called "My Todo App" → my-todo-app
+  const quotedNamedMatch = cleanedPrompt.match(/(?:called|named)\s+["']([^"']{2,50})["']/i);
+  if (quotedNamedMatch) {
+    const name = toAppSlug(quotedNamedMatch[1]);
+    if (isValidAppSlug(name)) return name;
+  }
+
+  // Step 2: Single-word patterns (called X, named X, app X, etc.)
   for (const pattern of APP_NAME_PATTERNS) {
     const match = cleanedPrompt.match(pattern);
     if (match && match[1]) {
       const name = match[1].toLowerCase().replace(/[^a-z0-9-]/g, '-');
-      // Validate: must start with letter, reasonable length
-      if (/^[a-z]/.test(name) && name.length >= 2 && name.length <= 50) {
+      // Validate: must start with letter, reasonable length, not a connector keyword
+      if (/^[a-z]/.test(name) && name.length >= 2 && name.length <= 50 && !APP_NAME_BLOCKLIST.has(name)) {
         return name;
       }
     }
   }
-  
+
+  // Step 3: Standalone quoted multi-word names (e.g., "My Todo App")
+  const quotedMatch = cleanedPrompt.match(/["']([^"']{2,50})["']/);
+  if (quotedMatch) {
+    const name = toAppSlug(quotedMatch[1]);
+    if (isValidAppSlug(name)) return name;
+  }
+
+  // Step 4: "create/build [a] [new] X app/project" — skips articles
+  // e.g., "create a new todo app" → todo
+  const verbMatch = cleanedPrompt.match(
+    /(?:create|build|make)\s+(?:an?\s+)?(?:new\s+)?(.+?)\s+(?:app|project|application|site|website)\b/i
+  );
+  if (verbMatch && verbMatch[1]) {
+    const name = toAppSlug(verbMatch[1]);
+    if (isValidAppSlug(name)) return name;
+  }
+
   return DEFAULT_APP_NAME;
+}
+
+/** Convert free-form text to a slug: lowercase, spaces→dashes, strip invalid chars */
+function toAppSlug(raw: string): string {
+  return raw.toLowerCase().replace(/\s+/g, '-').replace(/[^a-z0-9-]/g, '').replace(/-+/g, '-').replace(/^-|-$/g, '');
+}
+
+/** Validate a slug: starts with letter, 2-50 chars, not a blocklisted word */
+function isValidAppSlug(name: string): boolean {
+  return /^[a-z]/.test(name) && name.length >= 2 && name.length <= 50 && !APP_NAME_BLOCKLIST.has(name);
 }
 
 // ============================================================================

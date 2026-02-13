@@ -8,6 +8,8 @@
  * Uses vanilla TS custom elements to match existing codebase pattern.
  */
 
+import { escapeHtml } from '../utils/cardHelpers';
+
 declare class HTMLElement {
   shadowRoot: any;
   attachShadow(init: { mode: 'open' | 'closed' }): any;
@@ -85,14 +87,14 @@ export class EnhanceProposalCard extends HTMLElement {
         <!-- Header -->
         <div class="header">
           <span class="icon">🔧</span>
-          <h3>${this.escapeHtml(title)}</h3>
+          <h3>${escapeHtml(title)}</h3>
           <span class="badge enhance">Enhance</span>
         </div>
 
         <!-- Detected Stack Badge -->
         <div class="stack-badge">
           <span class="stack-icon">📦</span>
-          ${this.escapeHtml(detectedStack)}
+          ${escapeHtml(detectedStack)}
         </div>
 
         <!-- Info Section -->
@@ -111,7 +113,7 @@ export class EnhanceProposalCard extends HTMLElement {
           <!-- Expandable File List -->
           <div class="file-list ${this._filesExpanded ? 'expanded' : ''}">
             ${filesToRead.map((file: string) => `
-              <div class="file-item">${this.escapeHtml(file)}</div>
+              <div class="file-item">${escapeHtml(file)}</div>
             `).join('')}
           </div>
 
@@ -122,7 +124,7 @@ export class EnhanceProposalCard extends HTMLElement {
             </div>
             <div class="verify-commands">
               ${verifyCommands.map((cmd: string) => `
-                <span class="verify-tag">${this.escapeHtml(cmd)}</span>
+                <span class="verify-tag">${escapeHtml(cmd)}</span>
               `).join('')}
             </div>
           ` : ''}
@@ -133,7 +135,7 @@ export class EnhanceProposalCard extends HTMLElement {
           ${reassurances.map((msg: string) => `
             <div class="reassurance-item">
               <span class="check-icon">✓</span>
-              ${this.escapeHtml(msg)}
+              ${escapeHtml(msg)}
             </div>
           `).join('')}
         </div>
@@ -432,15 +434,6 @@ export class EnhanceProposalCard extends HTMLElement {
     `;
   }
 
-  private escapeHtml(text: string): string {
-    if (!text) return '';
-    return String(text)
-      .replace(/&/g, '&amp;')
-      .replace(/</g, '&lt;')
-      .replace(/>/g, '&gt;')
-      .replace(/"/g, '&quot;')
-      .replace(/'/g, '&#039;');
-  }
 }
 
 // Register custom element

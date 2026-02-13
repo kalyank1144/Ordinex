@@ -4,6 +4,8 @@
  * Tests deterministic selection, vibe guardrails, and helper functions.
  */
 
+import { describe, test, expect } from 'vitest';
+
 import {
   DESIGN_PACKS,
   getDesignPackById,

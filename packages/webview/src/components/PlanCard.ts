@@ -15,8 +15,9 @@
  */
 
 import { Event } from '../types';
+import { escapeHtml, formatTimestamp } from '../utils/cardHelpers';
 
-export function renderPlanCard(event: Event): string {
+export function renderPlanCard(event: Event, pendingApprovalId?: string): string {
   console.log('🎨 [PlanCard] renderPlanCard called');
   console.log('🎨 [PlanCard] event:', JSON.stringify(event, null, 2));
   
@@ -55,7 +56,7 @@ export function renderPlanCard(event: Event): string {
         <div class="card-header">
           <span class="icon">📋</span>
           <span class="title">Plan Error</span>
-          <span class="timestamp">${formatTime(event.timestamp)}</span>
+          <span class="timestamp">${formatTimestamp(event.timestamp)}</span>
         </div>
         <div class="card-body">
           <p class="error-message">Plan data is missing or malformed.</p>
@@ -156,13 +157,29 @@ export function renderPlanCard(event: Event): string {
   const cardTitle = isRefinement ? 'Plan Refined' : 'Plan Created';
   const cardIcon = isRefinement ? '🔄' : '📋';
 
+  // I3: "Awaiting Approval" badge when a pending approval exists
+  const approvalBadgeHtml = pendingApprovalId
+    ? `<span style="margin-left: 8px; padding: 2px 8px; border-radius: 10px; font-size: 0.7rem; font-weight: 600; background: var(--vscode-charts-orange, #e67e22); color: #fff;">Awaiting Approval</span>`
+    : '';
+
+  // I3: Approve button — resolves approval directly when pending, otherwise requests approval
+  const approveOnclick = pendingApprovalId
+    ? `handleApproval('${pendingApprovalId}', 'approved')`
+    : `handleRequestPlanApproval('${event.task_id}', '${event.event_id}')`;
+
+  // I3: Cancel button — rejects approval when pending, otherwise cancels plan
+  const cancelOnclick = pendingApprovalId
+    ? `handleApproval('${pendingApprovalId}', 'rejected')`
+    : `handleCancelPlan('${event.task_id}')`;
+
   return `
     <div class="card plan-card" data-event-id="${event.event_id}" data-plan-id="${planId}" data-plan-version="${planVersion}">
       <div class="card-header">
         <span class="icon">${cardIcon}</span>
         <span class="title">${cardTitle}</span>
         ${versionBadgeHtml}
-        <span class="timestamp">${formatTime(event.timestamp)}</span>
+        ${approvalBadgeHtml}
+        <span class="timestamp">${formatTimestamp(event.timestamp)}</span>
       </div>
       <div class="card-body">
         <div class="plan-goal">
@@ -188,21 +205,21 @@ export function renderPlanCard(event: Event): string {
         ${risksHtml}
 
         <div class="plan-actions">
-          <button 
+          <button
             class="btn btn-primary"
-            onclick="handleRequestPlanApproval('${event.task_id}', '${event.event_id}')"
+            onclick="${approveOnclick}"
           >
             ✓ Approve Plan → Start Mission
           </button>
-          <button 
+          <button
             class="btn btn-secondary"
             onclick="toggleRefinePlanInput('${event.task_id}', '${planId}', ${planVersion})"
           >
             ✏️ Refine Plan
           </button>
-          <button 
+          <button
             class="btn btn-tertiary"
-            onclick="handleCancelPlan('${event.task_id}')"
+            onclick="${cancelOnclick}"
           >
             ✕ Cancel
           </button>
@@ -355,26 +372,3 @@ export function renderPlanCard(event: Event): string {
   `;
 }
 
-/**
- * Format timestamp to human-readable time
- */
-function formatTime(timestamp: string): string {
-  const date = new Date(timestamp);
-  return date.toLocaleTimeString('en-US', {
-    hour: '2-digit',
-    minute: '2-digit',
-    second: '2-digit',
-  });
-}
-
-/**
- * Escape HTML to prevent XSS
- */
-function escapeHtml(text: string): string {
-  return text
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#039;');
-}

@@ -5,6 +5,7 @@
  */
 
 import { Event } from '../types';
+import { escapeHtml } from '../utils/cardHelpers';
 
 export interface ApprovalCardProps {
   approvalEvent: Event;
@@ -275,14 +276,3 @@ function renderApprovalDetails(approvalType: string, details: Record<string, unk
   return '';
 }
 
-/**
- * Escape HTML for safe rendering
- */
-function escapeHtml(text: string): string {
-  return text
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#039;');
-}

@@ -10,6 +10,8 @@
  * F) Replay regression → produces same state
  */
 
+import { describe, it, expect } from 'vitest';
+
 import {
   classifyError,
   ErrorDescriptor,
@@ -371,12 +373,23 @@ describe('D) Modify non-existent file', () => {
       expect(result.user_message).toContain('missing.ts');
     });
 
-    it('classifies directory not found error', () => {
+    it('classifies directory not found error as DIR_MISSING', () => {
       const error = new Error('ENOENT: directory not found');
       const context = createTestContext({ stage: 'preflight' });
-      
+
       const result = classifyError(error, context);
-      
+
+      // isDirMissingError (more specific) is checked before isFileNotFoundError (broad ENOENT)
+      expect(result.category).toBe('WORKSPACE_STATE');
+      expect(result.code).toBe('DIR_MISSING');
+    });
+
+    it('classifies ENOENT scandir as DIR_MISSING not FILE_NOT_FOUND', () => {
+      const error = new Error("ENOENT: no such file or directory, scandir '/app/src/components'");
+      const context = createTestContext({ stage: 'preflight' });
+
+      const result = classifyError(error, context);
+
       expect(result.category).toBe('WORKSPACE_STATE');
       expect(result.code).toBe('DIR_MISSING');
     });
@@ -593,7 +606,7 @@ describe('G) Failure classification bridge', () => {
   it('converts typecheck failure to ErrorDescriptor', () => {
     const classification = classifyFailure('error TS2339: Property foo does not exist on type Bar');
     const errorDescriptor = failureToErrorDescriptor(classification);
-    
+
     expect(errorDescriptor.category).toBe('VERIFY_FAILURE');
     expect(errorDescriptor.code).toBe('TYPECHECK_FAILED');
   });
