@@ -607,12 +607,8 @@ describe('G) Failure classification bridge', () => {
     const classification = classifyFailure('error TS2339: Property foo does not exist on type Bar');
     const errorDescriptor = failureToErrorDescriptor(classification);
 
-    // classifyFailure uses extractErrorSignals with pattern priority ordering.
-    // BUILD_COMPILE patterns (priority 8) include /error\s+TS\d+/i which matches
-    // before TYPECHECK patterns (priority 7). So failureType is BUILD_COMPILE,
-    // mapped to BUILD_FAILED.
     expect(errorDescriptor.category).toBe('VERIFY_FAILURE');
-    expect(errorDescriptor.code).toBe('BUILD_FAILED');
+    expect(errorDescriptor.code).toBe('TYPECHECK_FAILED');
   });
 
   it('converts timeout failure to ErrorDescriptor', () => {

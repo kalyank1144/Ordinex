@@ -559,7 +559,6 @@ const ERROR_TYPE_PATTERNS: Array<{
       /failed\s+to\s+compile/i,
       /build\s+failed/i,
       /tsc.*error/i,
-      /error\s+TS\d+/i,
       /SyntaxError/,
       /ReferenceError.*not\s+defined/i,
     ],
