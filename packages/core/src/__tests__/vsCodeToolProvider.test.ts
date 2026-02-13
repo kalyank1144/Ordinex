@@ -69,7 +69,15 @@ class VSCodeToolProvider {
       if (stat.size > MAX_READ_SIZE) {
         return { success: false, output: '', error: `File too large (${stat.size} bytes, max ${MAX_READ_SIZE})` };
       }
-      const content = fs.readFileSync(filePath, 'utf-8');
+      let content = fs.readFileSync(filePath, 'utf-8');
+      const offset = typeof input.offset === 'number' ? Math.max(0, Math.floor(input.offset)) : 0;
+      const maxLines = typeof input.max_lines === 'number' ? Math.max(0, Math.floor(input.max_lines)) : 0;
+      if (offset > 0 || maxLines > 0) {
+        const lines = content.split('\n');
+        const start = Math.min(offset, lines.length);
+        const sliced = maxLines > 0 ? lines.slice(start, start + maxLines) : lines.slice(start);
+        content = sliced.join('\n');
+      }
       return { success: true, output: content };
     } catch (err) {
       return { success: false, output: '', error: err instanceof Error ? err.message : String(err) };
@@ -126,12 +134,13 @@ class VSCodeToolProvider {
       const timeoutMs = typeof input.timeout_ms === 'number'
         ? Math.min(input.timeout_ms, 60_000)
         : DEFAULT_TIMEOUT_MS;
+      const cwd = input.cwd ? this.resolvePath(String(input.cwd)) : this.workspaceRoot;
       const childProcess = await import('child_process');
       return new Promise((resolve) => {
         childProcess.exec(
           command,
           {
-            cwd: this.workspaceRoot,
+            cwd,
             timeout: timeoutMs,
             maxBuffer: MAX_COMMAND_OUTPUT,
             env: { ...process.env, FORCE_COLOR: '0' },
@@ -153,11 +162,13 @@ class VSCodeToolProvider {
 
   private async searchFiles(input: Record<string, unknown>): Promise<ToolExecutionResult> {
     try {
-      const pattern = String(input.pattern || '');
+      const pattern = String(input.query || '');
+      const glob = input.glob ? String(input.glob) : undefined;
       const matches: string[] = [];
       const maxResults = 50;
       this.walkDir(this.workspaceRoot, (filePath) => {
         if (matches.length >= maxResults) return;
+        if (glob && !this.matchGlob(filePath, glob)) return;
         try {
           const content = fs.readFileSync(filePath, 'utf-8');
           const lines = content.split('\n');
@@ -227,6 +238,16 @@ class VSCodeToolProvider {
     } catch {
       // Skip unreadable
     }
+  }
+
+  private matchGlob(filePath: string, glob: string): boolean {
+    const relPath = path.relative(this.workspaceRoot, filePath);
+    const ext = path.extname(relPath);
+    // Simple extension-based matching for common patterns like *.ts, *.js
+    if (glob.startsWith('*.')) {
+      return ext === glob.substring(1);
+    }
+    return relPath.includes(glob.replace(/\*/g, ''));
   }
 }
 
@@ -528,7 +549,7 @@ describe('VSCodeToolProvider', () => {
         'utf-8',
       );
 
-      const result = await provider.executeTool('search_files', { pattern: 'foo' });
+      const result = await provider.executeTool('search_files', { query: 'foo' });
       expect(result.success).toBe(true);
       expect(result.output).toContain('a.ts');
       expect(result.output).toContain('b.ts');
@@ -538,7 +559,7 @@ describe('VSCodeToolProvider', () => {
     it('returns "No matches found" when pattern has no hits', async () => {
       fs.writeFileSync(path.join(workspaceRoot, 'c.ts'), 'nothing here', 'utf-8');
 
-      const result = await provider.executeTool('search_files', { pattern: 'xyzzy' });
+      const result = await provider.executeTool('search_files', { query: 'xyzzy' });
       expect(result.success).toBe(true);
       expect(result.output).toContain('No matches found');
     });
@@ -548,7 +569,7 @@ describe('VSCodeToolProvider', () => {
       fs.mkdirSync(subdir);
       fs.writeFileSync(path.join(subdir, 'deep.ts'), 'const needle = true;', 'utf-8');
 
-      const result = await provider.executeTool('search_files', { pattern: 'needle' });
+      const result = await provider.executeTool('search_files', { query: 'needle' });
       expect(result.success).toBe(true);
       expect(result.output).toContain('deep.ts');
       expect(result.output).toContain('needle');
@@ -561,7 +582,7 @@ describe('VSCodeToolProvider', () => {
         'utf-8',
       );
 
-      const result = await provider.executeTool('search_files', { pattern: 'target' });
+      const result = await provider.executeTool('search_files', { query: 'target' });
       expect(result.success).toBe(true);
       // Target is on line 3
       expect(result.output).toContain(':3:');
@@ -656,7 +677,7 @@ describe('VSCodeToolProvider', () => {
     });
 
     it('allows search_files in read-only mode', async () => {
-      const result = await roProvider.executeTool('search_files', { pattern: 'read' });
+      const result = await roProvider.executeTool('search_files', { query: 'read' });
       expect(result.success).toBe(true);
       expect(result.output).toContain('readable.txt');
     });

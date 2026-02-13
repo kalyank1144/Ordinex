@@ -67,7 +67,15 @@ export class VSCodeToolProvider implements ToolExecutionProvider {
           error: `File too large (${stat.size} bytes, max ${MAX_READ_SIZE})`,
         };
       }
-      const content = fs.readFileSync(filePath, 'utf-8');
+      let content = fs.readFileSync(filePath, 'utf-8');
+      const offset = typeof input.offset === 'number' ? Math.max(0, Math.floor(input.offset)) : 0;
+      const maxLines = typeof input.max_lines === 'number' ? Math.max(0, Math.floor(input.max_lines)) : 0;
+      if (offset > 0 || maxLines > 0) {
+        const lines = content.split('\n');
+        const start = Math.min(offset, lines.length);
+        const sliced = maxLines > 0 ? lines.slice(start, start + maxLines) : lines.slice(start);
+        content = sliced.join('\n');
+      }
       return { success: true, output: content };
     } catch (err) {
       return {
@@ -162,12 +170,13 @@ export class VSCodeToolProvider implements ToolExecutionProvider {
       const timeoutMs = typeof input.timeout_ms === 'number'
         ? Math.min(input.timeout_ms, 60_000)
         : DEFAULT_TIMEOUT_MS;
+      const cwd = input.cwd ? this.resolvePath(String(input.cwd)) : this.workspaceRoot;
 
       return new Promise((resolve) => {
         childProcess.exec(
           command,
           {
-            cwd: this.workspaceRoot,
+            cwd,
             timeout: timeoutMs,
             maxBuffer: MAX_COMMAND_OUTPUT,
             env: { ...process.env, FORCE_COLOR: '0' },
@@ -206,8 +215,8 @@ export class VSCodeToolProvider implements ToolExecutionProvider {
     input: Record<string, unknown>,
   ): Promise<ToolExecutionResult> {
     try {
-      const pattern = String(input.pattern || '');
-      const glob = input.file_pattern ? String(input.file_pattern) : undefined;
+      const pattern = String(input.query || '');
+      const glob = input.glob ? String(input.glob) : undefined;
 
       // Use grep-like search (cross-platform via Node)
       const matches: string[] = [];
