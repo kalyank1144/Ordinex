@@ -276,8 +276,7 @@ describe('detectDomainHint', () => {
   });
 
   test('should return undefined for ambiguous prompts', () => {
-    // 'Build a todo app' matches 'app' in MOBILE_KEYWORDS, so returns 'mobile'
-    expect(detectDomainHint('Build a todo app')).toBe('mobile');
+    expect(detectDomainHint('Build a todo app')).toBeUndefined();
     expect(detectDomainHint('Create a blog')).toBeUndefined();
   });
 });
