@@ -146,10 +146,10 @@ const PLAN_PATTERNS = [
  * Structural signals that usually imply an editable target
  */
 const STRUCTURE_PATTERNS = [
-  /```[\s\S]*?```/g,
-  /\b(stack trace|traceback|exception|error:)\b/gi,
-  /\bline \d+\b/gi,
-  /\b(diff|patch)\b/gi,
+  /```[\s\S]*?```/,
+  /\b(stack trace|traceback|exception|error:)\b/i,
+  /\bline \d+\b/i,
+  /\b(diff|patch)\b/i,
 ];
 
 /**
