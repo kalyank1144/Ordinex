@@ -45,6 +45,7 @@ import {
 } from './referenceContextBuilder';
 // Step 35.3: Recipe selection
 import { selectRecipe } from './scaffold/recipeSelector';
+import { extractAppName } from './scaffoldPreflight';
 // Step 35.5: Design pack selection
 import {
   selectDesignPack,
@@ -771,38 +772,9 @@ export class ScaffoldFlowCoordinator {
  * Exported for reuse in extension handlers (preflight, create command, post-scaffold).
  */
 export function extractAppNameFromPrompt(prompt: string): string {
-  // Try to extract quoted names (sanitize to prevent path traversal / shell injection)
-  const quotedMatch = prompt.match(/["']([^"']+)["']/);
-  if (quotedMatch) {
-    const sanitized = quotedMatch[1].toLowerCase().replace(/\s+/g, '-').replace(/[^a-z0-9-]/g, '');
-    if (sanitized) return sanitized;
-  }
-
-  // Try patterns like "create/build X app/project"
-  const appMatch = prompt.match(/(?:create|build|make|scaffold)\s+(?:a\s+)?(?:new\s+)?([a-zA-Z0-9-_]+)\s+(?:app|project|site|website)/i);
-  if (appMatch) return appMatch[1].toLowerCase();
-
-  // Try "called/named X" pattern: "create an app called todo-tracker"
-  const namedMatch = prompt.match(/(?:called|named)\s+([a-zA-Z0-9-_]+)/i);
-  if (namedMatch) {
-    const sanitized = namedMatch[1].toLowerCase().replace(/[^a-z0-9-]/g, '');
-    if (sanitized) return sanitized;
-  }
-
-  // Fallback: use first meaningful word (skip connectors and filler words)
-  const words = prompt.toLowerCase().split(/\s+/);
-  const stopWords = [
-    'create', 'build', 'make', 'new', 'scaffold', 'generate', 'setup', 'start',
-    'a', 'an', 'the', 'my', 'our', 'this', 'that',
-    'app', 'application', 'project', 'site', 'website', 'web', 'page',
-    'called', 'named', 'with', 'for', 'from', 'using', 'and', 'but', 'or',
-    'please', 'want', 'need', 'would', 'like', 'can', 'could', 'should',
-    'something', 'simple', 'basic', 'full', 'stack',
-    'me', 'i', 'we', 'you',
-  ];
-  const meaningfulWord = words.find(w => !stopWords.includes(w) && w.length > 2);
-  const sanitizedWord = meaningfulWord ? meaningfulWord.replace(/[^a-z0-9-]/g, '') : '';
-  return sanitizedWord || 'my-app';
+  // Delegate to the canonical implementation in scaffoldPreflight.ts
+  // which has ordered patterns, blocklist validation, and length checks.
+  return extractAppName(prompt);
 }
 
 /**
