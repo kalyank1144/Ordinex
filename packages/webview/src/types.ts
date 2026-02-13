@@ -225,7 +225,11 @@ export type EventType =
   // Step 48: Undo System
   | 'undo_performed'
   // Step 49: Error Recovery UX
-  | 'recovery_action_taken';
+  | 'recovery_action_taken'
+  // AgenticLoop Integration
+  | 'loop_paused'
+  | 'loop_continued'
+  | 'loop_completed';
 
 export interface Event {
   event_id: string;

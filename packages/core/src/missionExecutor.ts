@@ -35,6 +35,21 @@ import { ParsedDiff } from './unifiedDiffParser';
 import { WorkspaceWriter, CheckpointManager as WorkspaceCheckpointManager, FilePatch } from './workspaceAdapter';
 import { computeFullSha } from './shaUtils';
 import { validateFileOperations, classifyFileOperations } from './fileOperationClassifier';
+// AgenticLoop integration
+import { AgenticLoop, LLMClient, ToolExecutionProvider, AgenticLoopResult } from './agenticLoop';
+import { StagedEditBuffer } from './stagedEditBuffer';
+import { StagedToolProvider } from './stagedToolProvider';
+import { ConversationHistory } from './conversationHistory';
+import {
+  LoopSession,
+  createLoopSession,
+  updateSessionAfterRun,
+  incrementContinue,
+  canContinue,
+  buildLoopPausedPayload,
+  LoopPauseReason,
+} from './loopSessionState';
+import type { TokenCounter } from './tokenCounter';
 
 /**
  * Execution state for MISSION mode
@@ -82,6 +97,16 @@ export class MissionExecutor {
   private readonly mode: Mode = 'MISSION';
   private retrievalResults: Array<{ path: string; score: number }> = [];
   private appliedDiffIds = new Set<string>(); // Idempotency guard
+  // AgenticLoop integration
+  private readonly llmClient: LLMClient | null;
+  private readonly toolProvider: ToolExecutionProvider | null;
+  private readonly tokenCounter: TokenCounter | null;
+  /** Active loop sessions keyed by step_id (for Continue) */
+  private activeLoopSessions: Map<string, LoopSession> = new Map();
+  /** Active staged buffers keyed by step_id (for Continue/Approve) */
+  private activeStagedBuffers: Map<string, StagedEditBuffer> = new Map();
+  /** Active conversation histories keyed by step_id (for Continue) */
+  private activeConversationHistories: Map<string, ConversationHistory> = new Map();
 
   constructor(
     taskId: string,
@@ -95,7 +120,10 @@ export class MissionExecutor {
     retriever: Retriever | null = null,
     diffManager: DiffManager | null = null,
     testRunner: TestRunner | null = null,
-    repairOrchestrator: RepairOrchestrator | null = null
+    repairOrchestrator: RepairOrchestrator | null = null,
+    llmClient: LLMClient | null = null,
+    toolProvider: ToolExecutionProvider | null = null,
+    tokenCounter: TokenCounter | null = null,
   ) {
     this.taskId = taskId;
     this.eventBus = eventBus;
@@ -109,6 +137,9 @@ export class MissionExecutor {
     this.diffManager = diffManager;
     this.testRunner = testRunner;
     this.repairOrchestrator = repairOrchestrator;
+    this.llmClient = llmClient;
+    this.toolProvider = toolProvider;
+    this.tokenCounter = tokenCounter;
   }
 
   /**
@@ -505,13 +536,43 @@ export class MissionExecutor {
 
   /**
    * Execute retrieval stage step
+   * When Retriever is wired, performs lexical search and stores results for edit context.
+   * Falls back to placeholder events when no Retriever is available.
    */
   private async executeRetrievalStep(step: StructuredPlan['steps'][0]): Promise<StepExecutionResult> {
     console.log(`[MissionExecutor] Executing retrieval step: ${step.description}`);
-    
-    // V1: Emit retrieval events (actual retrieval will be wired up later)
+
+    if (this.retriever) {
+      // Real retrieval path
+      try {
+        const response = await this.retriever.retrieve({
+          query: step.description,
+          mode: 'MISSION',
+          stage: 'retrieve',
+          constraints: {
+            max_files: 10,
+            max_lines: 400,
+          },
+        });
+
+        // Store results for later use in edit steps (context injection)
+        this.retrievalResults = response.results.map(r => ({
+          path: r.file,
+          score: 1.0, // lexical matches are binary in V1
+        }));
+
+        console.log(`[MissionExecutor] Retrieved ${response.results.length} file(s): ${response.summary}`);
+        return { success: true, stage: 'retrieve' };
+      } catch (error) {
+        console.error('[MissionExecutor] Retrieval failed:', error);
+        // Non-fatal: log failure and continue (edit step can still work without retrieval)
+        return { success: true, stage: 'retrieve' };
+      }
+    }
+
+    // Fallback: no Retriever wired — emit placeholder events
     const retrievalId = randomUUID();
-    
+
     await this.emitEvent({
       event_id: retrievalId,
       task_id: this.taskId,
@@ -528,8 +589,6 @@ export class MissionExecutor {
       parent_event_id: null,
     });
 
-    // TODO: Wire up actual retriever when available
-    // For now, emit successful completion
     await this.emitEvent({
       event_id: randomUUID(),
       task_id: this.taskId,
@@ -540,7 +599,7 @@ export class MissionExecutor {
       payload: {
         retrieval_id: retrievalId,
         result_count: 0,
-        summary: 'Retrieval step completed (V1 placeholder)',
+        summary: 'No retriever configured — skipping retrieval',
       },
       evidence_ids: [],
       parent_event_id: retrievalId,
@@ -558,12 +617,20 @@ export class MissionExecutor {
    * → checkpoint_created → diff_applied → step_completed
    */
   private async executeEditStep(step: StructuredPlan['steps'][0]): Promise<StepExecutionResult> {
-    console.log(`[MissionExecutor] Executing edit step (spec-compliant): ${step.description}`);
-    
+    console.log(`[MissionExecutor] Executing edit step: ${step.description}`);
+
     // Check dependencies
     if (!this.workspaceWriter || !this.workspaceCheckpointMgr) {
       throw new Error('WorkspaceWriter and WorkspaceCheckpointManager required for edit operations');
     }
+
+    // Route to AgenticLoop path if LLM client and tool provider are available
+    if (this.llmClient && this.toolProvider) {
+      console.log('[MissionExecutor] Using AgenticLoop path for edit step');
+      return this.executeEditStepWithLoop(step);
+    }
+
+    console.log('[MissionExecutor] Falling back to TruncationSafeExecutor path (no LLMClient/ToolProvider)');
 
     // Initialize managers
     const evidenceManager = new EditEvidenceManager(this.workspaceRoot);
@@ -1309,6 +1376,611 @@ export class MissionExecutor {
     }
   }
 
+  // =====================================================================
+  // AgenticLoop Edit Path
+  // =====================================================================
+
+  /**
+   * Execute edit step using AgenticLoop with staged writes.
+   *
+   * Flow:
+   * 1. Create StagedEditBuffer + StagedToolProvider (no disk writes)
+   * 2. Build system prompt with step context
+   * 3. Run AgenticLoop (tools write to buffer, reads overlay staged content)
+   * 4. On loop stop → emit loop_paused with staged files summary
+   * 5. Wait for user action: Continue / Approve Partial / Discard
+   * 6. On Approve: checkpoint → apply staged files to disk → emit diff_applied
+   */
+  private async executeEditStepWithLoop(
+    step: StructuredPlan['steps'][0],
+  ): Promise<StepExecutionResult> {
+    const llmClient = this.llmClient!;
+    const toolProvider = this.toolProvider!;
+    const stepId = step.step_id;
+
+    // Check for existing session (Continue scenario)
+    let session = this.activeLoopSessions.get(stepId);
+    let buffer = this.activeStagedBuffers.get(stepId);
+    let history = this.activeConversationHistories.get(stepId);
+    const isResume = !!session;
+
+    if (!session) {
+      // Fresh loop — create new session
+      session = createLoopSession({
+        session_id: randomUUID(),
+        task_id: this.taskId,
+        step_id: stepId,
+        max_continues: 3,
+        max_iterations_per_run: 10,
+      });
+    }
+
+    if (!buffer) {
+      buffer = new StagedEditBuffer();
+    } else if (isResume && session.staged_snapshot) {
+      // Restore staged buffer from snapshot on Continue
+      buffer = StagedEditBuffer.fromSnapshot(session.staged_snapshot);
+    }
+
+    if (!history) {
+      history = new ConversationHistory({ maxTokens: 100_000, minMessages: 4 });
+    } else if (isResume && session.conversation_snapshot) {
+      // Restore conversation from snapshot on Continue
+      history = ConversationHistory.fromJSON({
+        messages: session.conversation_snapshot.messages as any[],
+      });
+    }
+
+    // Store for Continue
+    this.activeLoopSessions.set(stepId, session);
+    this.activeStagedBuffers.set(stepId, buffer);
+    this.activeConversationHistories.set(stepId, history);
+
+    // Wrap the real tool provider with staged interception
+    const stagedProvider = new StagedToolProvider(toolProvider, buffer);
+
+    // Build system prompt
+    const systemPrompt = this.buildLoopSystemPrompt(step, isResume);
+
+    // Add user message for this step (only on fresh start, not resume)
+    if (!isResume) {
+      history.addUserMessage(
+        `Execute the following step:\n\n${step.description}\n\n` +
+        `Step ID: ${stepId}\n` +
+        `Workspace root: ${this.workspaceRoot}\n\n` +
+        'Use the available tools to read files, understand the codebase, ' +
+        'and make the necessary changes. Write and edit operations will be staged ' +
+        'for review before being applied to disk.'
+      );
+    } else {
+      // On Continue, add a message telling the LLM to keep going
+      history.addUserMessage(
+        'Continue working on the task. Review the changes you\'ve already staged ' +
+        'and make any additional edits needed to complete the step.'
+      );
+    }
+
+    // Create and run the AgenticLoop
+    const loop = new AgenticLoop(this.eventBus, this.taskId, this.mode, {
+      maxIterations: session.max_iterations_per_run,
+      maxTotalTokens: 200_000,
+    });
+
+    let loopResult: AgenticLoopResult;
+    try {
+      loopResult = await loop.run({
+        llmClient,
+        toolProvider: stagedProvider,
+        history,
+        systemPrompt,
+        model: this.llmConfig.model,
+        maxTokens: this.llmConfig.maxTokens || 4096,
+        tokenCounter: this.tokenCounter ?? undefined,
+      });
+    } catch (err) {
+      const errMsg = err instanceof Error ? err.message : String(err);
+      console.error('[MissionExecutor] AgenticLoop error:', errMsg);
+
+      // Clean up session state
+      this.cleanupLoopState(stepId);
+
+      return {
+        success: false,
+        stage: 'edit',
+        shouldPause: true,
+        pauseReason: 'edit_step_error',
+        error: errMsg,
+      };
+    }
+
+    // Map AgenticLoop stopReason to LoopPauseReason
+    const pauseReason: LoopPauseReason = loopResult.stopReason === 'end_turn'
+      ? 'end_turn'
+      : loopResult.stopReason === 'max_iterations'
+        ? 'max_iterations'
+        : loopResult.stopReason === 'max_tokens'
+          ? 'max_tokens'
+          : 'error';
+
+    // Update session with results
+    session = updateSessionAfterRun(session, {
+      iterations: loopResult.iterations,
+      totalTokens: loopResult.totalTokens,
+      stopReason: pauseReason,
+      finalText: loopResult.finalText,
+      toolCallsCount: loopResult.toolCalls.length,
+      stagedSnapshot: buffer.toSnapshot(),
+      conversationSnapshot: history.toJSON(),
+    });
+    this.activeLoopSessions.set(stepId, session);
+
+    console.log(`[MissionExecutor] AgenticLoop completed: ${loopResult.iterations} iterations, ` +
+      `${loopResult.toolCalls.length} tool calls, stop_reason=${loopResult.stopReason}, ` +
+      `staged_files=${buffer.size}`);
+
+    // If the loop ended with end_turn and has staged changes, auto-proceed to approval
+    if (loopResult.stopReason === 'end_turn' && buffer.size > 0) {
+      return this.approveAndApplyStagedEdits(step, session, buffer);
+    }
+
+    // If the loop ended with end_turn but no changes, treat as successful examination
+    if (loopResult.stopReason === 'end_turn' && buffer.size === 0) {
+      console.log('[MissionExecutor] AgenticLoop ended with no staged changes — examination step');
+      this.cleanupLoopState(stepId);
+
+      await this.emitEvent({
+        event_id: randomUUID(),
+        task_id: this.taskId,
+        timestamp: new Date().toISOString(),
+        type: 'loop_completed',
+        mode: this.mode,
+        stage: 'edit',
+        payload: {
+          session_id: session.session_id,
+          step_id: stepId,
+          result: 'no_changes',
+          iterations: session.iteration_count,
+          tool_calls: session.tool_calls_count,
+        },
+        evidence_ids: [],
+        parent_event_id: null,
+      });
+
+      return { success: true, stage: 'edit' };
+    }
+
+    // Loop hit max_iterations or max_tokens or error — emit loop_paused
+    const stagedSummary = buffer.toSummary();
+    const loopPausedPayload = buildLoopPausedPayload(session, stagedSummary);
+
+    await this.emitEvent({
+      event_id: randomUUID(),
+      task_id: this.taskId,
+      timestamp: new Date().toISOString(),
+      type: 'loop_paused',
+      mode: this.mode,
+      stage: 'edit',
+      payload: loopPausedPayload,
+      evidence_ids: [],
+      parent_event_id: null,
+    });
+
+    // Return shouldPause so the executor stops and waits for user action
+    return {
+      success: false,
+      stage: 'edit',
+      shouldPause: true,
+      pauseReason: `loop_paused:${pauseReason}`,
+    };
+  }
+
+  /**
+   * Approve and apply staged edits to disk.
+   * Called when: (a) loop ends with end_turn, or (b) user clicks "Approve Partial".
+   */
+  async approveAndApplyStagedEdits(
+    step: StructuredPlan['steps'][0],
+    session: LoopSession,
+    buffer: StagedEditBuffer,
+  ): Promise<StepExecutionResult> {
+    const stepId = step.step_id;
+    const modifiedFiles = buffer.getModifiedFiles();
+
+    if (modifiedFiles.length === 0) {
+      this.cleanupLoopState(stepId);
+      return { success: true, stage: 'edit' };
+    }
+
+    // Build file patches from staged buffer
+    const filePatches: FilePatch[] = modifiedFiles.map(f => ({
+      path: f.path,
+      action: f.isNew ? 'create' : 'update',
+      newContent: f.content,
+    }));
+
+    // Handle deletions
+    for (const f of buffer.getAll().filter(f => f.isDeleted)) {
+      filePatches.push({ path: f.path, action: 'delete' });
+    }
+
+    // Build diff summary for approval
+    const totalAdditions = modifiedFiles.reduce(
+      (sum, f) => sum + f.content.split('\n').length, 0);
+    const totalDeletions = buffer.getAll().filter(f => f.isDeleted).length * 50; // estimate
+
+    // Request approval
+    const diffId = createDiffId(this.taskId, stepId);
+    console.log(`[MissionExecutor] Requesting approval for ${filePatches.length} staged files`);
+
+    // Emit diff_proposed for the staged changes
+    await this.emitEvent({
+      event_id: randomUUID(),
+      task_id: this.taskId,
+      timestamp: new Date().toISOString(),
+      type: 'diff_proposed',
+      mode: this.mode,
+      stage: 'edit',
+      payload: {
+        diff_id: diffId,
+        step_id: stepId,
+        source: 'agentic_loop',
+        session_id: session.session_id,
+        files: filePatches.map(fp => ({
+          path: fp.path,
+          action: fp.action,
+          lines: fp.newContent ? fp.newContent.split('\n').length : 0,
+        })),
+        total_additions: totalAdditions,
+        total_deletions: totalDeletions,
+        iterations: session.iteration_count,
+        tool_calls: session.tool_calls_count,
+      },
+      evidence_ids: [],
+      parent_event_id: null,
+    });
+
+    const approval = await this.approvalManager.requestApproval(
+      this.taskId,
+      this.mode,
+      'edit',
+      'apply_diff',
+      `Apply ${filePatches.length} staged file(s) from AgenticLoop (+${totalAdditions} lines)`,
+      {
+        diff_id: diffId,
+        files_changed: filePatches.map(fp => ({
+          path: fp.path,
+          added_lines: fp.newContent ? fp.newContent.split('\n').length : 0,
+          removed_lines: fp.action === 'delete' ? 50 : 0,
+        })),
+      },
+    );
+
+    if (approval.decision === 'denied') {
+      console.log('[MissionExecutor] Staged edits rejected by user');
+
+      await this.emitEvent({
+        event_id: randomUUID(),
+        task_id: this.taskId,
+        timestamp: new Date().toISOString(),
+        type: 'execution_paused',
+        mode: this.mode,
+        stage: 'edit',
+        payload: {
+          reason: 'diff_rejected',
+          diff_id: diffId,
+          step_id: stepId,
+        },
+        evidence_ids: [],
+        parent_event_id: null,
+      });
+
+      this.cleanupLoopState(stepId);
+
+      return {
+        success: false,
+        stage: 'edit',
+        shouldPause: true,
+        pauseReason: 'diff_rejected',
+      };
+    }
+
+    // Approved — checkpoint + apply
+    console.log('[MissionExecutor] Staged edits approved, applying to disk...');
+
+    // Checkpoint before apply
+    const checkpointId = createCheckpointId(this.taskId, stepId);
+    const checkpointResult = await this.workspaceCheckpointMgr!.createCheckpoint(filePatches);
+
+    await this.emitEvent({
+      event_id: randomUUID(),
+      task_id: this.taskId,
+      timestamp: new Date().toISOString(),
+      type: 'checkpoint_created',
+      mode: this.mode,
+      stage: 'edit',
+      payload: {
+        checkpoint_id: checkpointResult.checkpointId,
+        diff_id: diffId,
+        files: checkpointResult.files.map(f => f.path),
+      },
+      evidence_ids: [],
+      parent_event_id: null,
+    });
+
+    // Validate file operations
+    const validationIssues = validateFileOperations(
+      this.workspaceRoot,
+      filePatches.map(fp => fp.path),
+    );
+    const errors = validationIssues.filter(i => i.severity === 'error');
+
+    if (errors.length > 0) {
+      console.error('[MissionExecutor] File validation failed:', errors);
+      this.cleanupLoopState(stepId);
+
+      await this.emitEvent({
+        event_id: randomUUID(),
+        task_id: this.taskId,
+        timestamp: new Date().toISOString(),
+        type: 'failure_detected',
+        mode: this.mode,
+        stage: 'edit',
+        payload: {
+          reason: 'invalid_file_paths',
+          details: { errors: errors.map(e => ({ path: e.path, code: e.code, message: e.message })) },
+        },
+        evidence_ids: [],
+        parent_event_id: null,
+      });
+
+      return {
+        success: false,
+        stage: 'edit',
+        shouldPause: true,
+        pauseReason: 'invalid_file_paths',
+      };
+    }
+
+    // Classify operations (correct create vs update based on actual file existence)
+    const classifications = classifyFileOperations(
+      this.workspaceRoot,
+      filePatches.map(fp => fp.path),
+    );
+    for (let i = 0; i < filePatches.length; i++) {
+      const patch = filePatches[i];
+      const classification = classifications[i];
+      const mappedOp: 'create' | 'update' | 'delete' =
+        classification.operation === 'modify' ? 'update' : classification.operation;
+      if (mappedOp !== patch.action && patch.action !== 'delete') {
+        console.log(`[MissionExecutor] Correcting operation: ${patch.path}: ${patch.action} → ${mappedOp}`);
+        patch.action = mappedOp;
+      }
+    }
+
+    // Apply patches atomically
+    try {
+      await this.workspaceWriter!.applyPatches(filePatches);
+    } catch (applyError) {
+      console.error('[MissionExecutor] Apply failed, rolling back...', applyError);
+      try {
+        await this.workspaceCheckpointMgr!.rollback(checkpointResult.checkpointId);
+      } catch (rollbackError) {
+        console.error('[MissionExecutor] Rollback failed!', rollbackError);
+      }
+
+      this.cleanupLoopState(stepId);
+
+      await this.emitEvent({
+        event_id: randomUUID(),
+        task_id: this.taskId,
+        timestamp: new Date().toISOString(),
+        type: 'failure_detected',
+        mode: this.mode,
+        stage: 'edit',
+        payload: {
+          reason: 'apply_failed',
+          details: { message: applyError instanceof Error ? applyError.message : String(applyError) },
+          checkpoint_id: checkpointResult.checkpointId,
+        },
+        evidence_ids: [],
+        parent_event_id: null,
+      });
+
+      return {
+        success: false,
+        stage: 'edit',
+        shouldPause: true,
+        pauseReason: 'apply_failed',
+        error: applyError instanceof Error ? applyError.message : String(applyError),
+      };
+    }
+
+    // Open first changed file
+    if (filePatches.length > 0) {
+      try {
+        await this.workspaceWriter!.openFilesBeside([filePatches[0].path]);
+      } catch {
+        // Non-fatal
+      }
+    }
+
+    // Emit diff_applied
+    await this.emitEvent({
+      event_id: randomUUID(),
+      task_id: this.taskId,
+      timestamp: new Date().toISOString(),
+      type: 'diff_applied',
+      mode: this.mode,
+      stage: 'edit',
+      payload: {
+        diff_id: diffId,
+        checkpoint_id: checkpointResult.checkpointId,
+        source: 'agentic_loop',
+        files_changed: filePatches.map(fp => ({
+          path: fp.path,
+          action: fp.action,
+          additions: fp.newContent ? fp.newContent.split('\n').length : 0,
+          deletions: fp.action === 'delete' ? 50 : 0,
+        })),
+        summary: `Applied ${filePatches.length} file(s) from AgenticLoop`,
+      },
+      evidence_ids: [],
+      parent_event_id: null,
+    });
+
+    // Emit loop_completed
+    await this.emitEvent({
+      event_id: randomUUID(),
+      task_id: this.taskId,
+      timestamp: new Date().toISOString(),
+      type: 'loop_completed',
+      mode: this.mode,
+      stage: 'edit',
+      payload: {
+        session_id: session.session_id,
+        step_id: stepId,
+        result: 'applied',
+        files_applied: filePatches.length,
+        iterations: session.iteration_count,
+        tool_calls: session.tool_calls_count,
+        total_tokens: session.total_tokens,
+      },
+      evidence_ids: [],
+      parent_event_id: null,
+    });
+
+    this.cleanupLoopState(stepId);
+    console.log(`[MissionExecutor] ✓ AgenticLoop edit step completed: ${filePatches.length} file(s) applied`);
+
+    return { success: true, stage: 'edit' };
+  }
+
+  /**
+   * Continue a paused loop session (called from extension handler).
+   */
+  async continueLoop(stepId: string, step: StructuredPlan['steps'][0]): Promise<StepExecutionResult> {
+    const session = this.activeLoopSessions.get(stepId);
+    if (!session) {
+      return {
+        success: false,
+        stage: 'edit',
+        error: `No active loop session for step ${stepId}`,
+      };
+    }
+
+    if (!canContinue(session)) {
+      return {
+        success: false,
+        stage: 'edit',
+        shouldPause: true,
+        pauseReason: 'max_continues_reached',
+        error: `Maximum continues (${session.max_continues}) reached for step ${stepId}`,
+      };
+    }
+
+    // Snapshot buffer and conversation before continuing (safety: allows rollback)
+    const buffer = this.activeStagedBuffers.get(stepId);
+    const history = this.activeConversationHistories.get(stepId);
+    const preContSnapshot: Partial<LoopSession> = {
+      staged_snapshot: buffer?.toSnapshot() ?? null,
+      conversation_snapshot: history ? { messages: history.toJSON().messages } : null,
+    };
+
+    // Use pure incrementContinue function
+    const updatedSession = incrementContinue(session);
+    this.activeLoopSessions.set(stepId, {
+      ...updatedSession,
+      staged_snapshot: preContSnapshot.staged_snapshot ?? null,
+      conversation_snapshot: preContSnapshot.conversation_snapshot ?? null,
+    });
+
+    // Emit loop_continued
+    await this.emitEvent({
+      event_id: randomUUID(),
+      task_id: this.taskId,
+      timestamp: new Date().toISOString(),
+      type: 'loop_continued',
+      mode: this.mode,
+      stage: 'edit',
+      payload: {
+        session_id: session.session_id,
+        step_id: stepId,
+        continue_count: updatedSession.continue_count,
+        max_continues: session.max_continues,
+      },
+      evidence_ids: [],
+      parent_event_id: null,
+    });
+
+    // Re-run the loop (it will pick up existing session/buffer/history)
+    return this.executeEditStepWithLoop(step);
+  }
+
+  /**
+   * Discard a paused loop session and its staged changes.
+   */
+  discardLoop(stepId: string): void {
+    this.cleanupLoopState(stepId);
+    console.log(`[MissionExecutor] Loop session discarded for step ${stepId}`);
+  }
+
+  /**
+   * Get the active loop session for a step.
+   */
+  getActiveLoopSession(stepId: string): LoopSession | undefined {
+    return this.activeLoopSessions.get(stepId);
+  }
+
+  /**
+   * Get the active staged buffer for a step.
+   */
+  getActiveStagedBuffer(stepId: string): StagedEditBuffer | undefined {
+    return this.activeStagedBuffers.get(stepId);
+  }
+
+  /** Build the system prompt for the AgenticLoop edit step */
+  private buildLoopSystemPrompt(
+    step: StructuredPlan['steps'][0],
+    isResume: boolean,
+  ): string {
+    const lines = [
+      'You are an expert software engineer executing a plan step.',
+      '',
+      `**Step**: ${step.description}`,
+      `**Workspace root**: ${this.workspaceRoot}`,
+      '',
+      'Use the available tools to:',
+      '1. Read relevant files to understand the current code',
+      '2. Make targeted edits using edit_file (preferred) or write_file',
+      '3. Use search_files and list_directory to explore the codebase',
+      '',
+      'Important guidelines:',
+      '- All write and edit operations are staged (not applied to disk yet)',
+      '- Make minimal, focused changes — avoid unnecessary modifications',
+      '- Prefer edit_file (find & replace) over write_file when modifying existing files',
+      '- When creating new files, use write_file with complete content',
+      '- Do NOT run commands unless absolutely necessary for this step',
+      '- After making changes, stop and report what you did',
+    ];
+
+    if (isResume) {
+      lines.push(
+        '',
+        'NOTE: This is a continuation. You already made some staged changes.',
+        'Review what you\'ve done and continue from where you left off.',
+      );
+    }
+
+    return lines.join('\n');
+  }
+
+  /** Clean up all loop state for a step */
+  private cleanupLoopState(stepId: string): void {
+    this.activeLoopSessions.delete(stepId);
+    this.activeStagedBuffers.delete(stepId);
+    this.activeConversationHistories.delete(stepId);
+  }
+
   /**
    * Select target files for editing
    * Priority: retrieval results > open files > fallback files
@@ -1506,24 +2178,144 @@ export class MissionExecutor {
 
   /**
    * Execute test stage step
+   * When TestRunner is wired, detects test command and runs it.
+   * On failure, stores failure info for RepairOrchestrator and returns success: false.
    */
   private async executeTestStep(step: StructuredPlan['steps'][0]): Promise<StepExecutionResult> {
     console.log(`[MissionExecutor] Executing test step: ${step.description}`);
-    
-    // TODO: Wire up actual test runner
-    // For now, emit placeholder events
-    return { success: true, stage: 'test' };
+
+    if (!this.testRunner) {
+      // No test runner — emit info event and treat as success
+      await this.emitEvent({
+        event_id: randomUUID(),
+        task_id: this.taskId,
+        timestamp: new Date().toISOString(),
+        type: 'test_completed',
+        mode: this.mode,
+        stage: 'test',
+        payload: {
+          step_id: step.step_id,
+          success: true,
+          skipped: true,
+          reason: 'No test runner configured',
+        },
+        evidence_ids: [],
+        parent_event_id: null,
+      });
+      return { success: true, stage: 'test' };
+    }
+
+    try {
+      // TestRunner handles: detect command → approval gate → execute → evidence → events
+      const result = await this.testRunner.runTests(this.mode, 'test');
+
+      if (!result) {
+        // No test command detected or user denied approval
+        console.log('[MissionExecutor] No test result (no command detected or denied)');
+        await this.emitEvent({
+          event_id: randomUUID(),
+          task_id: this.taskId,
+          timestamp: new Date().toISOString(),
+          type: 'test_completed',
+          mode: this.mode,
+          stage: 'test',
+          payload: {
+            step_id: step.step_id,
+            success: true,
+            skipped: true,
+            reason: 'No test command available or user denied',
+          },
+          evidence_ids: [],
+          parent_event_id: null,
+        });
+        return { success: true, stage: 'test' };
+      }
+
+      // Emit test_completed with results
+      await this.emitEvent({
+        event_id: randomUUID(),
+        task_id: this.taskId,
+        timestamp: new Date().toISOString(),
+        type: 'test_completed',
+        mode: this.mode,
+        stage: 'test',
+        payload: {
+          step_id: step.step_id,
+          success: result.success,
+          exit_code: result.exit_code,
+          duration_ms: result.duration_ms,
+          command: result.command,
+          stdout_preview: result.stdout.substring(0, 500),
+          stderr_preview: result.stderr.substring(0, 500),
+        },
+        evidence_ids: [],
+        parent_event_id: null,
+      });
+
+      if (!result.success) {
+        // Feed failure info to RepairOrchestrator (if available)
+        if (this.repairOrchestrator) {
+          this.repairOrchestrator.captureTestFailure(result);
+        }
+        console.log(`[MissionExecutor] Tests failed (exit ${result.exit_code}): ${result.stderr.substring(0, 200)}`);
+      }
+
+      return { success: result.success, stage: 'test' };
+    } catch (error) {
+      console.error('[MissionExecutor] Test execution error:', error);
+      return {
+        success: false,
+        stage: 'test',
+        error: error instanceof Error ? error.message : String(error),
+      };
+    }
   }
 
   /**
    * Execute repair stage step
+   * When RepairOrchestrator is wired, runs the bounded repair loop (diagnose → fix → test).
+   * Falls back to success when no orchestrator is available.
    */
   private async executeRepairStep(step: StructuredPlan['steps'][0]): Promise<StepExecutionResult> {
     console.log(`[MissionExecutor] Executing repair step: ${step.description}`);
-    
-    // TODO: Wire up repair orchestrator
-    // For now, emit placeholder events
-    return { success: true, stage: 'repair' };
+
+    if (!this.repairOrchestrator) {
+      // No repair orchestrator — skip gracefully
+      await this.emitEvent({
+        event_id: randomUUID(),
+        task_id: this.taskId,
+        timestamp: new Date().toISOString(),
+        type: 'repair_attempted',
+        mode: this.mode,
+        stage: 'repair',
+        payload: {
+          step_id: step.step_id,
+          skipped: true,
+          reason: 'No repair orchestrator configured',
+        },
+        evidence_ids: [],
+        parent_event_id: null,
+      });
+      return { success: true, stage: 'repair' };
+    }
+
+    try {
+      // RepairOrchestrator.startRepair runs the bounded A1 loop:
+      // diagnose → propose fix → approval gate → apply → retest
+      // It emits its own events (repair_attempted, tool_start/end, etc.)
+      await this.repairOrchestrator.startRepair(this.mode);
+
+      // If we got here, the repair loop completed (success or budget exhausted)
+      console.log('[MissionExecutor] Repair loop completed');
+      return { success: true, stage: 'repair' };
+    } catch (error) {
+      console.error('[MissionExecutor] Repair execution error:', error);
+      return {
+        success: false,
+        stage: 'repair',
+        error: error instanceof Error ? error.message : String(error),
+      };
+    }
   }
 
   /**

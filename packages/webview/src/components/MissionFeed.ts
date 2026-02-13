@@ -21,6 +21,7 @@ import { renderProcessCard, updateProcessCard, getProcessCardHtml, isProcessEven
 import { renderGeneratedToolProposedCard, renderGeneratedToolRunCard, isGeneratedToolEvent } from './GeneratedToolCard';
 import { renderCrashRecoveryCard, renderTaskRecoveryStartedCard, renderTaskDiscardedCard } from './CrashRecoveryCard';
 import { renderFailureCard } from './FailureCard';
+import { renderLoopPausedCard } from './LoopPausedCard';
 import { isScaffoldProgressEvent, renderScaffoldProgressCard, updateScaffoldProgress, getScaffoldProgressCardHtml } from './ScaffoldProgressCard';
 import { isScaffoldCompleteEvent, renderScaffoldCompleteCard, updateScaffoldComplete, getScaffoldCompleteCardHtml } from './ScaffoldCompleteCard';
 
@@ -1347,6 +1348,38 @@ export const EVENT_CARD_MAP: Record<EventType, EventCardConfig> = {
       const action = (e.payload.action as string) || 'unknown';
       return `User chose: ${action}`;
     }
+  },
+
+  // AgenticLoop Integration
+  loop_paused: {
+    icon: '⏸',
+    title: 'Loop Paused',
+    color: 'var(--vscode-charts-orange)',
+    getSummary: (e: Event) => {
+      const reason = (e.payload.reason as string) || 'unknown';
+      const iterations = (e.payload.iteration_count as number) || 0;
+      return `${reason} after ${iterations} iteration(s)`;
+    }
+  },
+  loop_continued: {
+    icon: '▶️',
+    title: 'Loop Continued',
+    color: 'var(--vscode-charts-blue)',
+    getSummary: (e: Event) => {
+      const count = (e.payload.continue_count as number) || 0;
+      const max = (e.payload.max_continues as number) || 3;
+      return `Continue ${count}/${max}`;
+    }
+  },
+  loop_completed: {
+    icon: '✅',
+    title: 'Loop Completed',
+    color: 'var(--vscode-charts-green)',
+    getSummary: (e: Event) => {
+      const filesApplied = (e.payload.files_applied as number) || 0;
+      const iterations = (e.payload.iterations as number) || 0;
+      return `${filesApplied} file(s) changed in ${iterations} iteration(s)`;
+    }
   }
 } as Record<EventType, EventCardConfig>;
 
@@ -1386,6 +1419,7 @@ const USER_TIER_EVENTS = new Set<EventType>([
   'scaffold_final_complete',
   'plan_large_detected',
   'repeated_failure_detected',
+  'loop_paused', 'loop_completed',
 ] as EventType[]);
 
 const PROGRESS_TIER_EVENTS = new Set<EventType>([
@@ -1414,6 +1448,7 @@ const PROGRESS_TIER_EVENTS = new Set<EventType>([
   'scaffold_style_selected',
   'scaffold_checkpoint_created', 'scaffold_checkpoint_restored',
   'scaffold_preflight_resolution_selected',
+  'loop_continued',
 ] as EventType[]);
 
 export function getEventTier(eventType: EventType): 'user' | 'progress' | 'system' {
@@ -1505,6 +1540,11 @@ export function renderEventCard(event: Event, taskId?: string): string {
     const errorDescriptor = event.payload.error_descriptor as any | undefined;
     const recoveryActions = (event.payload.recovery_actions as any[]) || [];
     return renderFailureCard(event, errorMatch || null, errorDescriptor || null, recoveryActions);
+  }
+
+  // AgenticLoop: loop_paused — render specialized LoopPausedCard
+  if (event.type === 'loop_paused') {
+    return renderLoopPausedCard(event);
   }
 
   // S1: Scaffold build-phase events — aggregate into ScaffoldProgressCard

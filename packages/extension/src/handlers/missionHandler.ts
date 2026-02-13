@@ -31,11 +31,15 @@ import {
   TestRunner,
   FileTestEvidenceStore,
   RepairOrchestrator,
+  Indexer,
+  Retriever,
   generateTemplatePlan,
 } from 'core';
 
 import { VSCodeWorkspaceWriter } from '../vscodeWorkspaceWriter';
 import { VSCodeCheckpointManager } from '../vscodeCheckpointManager';
+import { AnthropicLLMClient } from '../anthropicLLMClient';
+import { VSCodeToolProvider } from '../vsCodeToolProvider';
 
 // ---------------------------------------------------------------------------
 // handleConfirmMode
@@ -215,7 +219,48 @@ export async function handleExecutePlan(
     const workspaceWriter = new VSCodeWorkspaceWriter(workspaceRoot);
     const workspaceCheckpointMgr = new VSCodeCheckpointManager(workspaceRoot);
 
-    // Create MissionExecutor with new required dependencies
+    // Create LLM client and tool provider for AgenticLoop
+    let llmClient = null;
+    let toolProvider = null;
+    try {
+      llmClient = new AnthropicLLMClient(apiKey);
+      toolProvider = new VSCodeToolProvider(workspaceRoot);
+    } catch (err) {
+      console.warn('[handleExecutePlan] Could not create LLM client/tool provider for AgenticLoop, falling back to TruncationSafeExecutor:', err);
+    }
+
+    const tokenCounter = ctx.getTokenCounter() ?? null;
+
+    // A4: Create Indexer + Retriever for code context retrieval
+    const indexer = new Indexer(workspaceRoot);
+    const retriever = new Retriever(indexer, eventBus, taskId);
+
+    // A5: Create DiffManager for diff proposal/apply with approval gating
+    const evidenceStore = new InMemoryEvidenceStore();
+    const diffManager = new DiffManager(
+      taskId, eventBus, approvalManager, checkpointManager, evidenceStore, workspaceRoot
+    );
+
+    // A5: Create TestRunner for test command detection + execution
+    const evidenceDir = path.join(ctx._context.globalStorageUri.fsPath, 'evidence');
+    const testEvidenceStore = new FileTestEvidenceStore(evidenceDir);
+    const testRunner = new TestRunner(
+      taskId, eventBus, approvalManager, testEvidenceStore, workspaceRoot
+    );
+
+    // A5: Create RepairOrchestrator for bounded repair loop (diagnose → fix → test)
+    const modeManager = new ModeManager(taskId, eventBus);
+    const autonomyController = new AutonomyController(
+      taskId, eventBus, checkpointManager, modeManager, DEFAULT_A1_BUDGETS
+    );
+    const repairOrchestrator = new RepairOrchestrator(
+      taskId, eventBus, autonomyController, testRunner, diffManager, approvalManager
+    );
+
+    // Store repair orchestrator on ctx for Stop button handling
+    ctx.repairOrchestrator = repairOrchestrator;
+
+    // Create MissionExecutor with all real dependencies
     const missionExecutor = new MissionExecutor(
       taskId,
       eventBus,
@@ -225,11 +270,17 @@ export async function handleExecutePlan(
       llmConfig,
       workspaceWriter,           // Real file writer
       workspaceCheckpointMgr,    // Real checkpoint manager
-      null,  // retriever - TODO: wire up later
-      null,  // diffManager - TODO: wire up later
-      null,  // testRunner - TODO: wire up later
-      null   // repairOrchestrator - TODO: wire up later
+      retriever,                 // A4: Real retriever with code search
+      diffManager,               // A5: Real diff manager with approval gating
+      testRunner,                // A5: Real test runner with command detection
+      repairOrchestrator,        // A5: Real repair orchestrator with bounded loop
+      llmClient,                 // LLM client for AgenticLoop
+      toolProvider,              // Tool provider for AgenticLoop
+      tokenCounter,              // Token counter for context validation
     );
+
+    // Store executor for loop action handling
+    ctx.activeMissionExecutor = missionExecutor;
 
     console.log('[handleExecutePlan] MissionExecutor created, starting execution...');
 

@@ -30,6 +30,7 @@ import {
   extractDiffFilePaths,
   getDiffCorrelationId,
   buildUndoGroup,
+  ConversationHistory,
 } from 'core';
 import type { FileReadResult } from 'core';
 import type { ModeTransitionResult } from 'core';
@@ -106,6 +107,7 @@ class MissionControlViewProvider implements vscode.WebviewViewProvider {
   public isProcessing: boolean = false;
   public activeApprovalManager: ApprovalManager | null = null;
   public activeMissionRunner: MissionRunner | null = null;
+  public activeMissionExecutor: import('core').MissionExecutor | null = null;
   public selectedWorkspaceRoot: string | null = null;
   public isMissionExecuting: boolean = false;
   public currentExecutingMissionId: string | null = null;
@@ -128,6 +130,7 @@ class MissionControlViewProvider implements vscode.WebviewViewProvider {
   private _undoStack: UndoStack | null = null;
   private _fsUndoService: FsUndoService | null = null;
   public _undoBeforeCache: Map<string, Map<string, FileReadResult>> = new Map();
+  public conversationHistories: Map<string, ConversationHistory> = new Map();
   public _currentWebview: vscode.Webview | null = null;
 
   constructor(
@@ -333,6 +336,8 @@ class MissionControlViewProvider implements vscode.WebviewViewProvider {
     this.currentTaskId = null;
     globalCurrentTaskId = null;
     this.currentStage = 'none';
+    // A2: Clear conversation history for the ended task
+    // (keep other tasks' histories in case of multi-task scenarios)
     await this.clearTaskPersistence();
   }
 
@@ -419,6 +424,52 @@ class MissionControlViewProvider implements vscode.WebviewViewProvider {
       undoable_group_ids: undoStack.getUndoableGroupIds(),
       top_undoable_group_id: undoStack.topUndoableGroupId(),
     });
+  }
+
+  // -------------------------------------------------------------------------
+  // A2: Conversation History — per-task, lazy-initialized
+  // -------------------------------------------------------------------------
+
+  /**
+   * Get or create a ConversationHistory for the given task.
+   * Enables multi-turn conversations in ANSWER mode.
+   */
+  public getConversationHistory(taskId: string): ConversationHistory {
+    let history = this.conversationHistories.get(taskId);
+    if (!history) {
+      history = new ConversationHistory();
+      this.conversationHistories.set(taskId, history);
+    }
+    return history;
+  }
+
+  // ─── Token Counter (Task #5) ─────────────────────────────────────────
+  private _tokenCounter: import('./anthropicTokenCounter').AnthropicTokenCounter | null = null;
+
+  public getTokenCounter(): import('core/src/tokenCounter').TokenCounter | null {
+    return this._tokenCounter;
+  }
+
+  /** Reset the token counter (e.g. when API key changes). */
+  public resetTokenCounter(): void {
+    this._tokenCounter = null;
+  }
+
+  /**
+   * Lazily create or re-create the AnthropicTokenCounter when an API key
+   * becomes available. Called before ANSWER/MISSION mode flows.
+   */
+  private async ensureTokenCounter(): Promise<void> {
+    if (this._tokenCounter) return;
+    const apiKey = await this._context.secrets.get('ordinex.apiKey');
+    if (apiKey) {
+      try {
+        const { AnthropicTokenCounter } = require('./anthropicTokenCounter');
+        this._tokenCounter = new AnthropicTokenCounter(apiKey);
+      } catch {
+        // SDK not available — stay null, CharacterTokenCounter will be used
+      }
+    }
   }
 
   /** Step 48: Handle undo action from webview or VS Code command. */
@@ -884,6 +935,7 @@ class MissionControlViewProvider implements vscode.WebviewViewProvider {
 
     switch (message.type) {
       case 'ordinex:submitPrompt':
+        await this.ensureTokenCounter();
         await handleSubmitPrompt(ctx, message, webview);
         break;
 
@@ -1016,8 +1068,141 @@ class MissionControlViewProvider implements vscode.WebviewViewProvider {
         await handleOpenFile(ctx, message);
         break;
 
+      case 'ordinex:loopAction':
+        await this.handleLoopAction(message, webview);
+        break;
+
       default:
         console.log('Unknown message type:', message.type);
+    }
+  }
+
+  /**
+   * Handle AgenticLoop actions (Continue, Approve Partial, Discard).
+   */
+  private async handleLoopAction(message: any, webview: vscode.Webview): Promise<void> {
+    const { action, step_id, session_id, task_id } = message;
+    const taskId = task_id || this.currentTaskId;
+
+    console.log(`[handleLoopAction] action=${action}, step_id=${step_id}, session_id=${session_id}`);
+
+    if (!this.activeMissionExecutor) {
+      console.error('[handleLoopAction] No active MissionExecutor');
+      vscode.window.showErrorMessage('No active mission executor for loop action');
+      return;
+    }
+
+    const executor = this.activeMissionExecutor;
+
+    try {
+      switch (action) {
+        case 'continue_loop': {
+          // Find the step from the stored plan
+          const session = executor.getActiveLoopSession(step_id);
+          if (!session) {
+            vscode.window.showErrorMessage(`No active loop session for step ${step_id}`);
+            return;
+          }
+
+          // We need the step object — get it from events
+          const events = this.eventStore?.getEventsByTaskId(taskId) || [];
+          const stepEvent = events.find((e: Event) =>
+            e.type === 'step_started' && e.payload.step_id === step_id
+          );
+          const step = {
+            step_id,
+            description: (stepEvent?.payload.description as string) || step_id,
+          };
+
+          const result = await executor.continueLoop(step_id, step as any);
+          if (result.success) {
+            console.log('[handleLoopAction] Continue succeeded');
+          } else {
+            console.log('[handleLoopAction] Continue resulted in pause:', result.pauseReason);
+          }
+          break;
+        }
+
+        case 'approve_partial': {
+          const session = executor.getActiveLoopSession(step_id);
+          const buffer = executor.getActiveStagedBuffer(step_id);
+          if (!session || !buffer) {
+            vscode.window.showErrorMessage('No staged changes to approve');
+            return;
+          }
+
+          const events = this.eventStore?.getEventsByTaskId(taskId) || [];
+          const stepEvent = events.find((e: Event) =>
+            e.type === 'step_started' && e.payload.step_id === step_id
+          );
+          const step = {
+            step_id,
+            description: (stepEvent?.payload.description as string) || step_id,
+          };
+
+          const result = await executor.approveAndApplyStagedEdits(step as any, session, buffer);
+          if (result.success) {
+            console.log('[handleLoopAction] Approve partial succeeded');
+          } else {
+            console.log('[handleLoopAction] Approve partial failed:', result.error);
+          }
+          break;
+        }
+
+        case 'discard_loop': {
+          executor.discardLoop(step_id);
+
+          // Emit loop_completed to close the loop lifecycle cleanly
+          await this.emitEvent({
+            event_id: this.generateId(),
+            task_id: taskId,
+            timestamp: new Date().toISOString(),
+            type: 'loop_completed',
+            mode: this.currentMode,
+            stage: this.currentStage,
+            payload: {
+              result: 'discarded',
+              step_id,
+              session_id,
+              files_applied: 0,
+              iterations: 0,
+            },
+            evidence_ids: [],
+            parent_event_id: null,
+          });
+
+          // Also emit execution_paused for status tracking
+          await this.emitEvent({
+            event_id: this.generateId(),
+            task_id: taskId,
+            timestamp: new Date().toISOString(),
+            type: 'execution_paused',
+            mode: this.currentMode,
+            stage: this.currentStage,
+            payload: {
+              reason: 'loop_discarded',
+              step_id,
+              session_id,
+            },
+            evidence_ids: [],
+            parent_event_id: null,
+          });
+
+          console.log('[handleLoopAction] Loop discarded');
+          break;
+        }
+
+        default:
+          console.warn(`[handleLoopAction] Unknown action: ${action}`);
+      }
+    } catch (error) {
+      console.error('[handleLoopAction] Error:', error);
+      vscode.window.showErrorMessage(`Loop action failed: ${error instanceof Error ? error.message : String(error)}`);
+    }
+
+    // Update webview
+    if (taskId) {
+      await this.sendEventsToWebview(webview, taskId);
     }
   }
 
@@ -1373,6 +1558,8 @@ export function activate(context: vscode.ExtensionContext) {
 
       if (apiKey) {
         await context.secrets.store('ordinex.apiKey', apiKey);
+        // Reset token counter so it picks up the new key on next prompt
+        provider.resetTokenCounter();
         vscode.window.showInformationMessage('Ordinex API key saved successfully');
       }
     })

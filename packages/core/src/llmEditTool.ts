@@ -13,6 +13,7 @@ import { validateDiff, ParsedDiff } from './unifiedDiffParser';
 import { LLMConfig } from './llmService';
 import { randomUUID } from 'crypto';
 import { safeJsonParse } from './jsonRepair';
+import { resolveModel } from './modelRegistry';
 
 /**
  * LLM Edit Step Input (as per spec)
@@ -72,22 +73,7 @@ export interface LLMEditStepResult {
   duration_ms: number;
 }
 
-/**
- * Model fallback map
- * Maps user-selected model IDs to actual Anthropic model names
- */
-const MODEL_MAP: Record<string, string> = {
-  'claude-3-haiku': 'claude-3-haiku-20240307',  // Fast / lightweight
-  'claude-sonnet-4-5': 'claude-sonnet-4-20250514',  // Best for building features / multi-file changes
-  'claude-3-sonnet': 'claude-3-sonnet-20240229',
-  'claude-3-opus': 'claude-3-opus-20240229',
-  'sonnet-4.5': 'claude-sonnet-4-20250514',  // Alias for claude-sonnet-4-5
-  'opus-4.5': 'claude-3-haiku-20240307',  // Fallback to Haiku
-  'gpt-5.2': 'claude-3-haiku-20240307',  // Fallback to Haiku
-  'gemini-3': 'claude-3-haiku-20240307',  // Fallback to Haiku
-};
-
-const DEFAULT_MODEL = 'claude-3-haiku-20240307';
+// MODEL_MAP consolidated into modelRegistry.ts — use resolveModel()
 
 /**
  * LLM Edit Tool - calls LLM to generate unified diffs
@@ -115,7 +101,7 @@ export class LLMEditTool {
     const toolStartEventId = this.generateId();
     
     const userSelectedModel = config.model;
-    const actualModel = MODEL_MAP[userSelectedModel] || DEFAULT_MODEL;
+    const actualModel = resolveModel(userSelectedModel);
 
     // Emit tool_start
     await this.eventBus.publish({

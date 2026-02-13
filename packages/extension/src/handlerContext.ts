@@ -14,6 +14,7 @@ import type {
   ApprovalManager,
   RepairOrchestrator,
   MissionRunner,
+  MissionExecutor,
   ProjectMemoryManager,
   GeneratedToolManager,
   UndoStack,
@@ -22,8 +23,10 @@ import type {
   ModeTransitionResult,
   ScaffoldFlowCoordinator,
   ActiveTaskMetadata,
+  ConversationHistory,
 } from 'core';
 import type { FileReadResult, ToolExecutionPolicy, PreflightChecksInput, PreflightOrchestratorCtx, VerifyRecipeInfo, VerifyConfig, VerifyEventCtx, EditorContext } from 'core';
+import type { TokenCounter } from 'core/src/tokenCounter';
 import type { FsTaskPersistenceService } from './fsTaskPersistenceService';
 import type { FsUndoService } from './fsUndoService';
 
@@ -43,6 +46,7 @@ export interface IProvider {
   // ─── Active Orchestrators ───
   activeApprovalManager: ApprovalManager | null;
   activeMissionRunner: MissionRunner | null;
+  activeMissionExecutor: MissionExecutor | null;
   repairOrchestrator: RepairOrchestrator | null;
   activeScaffoldCoordinator: ScaffoldFlowCoordinator | null;
 
@@ -70,6 +74,9 @@ export interface IProvider {
   // ─── Memory & Tools ───
   recentEventsWindow: Event[];
 
+  // ─── Conversation (A2) ───
+  conversationHistories: Map<string, ConversationHistory>;
+
   // ─── Undo ───
   _undoBeforeCache: Map<string, Map<string, FileReadResult>>;
 
@@ -86,6 +93,12 @@ export interface IProvider {
   getTaskPersistenceService(): FsTaskPersistenceService | null;
   getUndoStack(): UndoStack;
   getFsUndoService(): FsUndoService | null;
+
+  // ─── Conversation (A2) ───
+  getConversationHistory(taskId: string): ConversationHistory;
+
+  // ─── Token Counter (Task #5) ───
+  getTokenCounter(): TokenCounter | null;
 
   // ─── Core Actions ───
   emitEvent(event: Event): Promise<void>;

@@ -3,6 +3,10 @@
  *
  * Handles ANSWER mode: streams an LLM response enriched with project context.
  * All functions take `ctx: IProvider` as first parameter instead of using `this`.
+ *
+ * A2 Enhancement: Uses ConversationHistory for multi-turn conversations.
+ * The conversation persists across messages within the same task, so follow-up
+ * questions have full context of the prior exchange.
  */
 
 import type { IProvider } from '../handlerContext';
@@ -26,8 +30,10 @@ import {
  * 1. Retrieves the API key from SecretStorage.
  * 2. Collects project context (open files, tree, inferred stack).
  * 3. Builds a system prompt with that context.
- * 4. Streams the LLM response back to the webview.
- * 5. Persists the answer as evidence on disk.
+ * 4. Adds user message to ConversationHistory (A2: multi-turn).
+ * 5. Streams the LLM response passing full history.
+ * 6. Adds assistant response to ConversationHistory.
+ * 7. Persists the answer as evidence on disk.
  */
 export async function handleAnswerMode(
   ctx: IProvider,
@@ -151,11 +157,19 @@ export async function handleAnswerMode(
       await ctx.sendEventsToWebview(webview, taskId);
     });
 
-    // 4. Stream LLM response with project context
-    let fullAnswer = '';
+    // 4. A2: Get or create conversation history for this task (multi-turn)
+    const history = ctx.getConversationHistory(taskId);
 
-    const response = await llmService.streamAnswerWithContext(
-      userQuestion,
+    // Add the new user message to conversation history
+    history.addUserMessage(userQuestion);
+    console.log(`[A2] Conversation history: ${history.length} messages (multi-turn: ${history.length > 1})`);
+
+    // 5. Stream LLM response with full conversation history
+    let fullAnswer = '';
+    const tokenCounter = ctx.getTokenCounter() ?? undefined;
+
+    const response = await llmService.streamAnswerWithHistory(
+      history.toApiMessages(),
       systemContext,
       {
         apiKey,
@@ -179,10 +193,15 @@ export async function handleAnswerMode(
             task_id: taskId,
           });
         }
-      }
+      },
+      tokenCounter,
     );
 
-    // 4. Create evidence for the assistant answer
+    // 6. A2: Add assistant response to conversation history
+    history.addAssistantMessage(response.content);
+    console.log(`[A2] Assistant response added. History now: ${history.length} messages`);
+
+    // 7. Create evidence for the assistant answer
     const evidenceDir = path.join(ctx._context.globalStorageUri.fsPath, 'evidence');
 
     // Ensure evidence directory exists
@@ -195,11 +214,6 @@ export async function handleAnswerMode(
 
     // Write answer to evidence file
     fs.writeFileSync(evidenceFilePath, response.content, 'utf-8');
-
-    // 5. Update the last tool_end event to include evidence_ids
-    // (The LLMService already emitted tool_end, but we need to add evidence to it)
-    // For now, we'll just emit a new event with the evidence
-    // In production, we'd update the existing tool_end event
 
     await ctx.sendEventsToWebview(webview, taskId);
 

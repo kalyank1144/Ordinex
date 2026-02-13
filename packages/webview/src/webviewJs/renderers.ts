@@ -207,7 +207,8 @@ export function getRenderersJs(): string {
         'mission_breakdown_created',
         'scaffold_final_complete',
         'plan_large_detected',
-        'repeated_failure_detected'
+        'repeated_failure_detected',
+        'loop_paused', 'loop_completed'
       ]);
 
       const PROGRESS_TIER_EVENTS = new Set([
@@ -235,7 +236,8 @@ export function getRenderersJs(): string {
         'scaffold_target_chosen',
         'scaffold_style_selected',
         'scaffold_checkpoint_created', 'scaffold_checkpoint_restored',
-        'scaffold_preflight_resolution_selected'
+        'scaffold_preflight_resolution_selected',
+        'loop_continued'
       ]);
 
       function getEventTier(eventType) {
@@ -285,6 +287,7 @@ export function getRenderersJs(): string {
           case 'verify_started': return 'Starting verification...';
           case 'verify_completed': return p.success ? 'Verification passed' : 'Verification failed';
           case 'verify_proposed': return \`\${(p.commands || []).length} verification command(s)\`;
+          case 'loop_continued': return \`Loop resumed (continue \${p.continue_count || '?'}/\${p.max_continues || 3})\`;
           case 'context_collected': {
             const fc = (p.files_included || []).length;
             return \`Context collected (\${fc} files)\`;
@@ -423,7 +426,8 @@ export function getRenderersJs(): string {
         var p = event.payload || {};
         var scaffoldId = p.scaffold_id || event.task_id || 'default';
         var success = p.status === 'success' || p.success === true;
-        var projectName = (p.project_path || '').split('/').pop() || '';
+        var projectPath = p.project_path || '';
+        var projectName = projectPath.split('/').pop() || '';
         // Find verification data
         var verifyEvt = allEvents ? allEvents.find(function(e) { return e.type === 'scaffold_verify_completed'; }) : null;
         var verifyHtml = '';
@@ -440,15 +444,17 @@ export function getRenderersJs(): string {
         var nextEvt = allEvents ? allEvents.find(function(e) { return e.type === 'next_steps_shown'; }) : null;
         var actionsHtml = '';
         if (nextEvt && nextEvt.payload) {
-          var steps = nextEvt.payload.steps || nextEvt.payload.next_steps || [];
+          var steps = nextEvt.payload.suggestions || nextEvt.payload.steps || nextEvt.payload.next_steps || [];
           actionsHtml = steps.map(function(s, i) {
             var cls = i === 0 ? 'background:var(--vscode-button-background);color:var(--vscode-button-foreground);border:none' : 'background:var(--vscode-button-secondaryBackground);color:var(--vscode-button-secondaryForeground)';
-            return '<button style="padding:6px 14px;border-radius:4px;font-size:13px;cursor:pointer;' + cls + '" onclick="vscode.postMessage({type:\\'next_step_selected\\',scaffold_id:\\'' + escapeHtml(scaffoldId) + '\\',step_id:\\'' + escapeHtml(s.id || s.action || '') + '\\',command:\\'' + escapeHtml(s.command || '') + '\\'})">'+  escapeHtml(s.label || s.title || s.action || '') + '</button>';
+            var cmdStr = typeof s.command === 'string' ? s.command : (s.command && s.command.cmd ? s.command.cmd : '');
+            var kindStr = s.kind || '';
+            return '<button style="padding:6px 14px;border-radius:4px;font-size:13px;cursor:pointer;' + cls + '" onclick="vscode.postMessage({type:\\'next_step_selected\\',scaffold_id:\\'' + escapeHtml(scaffoldId) + '\\',step_id:\\'' + escapeHtml(s.id || s.action || '') + '\\',kind:\\'' + escapeHtml(kindStr) + '\\',command:\\'' + escapeHtml(cmdStr) + '\\',project_path:\\'' + escapeHtml(projectPath) + '\\'})">'+  escapeHtml(s.label || s.title || s.action || '') + '</button>';
           }).join('');
         }
         if (!actionsHtml) {
-          actionsHtml = '<button style="padding:6px 14px;border-radius:4px;font-size:13px;cursor:pointer;background:var(--vscode-button-background);color:var(--vscode-button-foreground);border:none" onclick="vscode.postMessage({type:\\'next_step_selected\\',scaffold_id:\\'' + escapeHtml(scaffoldId) + '\\',step_id:\\'dev_server\\'})">Start Dev Server</button>' +
-            '<button style="padding:6px 14px;border-radius:4px;font-size:13px;cursor:pointer;background:var(--vscode-button-secondaryBackground);color:var(--vscode-button-secondaryForeground)" onclick="vscode.postMessage({type:\\'next_step_selected\\',scaffold_id:\\'' + escapeHtml(scaffoldId) + '\\',step_id:\\'open_editor\\'})">Open in Editor</button>';
+          actionsHtml = '<button style="padding:6px 14px;border-radius:4px;font-size:13px;cursor:pointer;background:var(--vscode-button-background);color:var(--vscode-button-foreground);border:none" onclick="vscode.postMessage({type:\\'next_step_selected\\',scaffold_id:\\'' + escapeHtml(scaffoldId) + '\\',step_id:\\'dev_server\\',project_path:\\'' + escapeHtml(projectPath) + '\\'})">Start Dev Server</button>' +
+            '<button style="padding:6px 14px;border-radius:4px;font-size:13px;cursor:pointer;background:var(--vscode-button-secondaryBackground);color:var(--vscode-button-secondaryForeground)" onclick="vscode.postMessage({type:\\'next_step_selected\\',scaffold_id:\\'' + escapeHtml(scaffoldId) + '\\',step_id:\\'open_editor\\',project_path:\\'' + escapeHtml(projectPath) + '\\'})">Open in Editor</button>';
         }
         var designHtml = p.design_pack_applied ? '<span style="display:inline-flex;align-items:center;gap:4px;padding:4px 10px;border-radius:12px;font-size:12px;background:rgba(156,39,176,0.12)">\u{1F3A8} ' + escapeHtml(p.design_pack_name || 'Design applied') + '</span>' : '';
         return '<div class="scaffold-complete-card" style="background:var(--vscode-editor-background);border:1px solid ' + (success ? 'var(--vscode-testing-iconPassed,#4caf50)' : 'var(--vscode-editorWarning-foreground,#ff9800)') + ';border-radius:8px;padding:16px;margin:8px 0;font-size:13px">' +
@@ -547,7 +553,7 @@ export function getRenderersJs(): string {
           projectPath: p.project_path || '',
           status: 'starting',
           port: null,
-          exitCode: null,
+          exitCode: undefined,
           error: null,
           outputLines: [],
           startedAt: event.timestamp
@@ -1477,6 +1483,27 @@ export function getRenderersJs(): string {
                 <span class="event-timestamp">\${formatTimestamp(event.timestamp)}</span>
               </div>
               <div class="event-summary">\${escapeHtml(title)}</div>
+            </div>
+          \`;
+        }
+
+        // AgenticLoop: loop_paused card
+        if (event.type === 'loop_paused') {
+          return renderLoopPausedInline(event);
+        }
+        // AgenticLoop: loop_completed card
+        if (event.type === 'loop_completed') {
+          const p = event.payload || {};
+          const filesApplied = p.files_applied || 0;
+          const result = p.result || 'completed';
+          return \`
+            <div class="event-card" style="border-left-color: var(--vscode-charts-green);">
+              <div class="event-card-header">
+                <span class="event-icon" style="color: var(--vscode-charts-green);">✓</span>
+                <span class="event-type">Loop Completed</span>
+                <span class="event-timestamp">\${formatTimestamp(event.timestamp)}</span>
+              </div>
+              <div class="event-summary">\${result === 'applied' ? \`Applied \${filesApplied} file(s)\` : 'No changes needed'}</div>
             </div>
           \`;
         }
@@ -2493,6 +2520,118 @@ export function getRenderersJs(): string {
           }
         };
         return eventCardMap[type];
+      }
+
+      // ===== AGENTIC LOOP: LOOP PAUSED CARD =====
+      function renderLoopPausedInline(event) {
+        const p = event.payload || {};
+        const reason = p.reason || 'unknown';
+        const iterationCount = p.iteration_count || 0;
+        const continueCount = p.continue_count || 0;
+        const maxContinues = p.max_continues || 3;
+        const canCont = p.can_continue !== false && continueCount < maxContinues;
+        const remaining = p.remaining_continues != null ? p.remaining_continues : (maxContinues - continueCount);
+        const stagedFiles = p.staged_files || [];
+        const totalTokens = p.total_tokens;
+        const toolCallsCount = p.tool_calls_count || 0;
+        const sessionId = p.session_id || '';
+        const stepId = p.step_id || '';
+        const finalText = p.final_text || '';
+
+        const reasonLabels = {
+          max_iterations: 'Iteration Limit Reached',
+          max_tokens: 'Token Budget Exceeded',
+          end_turn: 'LLM Finished',
+          error: 'Error Occurred',
+          user_stop: 'Stopped by User'
+        };
+        const reasonIcons = {
+          max_iterations: '⏸',
+          max_tokens: '📊',
+          end_turn: '✓',
+          error: '⚠',
+          user_stop: '⏹'
+        };
+        const reasonLabel = reasonLabels[reason] || reason;
+        const reasonIcon = reasonIcons[reason] || '⏸';
+
+        function fmtTokens(n) {
+          if (n >= 1000000) return (n / 1000000).toFixed(1) + 'M';
+          if (n >= 1000) return (n / 1000).toFixed(1) + 'K';
+          return String(n);
+        }
+
+        let filesHtml = '';
+        if (stagedFiles.length > 0) {
+          filesHtml = stagedFiles.map(function(f) {
+            const icon = f.action === 'create' ? '+' : f.action === 'delete' ? '−' : '~';
+            const color = f.action === 'create' ? '#4ade80' : f.action === 'delete' ? '#f87171' : '#fbbf24';
+            return '<div style="display:flex;align-items:center;gap:6px;padding:2px 0;">' +
+              '<span style="color:' + color + ';font-weight:bold;width:14px;text-align:center;">' + icon + '</span>' +
+              '<span style="font-family:monospace;font-size:12px;">' + escapeHtml(f.path) + '</span>' +
+              '<span style="color:var(--vscode-descriptionForeground);font-size:11px;">' + f.edit_count + ' edit' + (f.edit_count !== 1 ? 's' : '') + '</span>' +
+              '</div>';
+          }).join('');
+        } else {
+          filesHtml = '<div style="color:var(--vscode-descriptionForeground);font-style:italic;">No files staged</div>';
+        }
+
+        const tokenHtml = totalTokens
+          ? '<span style="color:var(--vscode-descriptionForeground);font-size:11px;">' +
+            fmtTokens(totalTokens.input) + ' in / ' + fmtTokens(totalTokens.output) + ' out</span>'
+          : '';
+
+        const preview = finalText.length > 200 ? escapeHtml(finalText.substring(0, 200)) + '…' : escapeHtml(finalText);
+
+        const contBtn = canCont
+          ? '<button class="loop-action-btn" style="background:var(--vscode-button-background);color:var(--vscode-button-foreground);padding:4px 12px;border:none;border-radius:4px;cursor:pointer;font-size:12px;" ' +
+            'onclick="handleLoopAction(\\'continue_loop\\', \\'' + stepId.replace(/'/g, '') + '\\', \\'' + sessionId.replace(/'/g, '') + '\\')">' +
+            '▶ Continue (' + remaining + ' left)</button>'
+          : '<button disabled style="opacity:0.5;padding:4px 12px;border:1px solid var(--vscode-panel-border);border-radius:4px;font-size:12px;cursor:not-allowed;">▶ Continue (0 left)</button>';
+
+        const appBtn = stagedFiles.length > 0
+          ? '<button style="background:#22863a;color:white;padding:4px 12px;border:none;border-radius:4px;cursor:pointer;font-size:12px;" ' +
+            'onclick="handleLoopAction(\\'approve_partial\\', \\'' + stepId.replace(/'/g, '') + '\\', \\'' + sessionId.replace(/'/g, '') + '\\')">' +
+            '✓ Approve ' + stagedFiles.length + ' file' + (stagedFiles.length !== 1 ? 's' : '') + '</button>'
+          : '';
+
+        const discBtn = '<button style="color:#f87171;border:1px solid #f87171;background:transparent;padding:4px 12px;border-radius:4px;cursor:pointer;font-size:12px;" ' +
+          'onclick="handleLoopAction(\\'discard_loop\\', \\'' + stepId.replace(/'/g, '') + '\\', \\'' + sessionId.replace(/'/g, '') + '\\')">' +
+          '✕ Discard</button>';
+
+        return '<div class="event-card" style="border-left-color: var(--vscode-charts-yellow);">' +
+          '<div class="event-card-header">' +
+            '<span class="event-icon">' + reasonIcon + '</span>' +
+            '<span class="event-type">Loop Paused — ' + escapeHtml(reasonLabel) + '</span>' +
+            '<span class="event-timestamp">' + formatTimestamp(event.timestamp) + '</span>' +
+          '</div>' +
+          '<div style="display:flex;flex-wrap:wrap;gap:6px;font-size:12px;color:var(--vscode-descriptionForeground);margin:6px 0;">' +
+            '<span>' + iterationCount + ' iteration' + (iterationCount !== 1 ? 's' : '') + '</span><span>·</span>' +
+            '<span>' + toolCallsCount + ' tool call' + (toolCallsCount !== 1 ? 's' : '') + '</span><span>·</span>' +
+            '<span>' + stagedFiles.length + ' file' + (stagedFiles.length !== 1 ? 's' : '') + ' staged</span>' +
+            (tokenHtml ? '<span>·</span>' + tokenHtml : '') +
+          '</div>' +
+          (preview ? '<div style="padding:8px;border-radius:4px;background:var(--vscode-textBlockQuote-background,rgba(255,255,255,0.04));margin:6px 0;font-size:12px;">' + preview + '</div>' : '') +
+          '<div style="padding:8px;border-radius:4px;background:var(--vscode-textBlockQuote-background,rgba(255,255,255,0.04));margin:6px 0;max-height:150px;overflow-y:auto;">' +
+            '<div style="font-size:12px;font-weight:600;margin-bottom:4px;">Staged Changes:</div>' +
+            filesHtml +
+          '</div>' +
+          '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px;">' +
+            contBtn + appBtn + discBtn +
+          '</div>' +
+        '</div>';
+      }
+
+      // ===== AGENTIC LOOP: Handle loop actions =====
+      function handleLoopAction(action, stepId, sessionId) {
+        const vscodeApi = acquireVsCodeApi ? acquireVsCodeApi() : (window.__vscode || { postMessage: function() {} });
+        vscodeApi.postMessage({
+          type: 'ordinex:loopAction',
+          action: action,
+          step_id: stepId,
+          session_id: sessionId,
+          task_id: (state && state.taskId) || ''
+        });
       }
   `;
 }

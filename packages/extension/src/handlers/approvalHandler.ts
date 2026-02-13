@@ -685,8 +685,12 @@ export async function handleResolveDecisionPoint(
                 llmClient: featureLLMClient,
               };
 
-              // Subscribe to post-scaffold events for UI updates
-              postScaffoldEventBus.subscribe(async () => {
+              // Subscribe to post-scaffold events for UI updates + capture project path
+              postScaffoldEventBus.subscribe(async (event) => {
+                if ((event as any).type === 'scaffold_final_complete' && (event as any).payload?.project_path) {
+                  ctx.scaffoldProjectPath = (event as any).payload.project_path as string;
+                  console.log(`[handleResolveDecisionPoint] Captured scaffoldProjectPath from event: ${ctx.scaffoldProjectPath}`);
+                }
                 await ctx.sendEventsToWebview(webview, task_id);
               });
 
