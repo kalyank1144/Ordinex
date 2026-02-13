@@ -168,7 +168,16 @@ export const DEFAULT_APP_NAME = 'my-app';
  */
 export function extractAppName(userPrompt: string): string {
   const cleanedPrompt = userPrompt.trim();
-  
+
+  // Step 1: Quoted multi-word names after explicit naming keywords
+  // e.g., called "My Todo App" → my-todo-app
+  const quotedNamedMatch = cleanedPrompt.match(/(?:called|named)\s+["']([^"']{2,50})["']/i);
+  if (quotedNamedMatch) {
+    const name = toAppSlug(quotedNamedMatch[1]);
+    if (isValidAppSlug(name)) return name;
+  }
+
+  // Step 2: Single-word patterns (called X, named X, app X, etc.)
   for (const pattern of APP_NAME_PATTERNS) {
     const match = cleanedPrompt.match(pattern);
     if (match && match[1]) {
@@ -179,8 +188,35 @@ export function extractAppName(userPrompt: string): string {
       }
     }
   }
-  
+
+  // Step 3: Standalone quoted multi-word names (e.g., "My Todo App")
+  const quotedMatch = cleanedPrompt.match(/["']([^"']{2,50})["']/);
+  if (quotedMatch) {
+    const name = toAppSlug(quotedMatch[1]);
+    if (isValidAppSlug(name)) return name;
+  }
+
+  // Step 4: "create/build [a] [new] X app/project" — skips articles
+  // e.g., "create a new todo app" → todo
+  const verbMatch = cleanedPrompt.match(
+    /(?:create|build|make)\s+(?:an?\s+)?(?:new\s+)?(.+?)\s+(?:app|project|application|site|website)\b/i
+  );
+  if (verbMatch && verbMatch[1]) {
+    const name = toAppSlug(verbMatch[1]);
+    if (isValidAppSlug(name)) return name;
+  }
+
   return DEFAULT_APP_NAME;
+}
+
+/** Convert free-form text to a slug: lowercase, spaces→dashes, strip invalid chars */
+function toAppSlug(raw: string): string {
+  return raw.toLowerCase().replace(/\s+/g, '-').replace(/[^a-z0-9-]/g, '').replace(/-+/g, '-').replace(/^-|-$/g, '');
+}
+
+/** Validate a slug: starts with letter, 2-50 chars, not a blocklisted word */
+function isValidAppSlug(name: string): boolean {
+  return /^[a-z]/.test(name) && name.length >= 2 && name.length <= 50 && !APP_NAME_BLOCKLIST.has(name);
 }
 
 // ============================================================================
