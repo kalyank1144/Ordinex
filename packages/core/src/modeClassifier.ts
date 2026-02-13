@@ -244,19 +244,16 @@ function computeScores(features: Features): {
     }
   }
   
-  // ACTION OVERRIDES QUESTION rule
-  // "Can you help me add X?" → MISSION despite question form
-  if (WEIGHTS.ACTION_OVERRIDES_QUESTION) {
-    if (features.hasQuestionForm && (features.hasActionVerbs || features.hasConversationalAction)) {
-      // Reduce ANSWER score when action intent present
+  // QUESTION OVERRIDE rules (mutually exclusive to avoid compounding answerScore reduction)
+  // Only one *= 0.5 should fire per prompt.
+  if (features.hasQuestionForm) {
+    if (WEIGHTS.ACTION_OVERRIDES_QUESTION && (features.hasActionVerbs || features.hasConversationalAction)) {
+      // "Can you help me add X?" → MISSION despite question form
+      answerScore *= 0.5;
+    } else if (features.hasPlanningTerms) {
+      // "What's the best strategy for migration?" → PLAN despite question form
       answerScore *= 0.5;
     }
-  }
-
-  // PLANNING OVERRIDES QUESTION rule
-  // "What's the best strategy for migration?" → PLAN despite question form
-  if (features.hasQuestionForm && features.hasPlanningTerms) {
-    answerScore *= 0.5;
   }
   
   return { answer: answerScore, plan: planScore, mission: missionScore };
