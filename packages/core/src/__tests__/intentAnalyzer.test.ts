@@ -328,9 +328,8 @@ describe('IntentAnalyzer', () => {
 
     it('should boost scope for system dependencies', () => {
       const result = detectScope('update the database schema', emptyRef, emptyContext);
-      // "update" (5 pts) + "database"+"schema" dependency match (20 pts) = 25
-      // complexityScore 25 falls in the 'small' bucket (<= 25)
-      expect(['small', 'medium', 'large']).toContain(result.scope);
+      // "update" (5 pts) + dependency match (20 pts) = 25 → 'small' (<= 25)
+      expect(result.scope).toBe('small');
       expect(result.metrics.has_dependencies).toBe(true);
     });
 
