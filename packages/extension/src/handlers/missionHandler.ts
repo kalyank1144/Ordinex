@@ -17,6 +17,7 @@ import type {
 
 import * as vscode from 'vscode';
 import * as path from 'path';
+import * as fs from 'fs';
 
 import {
   EventBus,
@@ -34,6 +35,7 @@ import {
   Indexer,
   Retriever,
   generateTemplatePlan,
+  FAST_MODEL,
 } from 'core';
 
 import { VSCodeWorkspaceWriter } from '../vscodeWorkspaceWriter';
@@ -177,7 +179,7 @@ export async function handleExecutePlan(
 
     // Get model ID from intent event or use default
     const intentEvent = events.find((e: Event) => e.type === 'intent_received');
-    const modelId = (intentEvent?.payload.model_id as string) || 'claude-3-haiku';
+    const modelId = (intentEvent?.payload.model_id as string) || FAST_MODEL;
 
     const eventBus = new EventBus(ctx.eventStore);
     const checkpointDir = path.join(ctx._context.globalStorageUri.fsPath, 'checkpoints');
@@ -253,8 +255,19 @@ export async function handleExecutePlan(
     const autonomyController = new AutonomyController(
       taskId, eventBus, checkpointManager, modeManager, DEFAULT_A1_BUDGETS
     );
+
+    // Provide readFile closure for LLM-powered repair (path-traversal guarded)
+    const readFile = async (filePath: string): Promise<string | null> => {
+      try {
+        const fullPath = path.resolve(workspaceRoot, filePath);
+        if (!fullPath.startsWith(workspaceRoot)) return null;
+        return await fs.promises.readFile(fullPath, 'utf-8');
+      } catch { return null; }
+    };
+
     const repairOrchestrator = new RepairOrchestrator(
-      taskId, eventBus, autonomyController, testRunner, diffManager, approvalManager
+      taskId, eventBus, autonomyController, testRunner, diffManager, approvalManager,
+      llmClient, readFile
     );
 
     // Store repair orchestrator on ctx for Stop button handling
@@ -815,6 +828,22 @@ export async function handleStartAutonomy(
       workspaceRoot
     );
 
+    // Create LLM client for repair (if API key available)
+    const apiKey = await ctx._context.secrets.get('ordinex.apiKey');
+    let repairLlmClient = null;
+    if (apiKey) {
+      try { repairLlmClient = new AnthropicLLMClient(apiKey); } catch { /* no-op */ }
+    }
+
+    // Provide readFile closure for LLM-powered repair (path-traversal guarded)
+    const readFile = async (filePath: string): Promise<string | null> => {
+      try {
+        const fullPath = path.resolve(workspaceRoot, filePath);
+        if (!fullPath.startsWith(workspaceRoot)) return null;
+        return await fs.promises.readFile(fullPath, 'utf-8');
+      } catch { return null; }
+    };
+
     // Create repair orchestrator
     ctx.repairOrchestrator = new RepairOrchestrator(
       taskId,
@@ -822,7 +851,9 @@ export async function handleStartAutonomy(
       autonomyController,
       testRunner,
       diffManager,
-      approvalManager
+      approvalManager,
+      repairLlmClient,
+      readFile,
     );
 
     // Subscribe to events from repair loop

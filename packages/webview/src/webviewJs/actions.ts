@@ -421,12 +421,7 @@ export function getActionsJs(): string {
         clarificationSelectionInProgress = false;
       }
 
-      // ===== EDIT/CANCEL PLAN HANDLERS =====
-      window.handleEditPlan = function(taskId, planEventId) {
-        console.log('Edit Plan clicked (not implemented yet)', { taskId, planEventId });
-        alert('Plan editing will be available in a future version');
-      };
-
+      // ===== CANCEL PLAN HANDLER =====
       window.handleCancelPlan = function(taskId) {
         console.log('Cancel Plan clicked', { taskId });
         if (confirm('Are you sure you want to cancel this plan? This will clear the current task.')) {

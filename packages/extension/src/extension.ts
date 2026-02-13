@@ -1592,70 +1592,9 @@ export function activate(context: vscode.ExtensionContext) {
       );
       panel.webview.html = getSettingsPanelContent();
 
-      // Wire up message handling
+      // Wire up message handling — delegate to extracted settings handler
       panel.webview.onDidReceiveMessage(async (message) => {
-        // Delegate to provider — we need a lightweight handler here since
-        // the command is registered outside the class. Re-use the same logic.
-        switch (message.type) {
-          case 'ordinex:settings:getAll': {
-            let apiKeyConfigured = false;
-            let apiKeyPreview = '';
-            try {
-              const storedKey = await context.secrets.get('ordinex.apiKey');
-              if (storedKey) {
-                apiKeyConfigured = true;
-                apiKeyPreview = 'sk-ant-...' + storedKey.slice(-4);
-              }
-            } catch { /* ignore */ }
-
-            const cfg = vscode.workspace.getConfiguration('ordinex');
-            panel.webview.postMessage({
-              type: 'ordinex:settings:update',
-              apiKeyConfigured,
-              apiKeyPreview,
-              commandPolicy: cfg.get<string>('commandPolicy.mode', 'prompt'),
-              autonomyLevel: cfg.get<string>('autonomy.level', 'conservative'),
-              sessionPersistence: cfg.get<string>('intelligence.sessionPersistence', 'off') === 'on',
-              extensionVersion: context.extension?.packageJSON?.version || '0.0.0',
-              workspacePath: vscode.workspace.workspaceFolders?.[0]?.uri.fsPath || '—',
-              eventStorePath: path.join(context.globalStorageUri.fsPath, 'events.jsonl'),
-              eventsCount: 0,
-            });
-            break;
-          }
-          case 'ordinex:settings:saveApiKey': {
-            const key = message.apiKey?.trim();
-            if (key && key.startsWith('sk-ant-')) {
-              await context.secrets.store('ordinex.apiKey', key);
-              panel.webview.postMessage({ type: 'ordinex:settings:saveResult', setting: 'API Key', success: true });
-            } else {
-              panel.webview.postMessage({ type: 'ordinex:settings:saveResult', setting: 'API Key', success: false, error: 'Invalid key format' });
-            }
-            break;
-          }
-          case 'ordinex:settings:clearApiKey':
-            await context.secrets.delete('ordinex.apiKey');
-            panel.webview.postMessage({ type: 'ordinex:settings:saveResult', setting: 'API Key', success: true });
-            break;
-          case 'ordinex:settings:setCommandPolicy':
-            if (['off', 'prompt', 'auto'].includes(message.mode)) {
-              await vscode.workspace.getConfiguration('ordinex.commandPolicy').update('mode', message.mode, vscode.ConfigurationTarget.Global);
-              panel.webview.postMessage({ type: 'ordinex:settings:saveResult', setting: 'Command Policy', success: true });
-            }
-            break;
-          case 'ordinex:settings:setAutonomyLevel':
-            if (['conservative', 'balanced', 'aggressive'].includes(message.level)) {
-              await vscode.workspace.getConfiguration('ordinex.autonomy').update('level', message.level, vscode.ConfigurationTarget.Global);
-              panel.webview.postMessage({ type: 'ordinex:settings:saveResult', setting: 'Autonomy Level', success: true });
-            }
-            break;
-          case 'ordinex:settings:setSessionPersistence': {
-            const val = message.enabled ? 'on' : 'off';
-            await vscode.workspace.getConfiguration('ordinex.intelligence').update('sessionPersistence', val, vscode.ConfigurationTarget.Global);
-            panel.webview.postMessage({ type: 'ordinex:settings:saveResult', setting: 'Session Persistence', success: true });
-            break;
-          }
-        }
+        await handleSettingsMessageHandler(provider as unknown as IProvider, message, panel.webview);
       });
     })
   );

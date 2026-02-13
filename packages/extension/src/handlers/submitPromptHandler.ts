@@ -15,6 +15,7 @@ import type {
   Mode,
   Event,
   StructuredPlan,
+  CommandMode,
 } from 'core';
 import * as vscode from 'vscode';
 import {
@@ -30,7 +31,6 @@ import {
   runCommandPhase,
   CommandPhaseContext,
   resolveCommandPolicy,
-  DEFAULT_COMMAND_POLICY,
   EventBus,
   InMemoryEvidenceStore,
 } from 'core';
@@ -467,10 +467,11 @@ async function handleQuickAction(
         throw new Error('EventStore not initialized');
       }
 
-      // Resolve command policy
+      // Resolve command policy from VS Code settings
+      const cfg = vscode.workspace.getConfiguration('ordinex');
+      const userMode = cfg.get<string>('commandPolicy.mode');
       const commandPolicy = resolveCommandPolicy(
-        DEFAULT_COMMAND_POLICY,
-        {} // workspace settings - TODO: wire up from VS Code settings
+        userMode ? { mode: userMode as CommandMode } : undefined,
       );
 
       // Create EventBus for command phase (it needs emit() method)

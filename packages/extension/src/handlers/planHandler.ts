@@ -33,6 +33,7 @@ import {
   buildPlanTextForAnalysis,
   generateMissionBreakdown,
   exportRun,
+  FAST_MODEL,
 } from 'core';
 
 // ---------------------------------------------------------------------------
@@ -1014,7 +1015,7 @@ export async function handleRefinePlan(
           eventBus,
           {
             apiKey,
-            model: 'claude-3-haiku',
+            model: FAST_MODEL,
             maxTokens: 4096,
           },
           workspaceRoot,
