@@ -97,13 +97,7 @@ export {
   DiffProposal,
   DiffApplicationResult
 } from './diffManager';
-export {
-  generateDiffProposal,
-  isFileInScope,
-  validateDiffAgainstScope,
-  DiffProposalInput,
-  DiffProposalOutput
-} from './diffProposalGenerator';
+// diffProposalGenerator removed (dead code — never called)
 
 // Export autonomy controller
 export {
@@ -135,6 +129,8 @@ export {
   DiagnosisResult,
   RepairIterationResult
 } from './repairOrchestrator';
+
+export type { ReadFileFn } from './repairOrchestrator';
 
 // Export test runner
 export {
