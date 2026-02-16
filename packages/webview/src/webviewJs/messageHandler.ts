@@ -1,5 +1,175 @@
 export function getMessageHandlerJs(): string {
   return `
+      // ===== STREAMING BLOCK HELPERS =====
+      var _blockCounter = 0;
+      function newBlockId(prefix) {
+        return prefix + '_' + (++_blockCounter);
+      }
+
+      function ensureStreamingMission(message) {
+        // If previous session is complete, or step/iteration changed, start fresh
+        if (!state.streamingMission || state.streamingMission.isComplete) {
+          // Snapshot completed blocks for timeline persistence
+          if (state.streamingMission && state.streamingMission.isComplete && state.streamingMission.blocks.length > 0) {
+            if (!state._completedMissionBlocks) state._completedMissionBlocks = [];
+            state._completedMissionBlocks.push({
+              stepId: state.streamingMission.stepId,
+              iteration: state.streamingMission.iteration,
+              blocks: state.streamingMission.blocks
+            });
+          }
+          state.streamingMission = {
+            taskId: message.task_id || 'unknown',
+            stepId: message.step_id || '',
+            iteration: message.iteration || 1,
+            blocks: [],
+            activeNarrationId: null,
+            isComplete: false
+          };
+          // Reset perf state for new session
+          state._missionDeltaCount = 0;
+          state._missionLastParsedText = '';
+          state._missionLastParsedHtml = '';
+          state._missionUserPinnedScroll = false;
+        }
+      }
+
+      function appendNarration(delta) {
+        var sm = state.streamingMission;
+        if (!sm) return;
+        if (!sm.activeNarrationId) {
+          var block = { id: newBlockId('nar'), kind: 'narration', text: '', ts: Date.now() };
+          sm.blocks.push(block);
+          sm.activeNarrationId = block.id;
+        }
+        for (var i = sm.blocks.length - 1; i >= 0; i--) {
+          if (sm.blocks[i].id === sm.activeNarrationId) {
+            sm.blocks[i].text += delta;
+            break;
+          }
+        }
+      }
+
+      function closeNarration() {
+        if (state.streamingMission) {
+          state.streamingMission.activeNarrationId = null;
+        }
+      }
+
+      function getBlockText(sm, blockId) {
+        for (var i = sm.blocks.length - 1; i >= 0; i--) {
+          if (sm.blocks[i].id === blockId) return sm.blocks[i].text;
+        }
+        return '';
+      }
+
+      function shouldReparseMarkdown(nextText) {
+        state._missionDeltaCount = (state._missionDeltaCount || 0) + 1;
+        if (!state._missionLastParsedText) return true;
+        if (nextText.length - state._missionLastParsedText.length >= 60) return true;
+        if (/\\n\\n|\\n\\\`\\\`\\\`|\\\`\\\`\\\`/.test(nextText.slice(-8))) return true;
+        return (state._missionDeltaCount % 4) === 0;
+      }
+
+      function getNarrationHtmlForStreaming(sm, blockId) {
+        var txt = getBlockText(sm, blockId);
+        if (shouldReparseMarkdown(txt)) {
+          state._missionLastParsedText = txt;
+          state._missionLastParsedHtml = simpleMarkdown(txt);
+        }
+        return (state._missionLastParsedHtml || simpleMarkdown(txt));
+      }
+
+      function updateLastNarrationBlock(container, sm) {
+        if (!sm.activeNarrationId) return;
+        var el = container.querySelector('[data-block-id="' + sm.activeNarrationId + '"]');
+        if (el) {
+          preserveStreamingScrollIntent(container, function() {
+            el.innerHTML = getNarrationHtmlForStreaming(sm, sm.activeNarrationId)
+              + '<span style="display:inline-block;width:2px;height:16px;background:var(--vscode-charts-orange);margin-left:2px;animation:blink 1s steps(2,start) infinite;vertical-align:text-bottom;"></span>';
+          });
+        } else {
+          renderMission();
+        }
+      }
+
+      function scheduleBlockRender() {
+        if (!state._missionRafPending) {
+          state._missionRafPending = true;
+          requestAnimationFrame(function() {
+            state._missionRafPending = false;
+            // Try incremental DOM update: append new blocks to existing container
+            var container = missionTab.querySelector('.streaming-blocks-container');
+            if (container && state.streamingMission && state.streamingMission.blocks.length > 0) {
+              // Count how many blocks the DOM already has
+              var existingEls = container.querySelectorAll('[data-block-id]');
+              var domCount = existingEls.length;
+              var stateCount = state.streamingMission.blocks.length;
+              if (stateCount > domCount) {
+                // Append only the NEW blocks (avoid full re-render)
+                var scrollEl = getScrollableContent();
+                var shouldAutoScroll = scrollEl && isNearBottom(scrollEl, 150) && !state._missionUserPinnedScroll;
+                for (var bi = domCount; bi < stateCount; bi++) {
+                  var block = state.streamingMission.blocks[bi];
+                  var html = '';
+                  if (block.kind === 'narration') {
+                    html = renderNarrationBlock(block, block.id === state.streamingMission.activeNarrationId);
+                  } else if (block.kind === 'tool') {
+                    html = renderToolBlock(block);
+                  }
+                  if (html) {
+                    var wrapper = document.createElement('div');
+                    wrapper.innerHTML = html;
+                    while (wrapper.firstChild) {
+                      container.appendChild(wrapper.firstChild);
+                    }
+                  }
+                }
+                if (shouldAutoScroll && scrollEl) {
+                  // Instant scroll for new blocks during streaming
+                  scrollEl.scrollTop = scrollEl.scrollHeight;
+                }
+                return;
+              }
+            }
+            // Fallback: full re-render (e.g., container doesn't exist yet)
+            renderMission();
+          });
+        }
+      }
+
+      // ===== SMART AUTOSCROLL =====
+      // Targets the .content scrollable parent (not the streaming container itself)
+      function getScrollableContent() {
+        return document.querySelector('.content');
+      }
+
+      function isNearBottom(el, thresholdPx) {
+        if (!el) return true;
+        return (el.scrollHeight - el.scrollTop - el.clientHeight) <= thresholdPx;
+      }
+
+      function preserveStreamingScrollIntent(container, updateFn) {
+        var scrollEl = getScrollableContent();
+        if (!scrollEl) return updateFn();
+        var shouldAutoStick = isNearBottom(scrollEl, 150) && !state._missionUserPinnedScroll;
+        updateFn();
+        if (shouldAutoStick) {
+          // Use instant scroll during rapid streaming — smooth scroll can't keep up
+          // with 60fps content updates and causes isNearBottom to return false
+          scrollEl.scrollTop = scrollEl.scrollHeight;
+        }
+      }
+
+      function attachStreamingScrollListener(container) {
+        var scrollEl = getScrollableContent();
+        if (!scrollEl || scrollEl.dataset.streamScrollBound === '1') return;
+        scrollEl.dataset.streamScrollBound = '1';
+        scrollEl.addEventListener('scroll', function() {
+          state._missionUserPinnedScroll = !isNearBottom(scrollEl, 150);
+        }, { passive: true });
+      }
+
       // ===== MESSAGE HANDLERS FROM BACKEND =====
       // Listen for messages from extension backend
       if (typeof vscode !== 'undefined') {
@@ -87,18 +257,68 @@ export function getMessageHandlerJs(): string {
                   }
                 }
 
-                renderMission();
-                renderLogs();
-                renderSystemsCounters(); // Update Systems tab
-
-                // AUTO-SCROLL: Scroll to bottom of content area when new events arrive
-                // This keeps the latest event visible during mission execution
-                setTimeout(() => {
-                  const contentArea = document.querySelector('.content');
-                  if (contentArea) {
-                    contentArea.scrollTop = contentArea.scrollHeight;
+                // Auto-clear streaming states when completion events arrive
+                // Answer streaming: mark as complete (don't null — card must persist as final answer)
+                if (state.streamingAnswer && !state.streamingAnswer.isComplete) {
+                  const hasAnswerEnd = message.events.some(e =>
+                    (e.type === 'tool_end' && e.payload && e.payload.tool === 'llm_answer') ||
+                    e.type === 'final'
+                  );
+                  if (hasAnswerEnd) {
+                    state.streamingAnswer.isComplete = true;
                   }
-                }, 100); // Small delay to ensure rendering is complete
+                }
+                // Plan streaming: clear when plan_created appears (plan generation done)
+                if (state.streamingPlan) {
+                  const hasPlanCreated = message.events.some(e =>
+                    e.type === 'plan_created' || e.type === 'plan_revised'
+                  );
+                  if (hasPlanCreated) {
+                    state.streamingPlan = null;
+                  }
+                }
+                // Mission streaming: mark complete on loop_paused/loop_completed (edit step done)
+                // Don't null — blocks persist in the timeline above the LoopPaused card.
+                if (state.streamingMission && !state.streamingMission.isComplete) {
+                  const hasLoopEnd = message.events.some(e =>
+                    e.type === 'loop_paused' || e.type === 'loop_completed'
+                  );
+                  if (hasLoopEnd) {
+                    state.streamingMission.isComplete = true;
+                    state.streamingMission.activeNarrationId = null;
+                    state._missionDeltaCount = 0;
+                    state._missionLastParsedText = '';
+                    state._missionLastParsedHtml = '';
+                    state._missionUserPinnedScroll = false;
+                  }
+                }
+
+                // CRITICAL: During active streaming, do NOT call renderMission().
+                // renderMission() replaces the entire missionTab.innerHTML which:
+                //   1. Destroys the live streaming blocks container → visual flash
+                //   2. Resets scroll position → scroll jumps
+                //   3. Breaks RAF-throttled streaming updates
+                // Instead, only update lightweight UI (control bar, logs, counters).
+                // The streaming UI is managed by missionStreamDelta / missionToolActivity handlers.
+                var isActivelyStreaming = state.streamingMission && !state.streamingMission.isComplete;
+                if (isActivelyStreaming) {
+                  // Lightweight updates only — don't touch missionTab DOM
+                  updateMissionControlBar();
+                  renderLogs();
+                  renderSystemsCounters();
+                } else {
+                  renderMission();
+                  renderLogs();
+                  renderSystemsCounters();
+
+                  // AUTO-SCROLL: Smooth scroll to bottom when new events arrive (non-streaming)
+                  requestAnimationFrame(() => {
+                    const contentArea = document.querySelector('.content');
+                    if (contentArea) {
+                      contentArea.scrollTo({ top: contentArea.scrollHeight, behavior: 'smooth' });
+                    }
+                  });
+                }
 
                 // Update status based on last event
                 const lastEvent = state.events[state.events.length - 1];
@@ -109,6 +329,24 @@ export function getMessageHandlerJs(): string {
                     updateStatus('error');
                   } else if (lastEvent.type === 'tool_end' && lastEvent.payload.tool === 'llm_answer') {
                     updateStatus('ready');
+                  } else if (lastEvent.type === 'execution_paused') {
+                    // Paused states mean the agent is waiting for user input — enable the send button
+                    updateStatus('ready');
+                  } else if (lastEvent.type === 'clarification_requested') {
+                    // Clarification needs user response — enable the send button
+                    updateStatus('ready');
+                  } else if (lastEvent.type === 'loop_paused') {
+                    // Loop paused (hard limit or error) — enable the send button
+                    updateStatus('ready');
+                  } else if (lastEvent.type === 'plan_created' || lastEvent.type === 'plan_ready') {
+                    // Plan ready for review — enable the send button
+                    updateStatus('ready');
+                  } else if (lastEvent.type === 'decision_point_needed') {
+                    // Decision needed from user — enable the send button
+                    updateStatus('ready');
+                  } else if (lastEvent.type === 'mission_completed' || lastEvent.type === 'mission_cancelled') {
+                    // Mission finished — enable the send button
+                    updateStatus('ready');
                   }
                 }
               }
@@ -116,10 +354,9 @@ export function getMessageHandlerJs(): string {
 
             case 'ordinex:streamDelta':
               // LLM is streaming - accumulate text
-              console.log('Stream delta:', message.delta);
 
-              // Initialize streaming answer if needed
-              if (!state.streamingAnswer) {
+              // Initialize or reset streaming answer (reset if previous was completed)
+              if (!state.streamingAnswer || state.streamingAnswer.isComplete) {
                 state.streamingAnswer = {
                   taskId: message.task_id || 'unknown',
                   text: ''
@@ -129,11 +366,15 @@ export function getMessageHandlerJs(): string {
               // Accumulate text
               state.streamingAnswer.text += message.delta;
 
-              // CRITICAL: Update ONLY the streaming text content, don't re-render entire timeline
-              // Find the streaming answer content div and update it directly
-              const streamingContentDiv = missionTab.querySelector('.streaming-answer-content');
-              if (streamingContentDiv) {
-                streamingContentDiv.textContent = state.streamingAnswer.text;
+              // Try direct DOM update with markdown rendering
+              {
+                const streamingContentDiv = missionTab.querySelector('.streaming-answer-content');
+                if (streamingContentDiv) {
+                  streamingContentDiv.innerHTML = simpleMarkdown(state.streamingAnswer.text) + '<span style="display:inline-block;width:2px;height:16px;background:var(--vscode-charts-blue);margin-left:2px;animation:blink 1s steps(2,start) infinite;vertical-align:text-bottom;"></span>';
+                } else {
+                  // DOM element doesn't exist yet — re-render to create streaming card
+                  renderMission();
+                }
               }
               break;
 
@@ -151,6 +392,142 @@ export function getMessageHandlerJs(): string {
               renderMission();
 
               updateStatus('ready');
+              break;
+
+            // ===== A6: PLAN MODE STREAMING =====
+            case 'ordinex:planStreamDelta':
+              // Plan generation is streaming — show thinking bubble
+              if (!state.streamingPlan) {
+                state.streamingPlan = {
+                  taskId: message.task_id || 'unknown',
+                  text: ''
+                };
+              }
+
+              state.streamingPlan.text += message.delta;
+
+              // Try direct DOM update with markdown rendering
+              {
+                const planStreamDiv = missionTab.querySelector('.streaming-plan-content');
+                if (planStreamDiv) {
+                  planStreamDiv.innerHTML = simpleMarkdown(state.streamingPlan.text) + '<span style="display:inline-block;width:2px;height:16px;background:var(--vscode-charts-purple);margin-left:2px;animation:blink 1s steps(2,start) infinite;vertical-align:text-bottom;"></span>';
+                } else {
+                  // DOM element doesn't exist yet — re-render to create streaming card
+                  renderMission();
+                }
+              }
+              break;
+
+            case 'ordinex:planStreamComplete':
+              console.log('Plan stream complete');
+              if (state.streamingPlan) {
+                state.streamingPlan = null;
+              }
+              // Full re-render to show the final PlanCard (arrives via eventsUpdate)
+              renderMission();
+              break;
+
+            // ===== A6: MISSION EDIT STEP STREAMING (Sequential Blocks) =====
+            case 'ordinex:missionStreamDelta':
+              ensureStreamingMission(message);
+              state.streamingMission.iteration = message.iteration || state.streamingMission.iteration;
+              appendNarration(message.delta);
+
+              // RAF-throttled render (no full renderMission per token)
+              if (!state._missionRafPending) {
+                state._missionRafPending = true;
+                requestAnimationFrame(function() {
+                  state._missionRafPending = false;
+                  var container = missionTab.querySelector('.streaming-blocks-container');
+                  if (container && state.streamingMission) {
+                    attachStreamingScrollListener();
+                    updateLastNarrationBlock(container, state.streamingMission);
+                  } else {
+                    renderMission();
+                    // After full re-render, auto-scroll to bottom
+                    var scrollEl = getScrollableContent();
+                    if (scrollEl && !state._missionUserPinnedScroll) {
+                      scrollEl.scrollTop = scrollEl.scrollHeight;
+                    }
+                  }
+                });
+              }
+              break;
+
+            case 'ordinex:missionStreamComplete':
+              console.log('Mission stream complete');
+              if (state.streamingMission) {
+                // Mark complete — don't null. Blocks persist in the timeline.
+                state.streamingMission.isComplete = true;
+                state.streamingMission.activeNarrationId = null;
+              }
+              // Reset streaming perf state
+              state._missionDeltaCount = 0;
+              state._missionLastParsedText = '';
+              state._missionLastParsedHtml = '';
+              state._missionUserPinnedScroll = false;
+              renderMission();
+              break;
+
+            // Phase 2: Inline tool activity — sequential blocks model
+            case 'ordinex:missionToolActivity':
+              ensureStreamingMission(message);
+              {
+                var sm = state.streamingMission;
+                if (message.event_type === 'tool_start') {
+                  closeNarration();
+                  sm.blocks.push({
+                    id: newBlockId('tool'),
+                    kind: 'tool',
+                    toolCallId: message.tool_call_id || null,
+                    tool: message.tool,
+                    input: message.input || {},
+                    status: 'running',
+                    error: null,
+                    ts: Date.now()
+                  });
+                  scheduleBlockRender();
+                } else if (message.event_type === 'tool_end') {
+                  var matched = null;
+
+                  // Preferred: exact match via tool_call_id from backend
+                  if (message.tool_call_id) {
+                    for (var ci = sm.blocks.length - 1; ci >= 0; ci--) {
+                      if (sm.blocks[ci].kind === 'tool' &&
+                          sm.blocks[ci].toolCallId === message.tool_call_id &&
+                          sm.blocks[ci].status === 'running') {
+                        matched = sm.blocks[ci];
+                        break;
+                      }
+                    }
+                  }
+
+                  // Backward-compat fallback (only if ID missing)
+                  if (!matched) {
+                    for (var cj = sm.blocks.length - 1; cj >= 0; cj--) {
+                      if (sm.blocks[cj].kind === 'tool' && sm.blocks[cj].tool === message.tool && sm.blocks[cj].status === 'running') {
+                        matched = sm.blocks[cj];
+                        break;
+                      }
+                    }
+                  }
+
+                  if (matched) {
+                    matched.status = message.success ? 'done' : 'error';
+                    if (message.error) matched.error = message.error;
+                    var toolEl = missionTab.querySelector('[data-block-id="' + matched.id + '"]');
+                    if (toolEl) {
+                      preserveStreamingScrollIntent(null, function() {
+                        toolEl.outerHTML = renderToolBlock(matched);
+                      });
+                    } else {
+                      scheduleBlockRender();
+                    }
+                  } else {
+                    scheduleBlockRender();
+                  }
+                }
+              }
               break;
 
             case 'ordinex:exportComplete':
@@ -232,6 +609,14 @@ export function getMessageHandlerJs(): string {
                 undoable_group_ids: message.undoable_group_ids || [],
                 top_undoable_group_id: message.top_undoable_group_id || null,
               };
+              break;
+
+            // A9: Onboarding flow trigger from extension
+            case 'ordinex:showOnboarding':
+              console.log('[A9] Received showOnboarding message');
+              if (typeof checkOnboarding === 'function') {
+                checkOnboarding(true);
+              }
               break;
 
             default:

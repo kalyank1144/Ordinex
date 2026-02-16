@@ -47,6 +47,20 @@ export interface LLMClient {
     messages: ConversationMessage[];
     tools?: ToolSchema[];
   }): Promise<LLMClientResponse>;
+
+  /**
+   * Streaming variant of createMessage (A6).
+   * Calls onDelta for each text chunk, then returns the full response.
+   * Optional — callers fall back to createMessage when absent.
+   */
+  createMessageStream?(params: {
+    model: string;
+    max_tokens: number;
+    system?: string;
+    messages: ConversationMessage[];
+    tools?: ToolSchema[];
+    onDelta: (delta: string) => void;
+  }): Promise<LLMClientResponse>;
 }
 
 export interface LLMClientResponse {
@@ -61,9 +75,9 @@ export interface LLMClientResponse {
 
 /** Configuration for the agentic loop */
 export interface AgenticLoopConfig {
-  /** Maximum number of tool-use iterations before stopping (default 25) */
+  /** Maximum number of tool-use iterations before stopping (default 50) */
   maxIterations: number;
-  /** Maximum total tokens to accumulate before stopping (default 200_000) */
+  /** Maximum total tokens to accumulate before stopping (default 800_000) */
   maxTotalTokens: number;
   /** Which tools to expose (default: ALL_TOOLS) */
   tools?: ToolSchema[];
@@ -72,8 +86,8 @@ export interface AgenticLoopConfig {
 }
 
 const DEFAULT_CONFIG: AgenticLoopConfig = {
-  maxIterations: 25,
-  maxTotalTokens: 200_000,
+  maxIterations: 50,
+  maxTotalTokens: 800_000,
 };
 
 /** Result of running the agentic loop to completion */
@@ -139,6 +153,8 @@ export class AgenticLoop {
     model: string;
     maxTokens?: number;
     onText?: (text: string) => void;
+    /** A6: Called for each streaming text delta (token-by-token). */
+    onStreamDelta?: (delta: string, iteration: number) => void;
     /** Optional async token counter for accurate context validation */
     tokenCounter?: TokenCounter;
   }): Promise<AgenticLoopResult> {
@@ -150,6 +166,7 @@ export class AgenticLoop {
       model: userModel,
       maxTokens = 4096,
       onText,
+      onStreamDelta,
       tokenCounter,
     } = params;
 
@@ -210,16 +227,47 @@ export class AgenticLoop {
       });
 
       let response: LLMClientResponse;
+      const useStreaming = !!onStreamDelta && typeof llmClient.createMessageStream === 'function';
       try {
-        response = await llmClient.createMessage({
-          model: actualModel,
-          max_tokens: maxTokens,
-          system: systemPrompt,
-          messages: history.toApiMessages(),
-          tools: tools.length > 0 ? tools : undefined,
-        });
+        if (useStreaming) {
+          // A6: Stream token-by-token, emitting stream_delta events
+          response = await llmClient.createMessageStream!({
+            model: actualModel,
+            max_tokens: maxTokens,
+            system: systemPrompt,
+            messages: history.toApiMessages(),
+            tools: tools.length > 0 ? tools : undefined,
+            onDelta: (delta: string) => {
+              onStreamDelta!(delta, i + 1);
+              // Emit stream_delta event for each chunk
+              this.eventBus.publish({
+                event_id: this.generateId(),
+                task_id: this.taskId,
+                timestamp: new Date().toISOString(),
+                type: 'stream_delta',
+                mode: this.mode,
+                stage: 'edit' as Stage,
+                payload: { delta, iteration: i + 1 },
+                evidence_ids: [],
+                parent_event_id: loopEventId,
+              });
+            },
+          });
+        } else {
+          response = await llmClient.createMessage({
+            model: actualModel,
+            max_tokens: maxTokens,
+            system: systemPrompt,
+            messages: history.toApiMessages(),
+            tools: tools.length > 0 ? tools : undefined,
+          });
+        }
       } catch (err) {
         const errMsg = err instanceof Error ? err.message : String(err);
+        console.error(`[AgenticLoop] LLM call failed on iteration ${i + 1}:`, errMsg);
+        if (err instanceof Error && err.stack) {
+          console.error('[AgenticLoop] Stack:', err.stack.substring(0, 500));
+        }
         await this.emitToolEnd(loopEventId, false, { error: errMsg });
         result.stopReason = 'error';
         result.error = errMsg;

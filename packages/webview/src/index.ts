@@ -19,6 +19,7 @@ import { getMissionActionsJs } from './webviewJs/missionActions';
 import { getSendStopBtnJs } from './webviewJs/sendStopBtn';
 import { getAttachmentsJs } from './webviewJs/attachments';
 import { getScaffoldListenersJs } from './webviewJs/scaffoldListeners';
+import { getOnboardingJs } from './webviewJs/onboarding';
 import { getInitJs } from './webviewJs/init';
 
 // ===== CSS Loader =====
@@ -36,6 +37,7 @@ const CSS_FILES = [
   'clarification.css',
   'responsive.css',
   'missionControlBar.css',
+  'onboarding.css',
 ];
 
 let cssCache: string | null = null;
@@ -96,6 +98,46 @@ export function getWebviewContent(): string {
   <style>
 ${css}
   </style>
+  <script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
+  <script>
+    document.addEventListener('DOMContentLoaded', function() {
+      if (typeof mermaid !== 'undefined') {
+        mermaid.initialize({
+          startOnLoad: false,
+          theme: 'dark',
+          themeVariables: {
+            primaryColor: '#6c5ce7',
+            primaryTextColor: '#cdd6f4',
+            primaryBorderColor: '#6c5ce7',
+            lineColor: '#585b70',
+            secondaryColor: '#313244',
+            tertiaryColor: '#1e1e2e',
+            background: '#1e1e2e',
+            mainBkg: '#313244',
+            nodeBorder: '#585b70',
+            clusterBkg: '#1e1e2e',
+            clusterBorder: '#585b70',
+            titleColor: '#cdd6f4',
+            edgeLabelBackground: '#1e1e2e'
+          },
+          flowchart: { curve: 'basis', padding: 15 },
+          securityLevel: 'loose',
+          fontFamily: 'var(--vscode-font-family, sans-serif)'
+        });
+      }
+    });
+    window.renderMermaidDiagrams = function() {
+      if (typeof mermaid === 'undefined') return;
+      var els = document.querySelectorAll('.mermaid-pending');
+      els.forEach(function(el) {
+        el.classList.remove('mermaid-pending');
+        el.classList.add('mermaid');
+      });
+      if (els.length > 0) {
+        try { mermaid.run({ nodes: els }); } catch(e) { console.warn('Mermaid render error:', e); }
+      }
+    };
+  </script>
   ${scaffoldCardScript ? `<script>${scaffoldCardScript}</script>` : ''}
 </head>
 <body>
@@ -238,6 +280,7 @@ ${css}
       ${getSendStopBtnJs()}
       ${getAttachmentsJs()}
       ${getScaffoldListenersJs()}
+      ${getOnboardingJs()}
       ${getInitJs()}
     })();
   </script>

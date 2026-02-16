@@ -376,7 +376,21 @@ export async function generateAndEmitPlan(
     },
     workspaceRoot,
     openFiles,
+    // A6: Stream plan generation deltas to webview for live "thinking" updates
+    (delta: string) => {
+      webview.postMessage({
+        type: 'ordinex:planStreamDelta',
+        task_id: taskId,
+        delta,
+      });
+    },
   );
+
+  // A6: Signal plan stream completion to webview
+  webview.postMessage({
+    type: 'ordinex:planStreamComplete',
+    task_id: taskId,
+  });
 
   // Emit tool_end for llm_plan
   await ctx.emitEvent({
@@ -764,8 +778,8 @@ export async function handleResolvePlanApproval(
         // Build plan text for analysis
         const planText = buildPlanTextForAnalysis(plan.goal || '', stepsForAnalysis);
 
-        // Detect if plan is large
-        const detection = detectLargePlan(stepsForAnalysis, planText, {});
+        // Detect if plan is large (repoSignals omitted — uses defaults)
+        const detection = detectLargePlan(stepsForAnalysis, planText, undefined, plan.planMeta);
 
         console.log('[handleResolvePlanApproval] Large plan detection:', {
           largePlan: detection.largePlan,
@@ -901,6 +915,110 @@ export async function handleResolvePlanApproval(
   } catch (error) {
     console.error('Error handling resolvePlanApproval:', error);
     vscode.window.showErrorMessage(`Failed to resolve plan approval: ${error}`);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// handleApprovePlanAndExecute — one-click approve + start mission
+// ---------------------------------------------------------------------------
+
+export async function handleApprovePlanAndExecute(
+  ctx: IProvider,
+  message: any,
+  webview: vscode.Webview,
+): Promise<void> {
+  const { task_id, plan_id } = message;
+
+  if (!task_id || !plan_id) {
+    console.error('Missing required fields in approvePlanAndExecute');
+    return;
+  }
+
+  try {
+    const events = ctx.eventStore?.getEventsByTaskId(task_id) || [];
+    const planEvent = events.find((e: Event) => e.event_id === plan_id);
+
+    if (!planEvent || (planEvent.type !== 'plan_created' && planEvent.type !== 'plan_revised')) {
+      console.error('Plan event not found:', plan_id);
+      return;
+    }
+
+    // Idempotent: check if plan is already approved
+    const alreadyApproved = events.some(
+      (e: Event) =>
+        e.type === 'approval_resolved' &&
+        e.payload.decision === 'approved' &&
+        events.some(
+          (req: Event) =>
+            req.type === 'approval_requested' &&
+            req.payload.approval_id === e.payload.approval_id &&
+            req.payload.approval_type === 'plan_approval' &&
+            req.payload.details &&
+            (req.payload.details as any).plan_id === plan_id,
+        ),
+    );
+
+    if (alreadyApproved) {
+      console.log('Plan already approved, skipping');
+      return;
+    }
+
+    const approvalId = ctx.generateId();
+
+    // 1. Emit approval_requested (audit trail)
+    await ctx.emitEvent({
+      event_id: ctx.generateId(),
+      task_id,
+      timestamp: new Date().toISOString(),
+      type: 'approval_requested',
+      mode: ctx.currentMode,
+      stage: ctx.currentStage,
+      payload: {
+        approval_id: approvalId,
+        approval_type: 'plan_approval',
+        description: 'Approve plan to start mission',
+        details: { plan_id },
+        risk_level: 'low',
+      },
+      evidence_ids: [],
+      parent_event_id: plan_id,
+    });
+
+    // 2. Immediately emit approval_resolved (auto-approve)
+    await ctx.emitEvent({
+      event_id: ctx.generateId(),
+      task_id,
+      timestamp: new Date().toISOString(),
+      type: 'approval_resolved',
+      mode: ctx.currentMode,
+      stage: ctx.currentStage,
+      payload: {
+        approval_id: approvalId,
+        decision: 'approved',
+        approved: true,
+        decided_at: new Date().toISOString(),
+      },
+      evidence_ids: [],
+      parent_event_id: null,
+    });
+
+    // 3. Switch to MISSION mode
+    await ctx.setModeWithEvent('MISSION', task_id, {
+      reason: 'Plan approved - switching to MISSION mode',
+      user_initiated: true,
+    });
+
+    // 4. Send events so UI updates before execution starts
+    await ctx.sendEventsToWebview(webview, task_id);
+
+    console.log('Plan approved (one-click), starting execution...');
+
+    // 5. Start execution directly (import from missionHandler)
+    const { handleExecutePlan } = await import('./missionHandler');
+    await handleExecutePlan(ctx, { taskId: task_id }, webview);
+  } catch (error) {
+    console.error('Error in approvePlanAndExecute:', error);
+    vscode.window.showErrorMessage(`Failed to approve and execute plan: ${error}`);
   }
 }
 

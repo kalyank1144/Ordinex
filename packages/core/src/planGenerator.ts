@@ -40,8 +40,23 @@ export interface StructuredPlan {
     step_id: string;
     description: string;
     expected_evidence: string[];
+    /** Optional: category tag for visual grouping (e.g. "setup", "core", "testing", "deploy") */
+    category?: string;
   }>;
   risks: string[];
+
+  /**
+   * Rich markdown overview of the plan.
+   * Can include headers, lists, code blocks, and mermaid diagrams.
+   * Displayed above the step list for context and architecture notes.
+   */
+  overview?: string;
+
+  /**
+   * Optional mermaid diagram source (e.g. flowchart, sequence diagram).
+   * Rendered visually in the plan card when present.
+   */
+  architecture_diagram?: string;
   
   /**
    * Advisory metadata for Step 26 large plan detection.
@@ -81,7 +96,9 @@ export async function generateLLMPlan(
   eventBus: EventBus,
   llmConfig: LLMConfig,
   workspaceRoot: string,
-  openFiles?: Array<{ path: string; content?: string }>
+  openFiles?: Array<{ path: string; content?: string }>,
+  /** A6: Optional callback for streaming text deltas to the UI */
+  onStreamDelta?: (delta: string) => void,
 ): Promise<StructuredPlan> {
   // Collect project context
   const contextBundle = await collectPlanContext({
@@ -134,6 +151,8 @@ export async function generateLLMPlan(
     (chunk) => {
       if (!chunk.done) {
         fullResponse += chunk.delta;
+        // A6: Forward streaming delta to caller for live UI updates
+        onStreamDelta?.(chunk.delta);
       }
     }
   );
@@ -157,11 +176,26 @@ export async function generateLLMPlan(
     plan.assumptions = plan.assumptions || [];
     plan.success_criteria = plan.success_criteria || [];
     plan.risks = plan.risks || [];
+    plan.overview = plan.overview || '';
+    plan.architecture_diagram = plan.architecture_diagram || '';
     plan.scope_contract = plan.scope_contract || {
       max_files: 10,
       max_lines: 1000,
       allowed_tools: ['read']
     };
+
+    // Ensure every step has a step_id and category (LLM may use "id" instead of "step_id")
+    plan.steps.forEach((step: any, i: number) => {
+      if (!step.step_id && step.id) {
+        step.step_id = step.id;
+      }
+      if (!step.step_id) {
+        step.step_id = `step_${i + 1}`;
+      }
+      if (!step.category) {
+        step.category = 'core';
+      }
+    });
 
     // Validate plan is project-specific (not generic) - for debugging only
     const validation = validatePlanSpecificity(plan, contextBundle);
@@ -481,11 +515,19 @@ Please revise the plan based on the refinement request. Return a complete update
     revisedPlan.assumptions = revisedPlan.assumptions || [];
     revisedPlan.success_criteria = revisedPlan.success_criteria || [];
     revisedPlan.risks = revisedPlan.risks || [];
+    revisedPlan.overview = revisedPlan.overview || '';
+    revisedPlan.architecture_diagram = revisedPlan.architecture_diagram || '';
     revisedPlan.scope_contract = revisedPlan.scope_contract || {
       max_files: 10,
       max_lines: 1000,
       allowed_tools: ['read']
     };
+
+    // Ensure step_ids and categories are set
+    revisedPlan.steps.forEach((step, i) => {
+      if (!step.step_id) step.step_id = `step_${i + 1}`;
+      if (!step.category) step.category = 'core';
+    });
 
     return revisedPlan;
   } catch (error) {

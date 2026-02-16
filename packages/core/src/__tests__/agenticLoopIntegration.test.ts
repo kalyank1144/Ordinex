@@ -15,6 +15,7 @@ import {
   canContinue,
   maxTotalIterations,
   isIterationBudgetExhausted,
+  isTokenBudgetExhausted,
   remainingContinues,
   updateSessionAfterRun,
   incrementContinue,
@@ -218,55 +219,61 @@ describe('LoopSessionState', () => {
       session_id: 'sess-1',
       task_id: 'task-1',
       step_id: 'step-1',
-      max_continues: 3,
       max_iterations_per_run: 10,
+      max_total_iterations: 40,
     });
   });
 
   describe('createLoopSession', () => {
-    it('should create with defaults', () => {
+    it('should create with specified values', () => {
       expect(session.session_id).toBe('sess-1');
       expect(session.task_id).toBe('task-1');
       expect(session.step_id).toBe('step-1');
       expect(session.iteration_count).toBe(0);
       expect(session.continue_count).toBe(0);
-      expect(session.max_continues).toBe(3);
       expect(session.max_iterations_per_run).toBe(10);
+      expect(session.max_total_iterations).toBe(40);
       expect(session.stop_reason).toBeNull();
       expect(session.staged_snapshot).toBeNull();
       expect(session.conversation_snapshot).toBeNull();
     });
 
-    it('should use default max_continues if not specified', () => {
+    it('should use defaults if not specified', () => {
       const s = createLoopSession({
         session_id: 's',
         task_id: 't',
         step_id: 'st',
       });
-      expect(s.max_continues).toBe(3);
-      expect(s.max_iterations_per_run).toBe(10);
+      expect(s.max_continues).toBe(10);
+      expect(s.max_iterations_per_run).toBe(50);
+      expect(s.max_total_iterations).toBe(200);
+      expect(s.max_total_tokens).toBe(4_000_000);
     });
   });
 
   describe('canContinue', () => {
-    it('should return true when continues remain', () => {
+    it('should return true when under hard iteration ceiling', () => {
       expect(canContinue(session)).toBe(true);
     });
 
-    it('should return false at max continues', () => {
-      session.continue_count = 3;
+    it('should return false at hard iteration ceiling', () => {
+      session.iteration_count = 40;
       expect(canContinue(session)).toBe(false);
     });
 
-    it('should return false when over max continues', () => {
-      session.continue_count = 5;
+    it('should return false when over hard iteration ceiling', () => {
+      session.iteration_count = 50;
+      expect(canContinue(session)).toBe(false);
+    });
+
+    it('should return false when token budget exhausted', () => {
+      session.total_tokens = { input: 3_000_000, output: 1_500_000 };
       expect(canContinue(session)).toBe(false);
     });
   });
 
   describe('maxTotalIterations', () => {
-    it('should compute max total iterations', () => {
-      // (3 + 1) * 10 = 40
+    it('should return max_total_iterations (hard ceiling)', () => {
       expect(maxTotalIterations(session)).toBe(40);
     });
   });
@@ -283,15 +290,34 @@ describe('LoopSessionState', () => {
     });
   });
 
+  describe('isTokenBudgetExhausted', () => {
+    it('should return false when under budget', () => {
+      session.total_tokens = { input: 100_000, output: 50_000 };
+      expect(isTokenBudgetExhausted(session)).toBe(false);
+    });
+
+    it('should return true when at budget', () => {
+      session.total_tokens = { input: 3_000_000, output: 1_000_000 };
+      expect(isTokenBudgetExhausted(session)).toBe(true);
+    });
+
+    it('should return true when over budget', () => {
+      session.total_tokens = { input: 5_000_000, output: 1_000_000 };
+      expect(isTokenBudgetExhausted(session)).toBe(true);
+    });
+  });
+
   describe('remainingContinues', () => {
-    it('should return correct remaining', () => {
-      expect(remainingContinues(session)).toBe(3);
-      session.continue_count = 2;
+    it('should return correct remaining based on iterations left', () => {
+      // 40 total iterations, 10 per run, 0 used = ceil(40/10) = 4
+      expect(remainingContinues(session)).toBe(4);
+      session.iteration_count = 30;
+      // 10 remaining / 10 per run = 1
       expect(remainingContinues(session)).toBe(1);
     });
 
     it('should not go below zero', () => {
-      session.continue_count = 5;
+      session.iteration_count = 50;
       expect(remainingContinues(session)).toBe(0);
     });
   });
@@ -374,6 +400,8 @@ describe('LoopSessionState', () => {
       expect(payload.reason).toBe('max_iterations');
       expect(payload.iteration_count).toBe(10);
       expect(payload.can_continue).toBe(true);
+      expect(payload.max_total_iterations).toBe(40);
+      // remaining: ceil((40-10)/10) = 3
       expect(payload.remaining_continues).toBe(3);
       expect(payload.staged_files).toEqual(summary);
       expect(payload.staged_files_count).toBe(2);

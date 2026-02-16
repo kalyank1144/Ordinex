@@ -1,4 +1,4 @@
-# ORDINEX
+  # ORDINEX
 ## Next-Generation AI Coding Platform - VS Code Extension
 
 ## COMPLETE IMPLEMENTATION GUIDE

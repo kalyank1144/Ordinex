@@ -46,6 +46,8 @@ import {
   updateSessionAfterRun,
   incrementContinue,
   canContinue,
+  isIterationBudgetExhausted,
+  isTokenBudgetExhausted,
   buildLoopPausedPayload,
   LoopPauseReason,
 } from './loopSessionState';
@@ -107,6 +109,8 @@ export class MissionExecutor {
   private activeStagedBuffers: Map<string, StagedEditBuffer> = new Map();
   /** Active conversation histories keyed by step_id (for Continue) */
   private activeConversationHistories: Map<string, ConversationHistory> = new Map();
+  /** A6: Optional callback for streaming text deltas to the UI during edit steps */
+  public onStreamDelta: ((delta: string, stepId: string, iteration: number) => void) | null = null;
 
   constructor(
     taskId: string,
@@ -253,18 +257,18 @@ export class MissionExecutor {
       const step = plan.steps[this.executionState.currentStepIndex];
       const result = await this.executeStep(step, this.executionState.currentStepIndex);
 
-      if (!result.success) {
-        // Step failed - executeStep() already emitted failure_detected and step_failed
-        // Just stop execution here, don't emit duplicate failure events
-        console.log('[MissionExecutor] Step failed, stopping execution:', result.error);
+      if (result.shouldPause) {
+        // Step requested pause (e.g., loop paused for user action: Continue/Approve/Discard)
+        // The step is NOT failed — it's waiting for user decision
+        console.log('[MissionExecutor] Step paused, waiting for user action:', result.pauseReason);
         this.executionState.isPaused = true;
         return;
       }
 
-      if (result.shouldPause) {
-        // Step requested pause (e.g., waiting for approval)
-        // executeStep() already emitted execution_paused in this case
-        console.log('[MissionExecutor] Step requested pause:', result.pauseReason);
+      if (!result.success) {
+        // Step failed - executeStep() already emitted failure_detected and step_failed
+        // Just stop execution here, don't emit duplicate failure events
+        console.log('[MissionExecutor] Step failed, stopping execution:', result.error);
         this.executionState.isPaused = true;
         return;
       }
@@ -368,15 +372,19 @@ export class MissionExecutor {
       } else {
         // PHASE 3: Emit failure_detected for stage failures (not already emitted)
         // Check if stage already emitted failure (indicated by pauseReason)
-        const alreadyEmittedFailure = stageResult.pauseReason && [
-          'no_files_selected',
-          'llm_cannot_edit',
-          'invalid_diff_format',
-          'empty_diff',
-          'stale_context',
-          'diff_rejected',
-          'edit_step_error',
-        ].includes(stageResult.pauseReason);
+        const alreadyEmittedFailure = stageResult.pauseReason && (
+          [
+            'no_files_selected',
+            'llm_cannot_edit',
+            'invalid_diff_format',
+            'empty_diff',
+            'stale_context',
+            'diff_rejected',
+            'edit_step_error',
+          ].includes(stageResult.pauseReason) ||
+          // loop_paused events already have their own card — don't duplicate with failure_detected
+          stageResult.pauseReason.startsWith('loop_paused:')
+        );
 
         if (!alreadyEmittedFailure) {
           // Generic failure - emit failure_detected here with detailed error
@@ -408,24 +416,28 @@ export class MissionExecutor {
           });
         }
 
-        // Emit step_failed to clearly terminate step
-        await this.emitEvent({
-          event_id: randomUUID(),
-          task_id: this.taskId,
-          timestamp: new Date().toISOString(),
-          type: 'step_failed',
-          mode: this.mode,
-          stage,
-          payload: {
-            step_id: stepId,
-            step_index: stepIndex,
-            success: false,
-            reason: stageResult.pauseReason || 'execution_failed',
-            error: stageResult.error,
-          },
-          evidence_ids: [],
-          parent_event_id: null,
-        });
+        // Only emit step_failed if this is a real failure, not a pause-waiting scenario
+        // When shouldPause is true, the loop is paused for user action (Continue/Approve/Discard)
+        // — the step is NOT failed, it's waiting
+        if (!stageResult.shouldPause) {
+          await this.emitEvent({
+            event_id: randomUUID(),
+            task_id: this.taskId,
+            timestamp: new Date().toISOString(),
+            type: 'step_failed',
+            mode: this.mode,
+            stage,
+            payload: {
+              step_id: stepId,
+              step_index: stepIndex,
+              success: false,
+              reason: stageResult.pauseReason || 'execution_failed',
+              error: stageResult.error,
+            },
+            evidence_ids: [],
+            parent_event_id: null,
+          });
+        }
       }
 
       return stageResult;
@@ -1405,13 +1417,13 @@ export class MissionExecutor {
     const isResume = !!session;
 
     if (!session) {
-      // Fresh loop — create new session
+      // Fresh loop — create new session with generous limits
       session = createLoopSession({
         session_id: randomUUID(),
         task_id: this.taskId,
         step_id: stepId,
-        max_continues: 3,
-        max_iterations_per_run: 10,
+        max_iterations_per_run: 50,
+        max_total_iterations: 200,
       });
     }
 
@@ -1453,7 +1465,7 @@ export class MissionExecutor {
         'for review before being applied to disk.'
       );
     } else {
-      // On Continue, add a message telling the LLM to keep going
+      // On auto-continue, add a message telling the LLM to keep going
       history.addUserMessage(
         'Continue working on the task. Review the changes you\'ve already staged ' +
         'and make any additional edits needed to complete the step.'
@@ -1461,9 +1473,13 @@ export class MissionExecutor {
     }
 
     // Create and run the AgenticLoop
+    // Token budget is cumulative (input + output summed across ALL iterations).
+    // With Sonnet 4's 200K context window, each call sends ~12-15K input tokens,
+    // so 50 iterations can easily reach 600K+ cumulative. Set to 800K to avoid
+    // premature budget exhaustion while still providing a safety ceiling.
     const loop = new AgenticLoop(this.eventBus, this.taskId, this.mode, {
       maxIterations: session.max_iterations_per_run,
-      maxTotalTokens: 200_000,
+      maxTotalTokens: 800_000,
     });
 
     let loopResult: AgenticLoopResult;
@@ -1475,6 +1491,10 @@ export class MissionExecutor {
         systemPrompt,
         model: this.llmConfig.model,
         maxTokens: this.llmConfig.maxTokens || 4096,
+        // A6: Forward streaming deltas to extension → webview
+        onStreamDelta: this.onStreamDelta
+          ? (delta: string, iteration: number) => this.onStreamDelta!(delta, stepId, iteration)
+          : undefined,
         tokenCounter: this.tokenCounter ?? undefined,
       });
     } catch (err) {
@@ -1502,7 +1522,7 @@ export class MissionExecutor {
           ? 'max_tokens'
           : 'error';
 
-    // Update session with results
+    // Update session with results (including error message if present)
     session = updateSessionAfterRun(session, {
       iterations: loopResult.iterations,
       totalTokens: loopResult.totalTokens,
@@ -1511,45 +1531,132 @@ export class MissionExecutor {
       toolCallsCount: loopResult.toolCalls.length,
       stagedSnapshot: buffer.toSnapshot(),
       conversationSnapshot: history.toJSON(),
+      errorMessage: loopResult.error,
     });
     this.activeLoopSessions.set(stepId, session);
 
     console.log(`[MissionExecutor] AgenticLoop completed: ${loopResult.iterations} iterations, ` +
       `${loopResult.toolCalls.length} tool calls, stop_reason=${loopResult.stopReason}, ` +
-      `staged_files=${buffer.size}`);
+      `staged_files=${buffer.size}, total_iterations=${session.iteration_count}/${session.max_total_iterations}` +
+      (loopResult.error ? `, error=${loopResult.error}` : ''));
 
     // If the loop ended with end_turn and has staged changes, auto-proceed to approval
     if (loopResult.stopReason === 'end_turn' && buffer.size > 0) {
       return this.approveAndApplyStagedEdits(step, session, buffer);
     }
 
-    // If the loop ended with end_turn but no changes, treat as successful examination
+    // If the loop ended with end_turn but no changes on an edit step:
+    // Retry once with a nudge, then pause for user decision
     if (loopResult.stopReason === 'end_turn' && buffer.size === 0) {
-      console.log('[MissionExecutor] AgenticLoop ended with no staged changes — examination step');
-      this.cleanupLoopState(stepId);
+      // Check if we already retried (avoid infinite nudge loop)
+      const alreadyNudged = session.continue_count > 0;
+
+      if (!alreadyNudged) {
+        console.log('[MissionExecutor] AgenticLoop ended with no staged changes — nudging to implement');
+
+        // Add a nudge message and re-run the loop once
+        history.addUserMessage(
+          'You have not made any file changes yet. This is an implementation step — ' +
+          'you MUST use edit_file or write_file to make the required code changes. ' +
+          'Please implement the changes described in the step now.'
+        );
+
+        // Increment continue count so we don't nudge again
+        session = incrementContinue(session);
+        this.activeLoopSessions.set(stepId, session);
+
+        // Re-run the loop
+        return this.executeEditStepWithLoop(step);
+      }
+
+      // Already nudged and still no changes — pause for user decision
+      console.log('[MissionExecutor] AgenticLoop still produced no changes after nudge — pausing');
+
+      const loopPausedPayload = buildLoopPausedPayload(session, []);
+      (loopPausedPayload as Record<string, unknown>).reason = 'no_changes_made';
+      (loopPausedPayload as Record<string, unknown>).final_text = loopResult.finalText;
 
       await this.emitEvent({
         event_id: randomUUID(),
         task_id: this.taskId,
         timestamp: new Date().toISOString(),
-        type: 'loop_completed',
+        type: 'loop_paused',
         mode: this.mode,
         stage: 'edit',
-        payload: {
-          session_id: session.session_id,
-          step_id: stepId,
-          result: 'no_changes',
-          iterations: session.iteration_count,
-          tool_calls: session.tool_calls_count,
-        },
+        payload: loopPausedPayload,
         evidence_ids: [],
         parent_event_id: null,
       });
 
-      return { success: true, stage: 'edit' };
+      return {
+        success: false,
+        stage: 'edit',
+        shouldPause: true,
+        pauseReason: 'loop_paused:no_changes_made',
+      };
     }
 
-    // Loop hit max_iterations or max_tokens or error — emit loop_paused
+    // ===== AUTO-CONTINUE ON max_iterations OR max_tokens =====
+    // Like Cursor/Claude Code: silently continue the loop as long as
+    // we haven't hit the hard safety ceilings. The agent should run
+    // until natural completion (end_turn) or a genuine error.
+    if (loopResult.stopReason === 'max_iterations' || loopResult.stopReason === 'max_tokens') {
+      const totalTokensUsed = session.total_tokens.input + session.total_tokens.output;
+      const hitHardCeiling = isIterationBudgetExhausted(session) || isTokenBudgetExhausted(session);
+
+      if (hitHardCeiling) {
+        // Hard safety ceiling reached — NOW pause for user
+        const ceilingReason = isIterationBudgetExhausted(session)
+          ? `iteration ceiling (${session.iteration_count}/${session.max_total_iterations})`
+          : `token ceiling (${Math.round(totalTokensUsed / 1000)}K/${Math.round(session.max_total_tokens / 1000)}K)`;
+        console.log(`[MissionExecutor] Hard ${ceilingReason} reached — pausing`);
+
+        // If we have staged changes and hit the ceiling, auto-apply them
+        // (the agent was clearly working and producing output)
+        if (buffer.size > 0) {
+          console.log(`[MissionExecutor] Hard limit reached with ${buffer.size} staged files — auto-applying`);
+          return this.approveAndApplyStagedEdits(step, session, buffer);
+        }
+
+        const stagedSummary = buffer.toSummary();
+        const loopPausedPayload = buildLoopPausedPayload(session, stagedSummary);
+        (loopPausedPayload as Record<string, unknown>).reason = 'hard_limit';
+
+        await this.emitEvent({
+          event_id: randomUUID(),
+          task_id: this.taskId,
+          timestamp: new Date().toISOString(),
+          type: 'loop_paused',
+          mode: this.mode,
+          stage: 'edit',
+          payload: loopPausedPayload,
+          evidence_ids: [],
+          parent_event_id: null,
+        });
+
+        return {
+          success: false,
+          stage: 'edit',
+          shouldPause: true,
+          pauseReason: 'loop_paused:hard_limit',
+        };
+      }
+
+      // Still have budget — auto-continue silently
+      const reason = loopResult.stopReason === 'max_iterations' ? 'max_iterations' : 'max_tokens';
+      console.log(`[MissionExecutor] Auto-continuing after ${reason} ` +
+        `(iterations: ${session.iteration_count}/${session.max_total_iterations}, ` +
+        `tokens: ${Math.round(totalTokensUsed / 1000)}K/${Math.round(session.max_total_tokens / 1000)}K)`);
+
+      session = incrementContinue(session);
+      this.activeLoopSessions.set(stepId, session);
+
+      // Re-run the loop (picks up existing session/buffer/history)
+      // Each new AgenticLoop run starts with fresh per-run token counting
+      return this.executeEditStepWithLoop(step);
+    }
+
+    // Only 'error' reaches here — emit loop_paused for user action
     const stagedSummary = buffer.toSummary();
     const loopPausedPayload = buildLoopPausedPayload(session, stagedSummary);
 
@@ -1857,6 +1964,7 @@ export class MissionExecutor {
 
   /**
    * Continue a paused loop session (called from extension handler).
+   * Now only triggered when user hits Continue after a hard_limit or error pause.
    */
   async continueLoop(stepId: string, step: StructuredPlan['steps'][0]): Promise<StepExecutionResult> {
     const session = this.activeLoopSessions.get(stepId);
@@ -1865,16 +1973,6 @@ export class MissionExecutor {
         success: false,
         stage: 'edit',
         error: `No active loop session for step ${stepId}`,
-      };
-    }
-
-    if (!canContinue(session)) {
-      return {
-        success: false,
-        stage: 'edit',
-        shouldPause: true,
-        pauseReason: 'max_continues_reached',
-        error: `Maximum continues (${session.max_continues}) reached for step ${stepId}`,
       };
     }
 
@@ -1906,7 +2004,8 @@ export class MissionExecutor {
         session_id: session.session_id,
         step_id: stepId,
         continue_count: updatedSession.continue_count,
-        max_continues: session.max_continues,
+        iteration_count: session.iteration_count,
+        max_total_iterations: session.max_total_iterations,
       },
       evidence_ids: [],
       parent_event_id: null,
@@ -1949,10 +2048,14 @@ export class MissionExecutor {
       `**Step**: ${step.description}`,
       `**Workspace root**: ${this.workspaceRoot}`,
       '',
-      'Use the available tools to:',
+      'CRITICAL: You MUST implement the complete solution for this step.',
+      'Reading and analyzing code is NOT sufficient — you must make actual file changes.',
+      '',
+      'Process:',
       '1. Read relevant files to understand the current code',
-      '2. Make targeted edits using edit_file (preferred) or write_file',
-      '3. Use search_files and list_directory to explore the codebase',
+      '2. Identify what needs to change',
+      '3. Make the necessary changes using edit_file (preferred) or write_file',
+      '4. Verify your changes by reading the modified files if needed',
       '',
       'Important guidelines:',
       '- All write and edit operations are staged (not applied to disk yet)',
@@ -1960,7 +2063,8 @@ export class MissionExecutor {
       '- Prefer edit_file (find & replace) over write_file when modifying existing files',
       '- When creating new files, use write_file with complete content',
       '- Do NOT run commands unless absolutely necessary for this step',
-      '- After making changes, stop and report what you did',
+      '- DO NOT STOP until you have implemented the changes for this step',
+      '- After making ALL changes, report what you did',
     ];
 
     if (isResume) {
@@ -1968,6 +2072,7 @@ export class MissionExecutor {
         '',
         'NOTE: This is a continuation. You already made some staged changes.',
         'Review what you\'ve done and continue from where you left off.',
+        'If the step is not yet complete, make the remaining changes now.',
       );
     }
 

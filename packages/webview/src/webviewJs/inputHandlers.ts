@@ -40,8 +40,9 @@ export function getInputHandlersJs(): string {
         promptInput.value = '';
         autoResizeTextarea();
 
-        // Clear previous streaming answer when starting new task
-        state.streamingAnswer = null;
+        // Note: Don't clear state.streamingAnswer here — completed answers should
+        // persist in the timeline. It will reset when new streaming starts
+        // (streamDelta handler resets when isComplete is true).
 
         // PHASE 4: Upload all pending attachments BEFORE sending prompt
         let attachmentRefs = [];

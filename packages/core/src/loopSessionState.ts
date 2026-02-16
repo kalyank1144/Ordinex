@@ -16,11 +16,12 @@ import type { StagedBufferSnapshot } from './stagedEditBuffer';
 
 /** Reason why the loop paused */
 export type LoopPauseReason =
-  | 'max_iterations'  // Hit per-run iteration limit
-  | 'max_tokens'      // Hit per-run token budget
+  | 'max_iterations'  // Hit per-run iteration limit (auto-continued internally)
+  | 'max_tokens'      // Hit per-run token budget (auto-continued internally)
   | 'end_turn'        // LLM stopped calling tools (thinks it's done)
   | 'error'           // Unrecoverable error during loop
-  | 'user_stop';      // User clicked Stop
+  | 'user_stop'       // User clicked Stop
+  | 'hard_limit';     // Hit absolute safety ceiling (iterations or tokens)
 
 /** Serializable loop session state */
 export interface LoopSession {
@@ -32,12 +33,16 @@ export interface LoopSession {
   step_id: string;
   /** Total iterations across all continues */
   iteration_count: number;
-  /** Number of times user hit Continue */
+  /** Number of times the loop auto-continued (internal, not user-triggered) */
   continue_count: number;
-  /** Max continues allowed per step (default 3) */
+  /** Max continues allowed per step (legacy, kept for compat but not used for gating) */
   max_continues: number;
-  /** Max iterations per run (default 10) */
+  /** Max iterations per single AgenticLoop run (default 50) */
   max_iterations_per_run: number;
+  /** Absolute safety ceiling — total iterations across ALL auto-continues (default 200) */
+  max_total_iterations: number;
+  /** Absolute safety ceiling — total tokens (input + output) across ALL auto-continues (default 4M) */
+  max_total_tokens: number;
   /** Cumulative token usage */
   total_tokens: { input: number; output: number };
   /** Why the loop last paused */
@@ -56,6 +61,8 @@ export interface LoopSession {
   created_at: string;
   /** When session was last updated */
   updated_at: string;
+  /** Error message if stop_reason is 'error' */
+  error_message?: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -69,6 +76,8 @@ export function createLoopSession(params: {
   step_id: string;
   max_continues?: number;
   max_iterations_per_run?: number;
+  max_total_iterations?: number;
+  max_total_tokens?: number;
 }): LoopSession {
   const now = new Date().toISOString();
   return {
@@ -77,8 +86,10 @@ export function createLoopSession(params: {
     step_id: params.step_id,
     iteration_count: 0,
     continue_count: 0,
-    max_continues: params.max_continues ?? 3,
-    max_iterations_per_run: params.max_iterations_per_run ?? 10,
+    max_continues: params.max_continues ?? 10,
+    max_iterations_per_run: params.max_iterations_per_run ?? 50,
+    max_total_iterations: params.max_total_iterations ?? 200,
+    max_total_tokens: params.max_total_tokens ?? 4_000_000,
     total_tokens: { input: 0, output: 0 },
     stop_reason: null,
     final_text: '',
@@ -94,24 +105,31 @@ export function createLoopSession(params: {
 // Pure helpers
 // ---------------------------------------------------------------------------
 
-/** Check if the session can continue (not at max continues) */
+/** Check if the session can auto-continue (not at any hard safety ceiling) */
 export function canContinue(session: LoopSession): boolean {
-  return session.continue_count < session.max_continues;
+  return !isIterationBudgetExhausted(session) && !isTokenBudgetExhausted(session);
 }
 
-/** Get the maximum total iterations (all continues combined) */
+/** Get the maximum total iterations (hard safety ceiling) */
 export function maxTotalIterations(session: LoopSession): number {
-  return (session.max_continues + 1) * session.max_iterations_per_run;
+  return session.max_total_iterations;
 }
 
-/** Check if the session has exhausted its total iteration budget */
+/** Check if the session has exhausted its total iteration budget (hard ceiling) */
 export function isIterationBudgetExhausted(session: LoopSession): boolean {
-  return session.iteration_count >= maxTotalIterations(session);
+  return session.iteration_count >= session.max_total_iterations;
 }
 
-/** Get remaining continues */
+/** Check if the session has exhausted its total token budget (hard ceiling) */
+export function isTokenBudgetExhausted(session: LoopSession): boolean {
+  const totalUsed = session.total_tokens.input + session.total_tokens.output;
+  return totalUsed >= session.max_total_tokens;
+}
+
+/** Get remaining auto-continues before hitting the hard ceiling */
 export function remainingContinues(session: LoopSession): number {
-  return Math.max(0, session.max_continues - session.continue_count);
+  const remainingIterations = Math.max(0, session.max_total_iterations - session.iteration_count);
+  return Math.ceil(remainingIterations / session.max_iterations_per_run);
 }
 
 /** Update session after a loop run completes */
@@ -125,6 +143,7 @@ export function updateSessionAfterRun(
     toolCallsCount: number;
     stagedSnapshot: StagedBufferSnapshot | null;
     conversationSnapshot: { messages: Array<{ role: 'user' | 'assistant'; content: unknown }> } | null;
+    errorMessage?: string;
   },
 ): LoopSession {
   return {
@@ -139,6 +158,7 @@ export function updateSessionAfterRun(
     tool_calls_count: session.tool_calls_count + result.toolCallsCount,
     staged_snapshot: result.stagedSnapshot,
     conversation_snapshot: result.conversationSnapshot,
+    error_message: result.errorMessage,
     updated_at: new Date().toISOString(),
   };
 }
@@ -155,13 +175,14 @@ export function incrementContinue(session: LoopSession): LoopSession {
 
 /** Build the loop_paused event payload from a session */
 export function buildLoopPausedPayload(session: LoopSession, stagedSummary: Array<{ path: string; action: string; edit_count: number }>): Record<string, unknown> {
-  return {
+  const payload: Record<string, unknown> = {
     session_id: session.session_id,
     step_id: session.step_id,
     reason: session.stop_reason,
     iteration_count: session.iteration_count,
     continue_count: session.continue_count,
     max_continues: session.max_continues,
+    max_total_iterations: session.max_total_iterations,
     can_continue: canContinue(session),
     remaining_continues: remainingContinues(session),
     staged_files: stagedSummary,
@@ -170,4 +191,8 @@ export function buildLoopPausedPayload(session: LoopSession, stagedSummary: Arra
     final_text: session.final_text,
     tool_calls_count: session.tool_calls_count,
   };
+  if (session.error_message) {
+    payload.error_message = session.error_message;
+  }
+  return payload;
 }

@@ -47,6 +47,18 @@ export function getStateJs(): string {
         expandedEvents: new Set(),
         selectedModel: 'claude-3-haiku',
         streamingAnswer: null,
+        // A6: Streaming state for PLAN mode (thinking bubble while generating plan)
+        streamingPlan: null,
+        // A6: Streaming state for MISSION edit step (sequential blocks model)
+        streamingMission: null,
+        // Streaming perf/autoscroll state
+        _missionRafPending: false,
+        _missionDeltaCount: 0,
+        _missionLastParsedText: '',
+        _missionLastParsedHtml: '',
+        _missionUserPinnedScroll: false,
+        // Completed streaming blocks history (persisted across step transitions)
+        _completedMissionBlocks: [],
         counters: {
           filesInScope: 0,
           filesTouched: 0,

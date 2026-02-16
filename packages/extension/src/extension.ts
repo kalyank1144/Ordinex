@@ -40,6 +40,7 @@ import type { PreflightChecksInput, PreflightOrchestratorCtx, VerifyRecipeInfo, 
 import type { EnrichedInput, EditorContext, DiagnosticEntry } from 'core';
 import type { SolutionCaptureContext } from 'core';
 import type { ActiveTaskMetadata } from 'core';
+import type { StagedEditBuffer } from 'core';
 import { FsMemoryService } from './fsMemoryService';
 import { FsToolRegistryService } from './fsToolRegistryService';
 import { FsTaskPersistenceService } from './fsTaskPersistenceService';
@@ -61,6 +62,7 @@ import {
 import {
   handlePlanMode,
   handleExportRun,
+  handleApprovePlanAndExecute,
   handleRequestPlanApproval,
   handleResolvePlanApproval,
   handleRefinePlan,
@@ -555,6 +557,23 @@ class MissionControlViewProvider implements vscode.WebviewViewProvider {
   }
 
   /**
+   * A9: Check if this is the user's first run and show onboarding if so.
+   * Uses globalState to persist the onboarding completion flag.
+   */
+  private checkAndShowOnboarding(webview: vscode.Webview): void {
+    const onboardingCompleted = this._context.globalState.get<boolean>('ordinex.onboardingCompleted', false);
+    if (!onboardingCompleted) {
+      console.log('[A9] First run detected — showing onboarding');
+      // Small delay to let the webview fully initialize before showing overlay
+      setTimeout(() => {
+        webview.postMessage({ type: 'ordinex:showOnboarding' });
+      }, 500);
+    } else {
+      console.log('[A9] Onboarding already completed');
+    }
+  }
+
+  /**
    * Step 47: Check for interrupted tasks on webview activation.
    * Reads pointer + metadata, runs pure analysis, emits task_interrupted event.
    */
@@ -921,6 +940,9 @@ class MissionControlViewProvider implements vscode.WebviewViewProvider {
       }
     );
 
+    // A9: Check if onboarding should be shown (first-run detection)
+    this.checkAndShowOnboarding(webviewView.webview);
+
     // Step 47: Check for interrupted tasks on webview activation
     this.checkForInterruptedTasks(webviewView.webview).catch(err => {
       console.error('[Step47] checkForInterruptedTasks failed:', err);
@@ -970,6 +992,10 @@ class MissionControlViewProvider implements vscode.WebviewViewProvider {
 
       case 'ordinex:exportRun':
         await handleExportRun(ctx, message, webview);
+        break;
+
+      case 'ordinex:approvePlanAndExecute':
+        await handleApprovePlanAndExecute(ctx, message, webview);
         break;
 
       case 'ordinex:requestPlanApproval':
@@ -1072,6 +1098,12 @@ class MissionControlViewProvider implements vscode.WebviewViewProvider {
         await this.handleLoopAction(message, webview);
         break;
 
+      // A9: Onboarding complete — persist the flag
+      case 'ordinex:onboardingComplete':
+        await this._context.globalState.update('ordinex.onboardingCompleted', true);
+        console.log('[A9] Onboarding completed — flag persisted');
+        break;
+
       default:
         console.log('Unknown message type:', message.type);
     }
@@ -1131,6 +1163,13 @@ class MissionControlViewProvider implements vscode.WebviewViewProvider {
             return;
           }
 
+          // Open VS Code diff viewer for each staged file so user can review
+          const workspaceRoot = this.scaffoldProjectPath
+            || vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+          if (workspaceRoot) {
+            await this.openStagedDiffs(buffer, workspaceRoot);
+          }
+
           const events = this.eventStore?.getEventsByTaskId(taskId) || [];
           const stepEvent = events.find((e: Event) =>
             e.type === 'step_started' && e.payload.step_id === step_id
@@ -1146,6 +1185,9 @@ class MissionControlViewProvider implements vscode.WebviewViewProvider {
           } else {
             console.log('[handleLoopAction] Approve partial failed:', result.error);
           }
+
+          // Send updated events to webview after approval completes
+          await this.sendEventsToWebview(webview, taskId);
           break;
         }
 
@@ -1203,6 +1245,75 @@ class MissionControlViewProvider implements vscode.WebviewViewProvider {
     // Update webview
     if (taskId) {
       await this.sendEventsToWebview(webview, taskId);
+    }
+  }
+
+  /**
+   * Open VS Code diff viewer tabs for each staged file.
+   * Shows before (disk) vs after (staged) so user can review changes.
+   */
+  private async openStagedDiffs(buffer: StagedEditBuffer, workspaceRoot: string): Promise<void> {
+    const modifiedFiles = buffer.getModifiedFiles();
+    if (modifiedFiles.length === 0) return;
+
+    // Limit to 5 tabs to avoid overwhelming the editor
+    const filesToShow = modifiedFiles.slice(0, 5);
+
+    for (const stagedFile of filesToShow) {
+      try {
+        const fullPath = path.resolve(workspaceRoot, stagedFile.path);
+
+        // Read current disk content (before)
+        let beforeContent = '';
+        if (!stagedFile.isNew) {
+          try {
+            beforeContent = await fs.promises.readFile(fullPath, 'utf-8');
+          } catch {
+            beforeContent = ''; // File may not exist on disk
+          }
+        }
+
+        // Create virtual URIs for before/after content
+        const beforeUri = vscode.Uri.parse(
+          `untitled:${stagedFile.path}.before`
+        ).with({ scheme: 'ordinex-before' });
+        const afterUri = vscode.Uri.parse(
+          `untitled:${stagedFile.path}.after`
+        ).with({ scheme: 'ordinex-after' });
+
+        // Use temp files for diff since custom URI schemes need providers
+        const tmpDir = path.join(this._context.globalStorageUri.fsPath, 'diff-preview');
+        await fs.promises.mkdir(tmpDir, { recursive: true });
+
+        const safeName = stagedFile.path.replace(/[/\\]/g, '__');
+        const beforePath = path.join(tmpDir, `${safeName}.before`);
+        const afterPath = path.join(tmpDir, `${safeName}.after`);
+
+        await fs.promises.writeFile(beforePath, beforeContent, 'utf-8');
+        await fs.promises.writeFile(afterPath, stagedFile.content, 'utf-8');
+
+        const beforeFileUri = vscode.Uri.file(beforePath);
+        const afterFileUri = vscode.Uri.file(afterPath);
+
+        const label = stagedFile.isNew
+          ? `${stagedFile.path} (New File)`
+          : `${stagedFile.path} (Staged Changes)`;
+
+        await vscode.commands.executeCommand(
+          'vscode.diff',
+          beforeFileUri,
+          afterFileUri,
+          label,
+        );
+      } catch (err) {
+        console.warn(`[openStagedDiffs] Failed to open diff for ${stagedFile.path}:`, err);
+      }
+    }
+
+    if (modifiedFiles.length > 5) {
+      vscode.window.showInformationMessage(
+        `Showing diffs for first 5 of ${modifiedFiles.length} files. Review remaining files in the Mission tab.`
+      );
     }
   }
 

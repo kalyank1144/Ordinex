@@ -213,7 +213,28 @@ export function getActionsJs(): string {
         }
       };
 
-      // ===== REQUEST PLAN APPROVAL HANDLER =====
+      // ===== APPROVE PLAN AND EXECUTE (one-click) =====
+      window.handleApprovePlanAndExecute = function(taskId, planEventId) {
+        console.log('Approve Plan and Execute clicked', { taskId, planEventId });
+
+        // Send single message to extension — it will approve + switch to MISSION + execute
+        if (typeof vscode !== 'undefined') {
+          vscode.postMessage({
+            type: 'ordinex:approvePlanAndExecute',
+            task_id: taskId,
+            plan_id: planEventId
+          });
+          updateStatus('running');
+        } else {
+          console.log('Demo mode: simulating approve plan and execute');
+          updateStatus('running');
+          updateStage('retrieve');
+          addDemoEvent('stage_changed', { from: 'plan', to: 'retrieve' });
+          renderMission();
+        }
+      };
+
+      // ===== REQUEST PLAN APPROVAL HANDLER (legacy) =====
       window.handleRequestPlanApproval = function(taskId, planEventId) {
         console.log('Request Plan Approval clicked', { taskId, planEventId });
 
@@ -413,6 +434,33 @@ export function getActionsJs(): string {
             skipLink.textContent = 'Skip and let me suggest ideas →';
             skipLink.disabled = false;
           }
+        }
+      };
+
+      // Handle clarification_requested suggestion button clicks
+      // Submits the selected value as a prompt response so the flow continues
+      window.handleClarificationResponse = function(taskId, value) {
+        console.log('[Clarification] Response selected:', { taskId, value });
+
+        // Disable all sibling buttons in the card to prevent double-click
+        var card = document.querySelector('.event-card .event-action-btn');
+        if (card) card = card.closest('.event-card');
+        if (card) {
+          card.querySelectorAll('.event-action-btn').forEach(function(btn) {
+            btn.disabled = true;
+            btn.style.opacity = '0.5';
+          });
+        }
+
+        // Submit the value as a prompt — the extension's submitPrompt handler
+        // will pick it up and continue the flow
+        if (typeof vscode !== 'undefined') {
+          vscode.postMessage({
+            type: 'ordinex:submitPrompt',
+            text: value,
+            userSelectedMode: state.currentMode,
+            modelId: state.selectedModel,
+          });
         }
       };
 

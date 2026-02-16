@@ -36,6 +36,7 @@ import {
   Retriever,
   generateTemplatePlan,
   FAST_MODEL,
+  EDIT_MODEL,
 } from 'core';
 
 import { VSCodeWorkspaceWriter } from '../vscodeWorkspaceWriter';
@@ -177,9 +178,10 @@ export async function handleExecutePlan(
       throw new Error('No API key configured');
     }
 
-    // Get model ID from intent event or use default
+    // Get model ID from intent event or use EDIT_MODEL (Sonnet 4) for mission execution
+    // Edit steps need a capable model — Haiku is insufficient for reliable code generation
     const intentEvent = events.find((e: Event) => e.type === 'intent_received');
-    const modelId = (intentEvent?.payload.model_id as string) || FAST_MODEL;
+    const modelId = (intentEvent?.payload.model_id as string) || EDIT_MODEL;
 
     const eventBus = new EventBus(ctx.eventStore);
     const checkpointDir = path.join(ctx._context.globalStorageUri.fsPath, 'checkpoints');
@@ -189,23 +191,67 @@ export async function handleExecutePlan(
     // CRITICAL: Store approval manager so handleResolveApproval can use it
     ctx.activeApprovalManager = approvalManager;
 
-    // Subscribe to events from MissionExecutor
-    eventBus.subscribe(async (event) => {
-      // Events are already persisted by MissionExecutor's eventBus
-      // We just need to send updated events to webview in real-time
-      await ctx.sendEventsToWebview(webview, taskId);
+    // Subscribe to events from MissionExecutor with debounced webview updates
+    // Without debounce, every event (77+) causes a full re-render → screen flicker
+    let webviewUpdateTimer: ReturnType<typeof setTimeout> | null = null;
+    const WEBVIEW_DEBOUNCE_MS = 150;
 
-      // CRITICAL: Handle mission completion to trigger next mission in breakdown
+    // Certain event types must update the UI immediately (no debounce)
+    const IMMEDIATE_EVENTS = new Set([
+      'mission_started', 'mission_completed', 'mission_cancelled', 'mission_paused',
+      'loop_paused', 'loop_completed',
+      'diff_proposed', 'diff_applied',
+      'approval_requested', 'approval_resolved',
+      'failure_detected', 'step_failed',
+      'execution_paused', 'decision_point_needed',
+    ]);
+
+    eventBus.subscribe(async (event) => {
+      // CRITICAL: Handle mission completion immediately
       if (event.type === 'mission_completed') {
         console.log('[handleExecutePlan] mission_completed detected, triggering sequencing logic');
         console.log('[handleExecutePlan] Event payload:', JSON.stringify(event.payload, null, 2));
 
-        // CRITICAL: Clear mission executing flag so next mission can start
         ctx.isMissionExecuting = false;
         ctx.currentExecutingMissionId = null;
         console.log('[handleExecutePlan] Mission execution flag cleared');
 
+        // Flush immediately before sequencing
+        if (webviewUpdateTimer) { clearTimeout(webviewUpdateTimer); webviewUpdateTimer = null; }
+        await ctx.sendEventsToWebview(webview, taskId);
         await handleMissionCompletionSequencing(ctx, taskId, webview);
+        return;
+      }
+
+      // Phase 2: Forward file-operation tool events immediately for inline display
+      // These appear as mini-cards inside the streaming mission card during edit steps
+      if ((event.type === 'tool_start' || event.type === 'tool_end') && event.payload?.tool) {
+        const tool = event.payload.tool as string;
+        const FILE_TOOLS = ['read_file', 'write_file', 'edit_file', 'search_files', 'list_directory', 'run_command'];
+        if (FILE_TOOLS.includes(tool)) {
+          webview.postMessage({
+            type: 'ordinex:missionToolActivity',
+            tool,
+            event_type: event.type,
+            tool_call_id: (event.payload as Record<string, unknown>)?.tool_use_id as string || event.parent_event_id || null,
+            input: event.payload.input || {},
+            success: event.type === 'tool_end' ? event.payload.status === 'success' : undefined,
+            error: event.type === 'tool_end' ? (event.payload.error || undefined) : undefined,
+          });
+        }
+      }
+
+      // Important events update immediately; progress events are debounced
+      if (IMMEDIATE_EVENTS.has(event.type)) {
+        if (webviewUpdateTimer) { clearTimeout(webviewUpdateTimer); webviewUpdateTimer = null; }
+        await ctx.sendEventsToWebview(webview, taskId);
+      } else {
+        // Debounce: batch rapid-fire progress events into a single render
+        if (webviewUpdateTimer) { clearTimeout(webviewUpdateTimer); }
+        webviewUpdateTimer = setTimeout(async () => {
+          webviewUpdateTimer = null;
+          await ctx.sendEventsToWebview(webview, taskId);
+        }, WEBVIEW_DEBOUNCE_MS);
       }
     });
 
@@ -291,6 +337,17 @@ export async function handleExecutePlan(
       toolProvider,              // Tool provider for AgenticLoop
       tokenCounter,              // Token counter for context validation
     );
+
+    // A6: Wire streaming callback to forward edit-step deltas to webview
+    missionExecutor.onStreamDelta = (delta: string, stepId: string, iteration: number) => {
+      webview.postMessage({
+        type: 'ordinex:missionStreamDelta',
+        task_id: taskId,
+        delta,
+        step_id: stepId,
+        iteration,
+      });
+    };
 
     // Store executor for loop action handling
     ctx.activeMissionExecutor = missionExecutor;
