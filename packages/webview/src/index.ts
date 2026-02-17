@@ -17,8 +17,10 @@ import { getActionsJs } from './webviewJs/actions';
 import { getMissionControlBarJs } from './webviewJs/missionControlBar';
 import { getMissionActionsJs } from './webviewJs/missionActions';
 import { getSendStopBtnJs } from './webviewJs/sendStopBtn';
+import { getMissionActivityJs } from './webviewJs/missionActivity';
 import { getAttachmentsJs } from './webviewJs/attachments';
 import { getScaffoldListenersJs } from './webviewJs/scaffoldListeners';
+import { getOnboardingJs } from './webviewJs/onboarding';
 import { getInitJs } from './webviewJs/init';
 
 // ===== CSS Loader =====
@@ -36,6 +38,8 @@ const CSS_FILES = [
   'clarification.css',
   'responsive.css',
   'missionControlBar.css',
+  'onboarding.css',
+  'plan.css',
 ];
 
 let cssCache: string | null = null;
@@ -96,6 +100,46 @@ export function getWebviewContent(): string {
   <style>
 ${css}
   </style>
+  <script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
+  <script>
+    document.addEventListener('DOMContentLoaded', function() {
+      if (typeof mermaid !== 'undefined') {
+        mermaid.initialize({
+          startOnLoad: false,
+          theme: 'dark',
+          themeVariables: {
+            primaryColor: '#6c5ce7',
+            primaryTextColor: '#cdd6f4',
+            primaryBorderColor: '#6c5ce7',
+            lineColor: '#585b70',
+            secondaryColor: '#313244',
+            tertiaryColor: '#1e1e2e',
+            background: '#1e1e2e',
+            mainBkg: '#313244',
+            nodeBorder: '#585b70',
+            clusterBkg: '#1e1e2e',
+            clusterBorder: '#585b70',
+            titleColor: '#cdd6f4',
+            edgeLabelBackground: '#1e1e2e'
+          },
+          flowchart: { curve: 'basis', padding: 15 },
+          securityLevel: 'loose',
+          fontFamily: 'var(--vscode-font-family, sans-serif)'
+        });
+      }
+    });
+    window.renderMermaidDiagrams = function() {
+      if (typeof mermaid === 'undefined') return;
+      var els = document.querySelectorAll('.mermaid-pending');
+      els.forEach(function(el) {
+        el.classList.remove('mermaid-pending');
+        el.classList.add('mermaid');
+      });
+      if (els.length > 0) {
+        try { mermaid.run({ nodes: els }); } catch(e) { console.warn('Mermaid render error:', e); }
+      }
+    };
+  </script>
   ${scaffoldCardScript ? `<script>${scaffoldCardScript}</script>` : ''}
 </head>
 <body>
@@ -105,11 +149,18 @@ ${css}
       <div class="header-title">Ordinex Mission Control</div>
       <div class="status-pill ready" id="statusPill">Ready</div>
     </div>
-    <div class="header-right" style="display: flex; align-items: center; gap: 10px;">
+    <div class="header-right" style="display: flex; align-items: center; gap: 8px;">
       <button id="exportRunBtn" class="secondary" style="display: none; padding: 4px 10px; font-size: 11px;">
         📦 Export Run
       </button>
       <div class="stage-label" id="stageLabel">none</div>
+      <button id="newChatBtn" class="header-icon-btn" title="New Chat (⌘⇧N)">
+        <svg width="16" height="16" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
+          <path d="M14 8.5V14a1 1 0 0 1-1 1H3a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1h5.5" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/>
+          <line x1="8" y1="1" x2="8" y2="7" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/>
+          <line x1="5" y1="4" x2="11" y2="4" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/>
+        </svg>
+      </button>
     </div>
   </div>
 
@@ -189,6 +240,14 @@ ${css}
     <button class="mcb-cta start" id="mcbCta" onclick="handleMcbCtaClick()">▶ Start</button>
   </div>
 
+  <!-- Mission Activity Indicator -->
+  <div id="missionActivity" class="mission-activity" style="display: none;">
+    <div class="mission-activity-inner">
+      <div class="mission-pulse-ring"></div>
+      <span class="mission-activity-text" id="missionActivityText">Mission in progress...</span>
+    </div>
+  </div>
+
   <!-- Composer Bar -->
   <div class="composer">
     <div class="composer-controls">
@@ -236,8 +295,10 @@ ${css}
       ${getMissionControlBarJs()}
       ${getMissionActionsJs()}
       ${getSendStopBtnJs()}
+      ${getMissionActivityJs()}
       ${getAttachmentsJs()}
       ${getScaffoldListenersJs()}
+      ${getOnboardingJs()}
       ${getInitJs()}
     })();
   </script>

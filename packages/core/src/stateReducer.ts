@@ -372,6 +372,17 @@ export class StateReducer {
         // Informational — audit trail only. No task state change.
         break;
 
+      // AgenticLoop Integration: Loop Pause + Continue
+      case 'loop_paused':
+        newState.status = 'paused';
+        break;
+      case 'loop_continued':
+        newState.status = 'running';
+        break;
+      case 'loop_completed':
+        // Loop finished — status determined by follow-up events (diff_proposed, step_completed, etc.)
+        break;
+
       default:
         // Unknown event type should have been rejected at write time
         // But defensive handling here

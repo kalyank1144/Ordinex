@@ -7,11 +7,12 @@
  * - Return evidence_id for event inclusion
  * 
  * CRITICAL: All attachments become immutable evidence for replay/audit
+ * P2-3: All FS operations converted to async (fs.promises)
  */
 
 import * as crypto from 'crypto';
-import * as fs from 'fs';
 import * as path from 'path';
+import { promises as fsp } from 'fs';
 
 /**
  * Attachment data received from webview
@@ -80,6 +81,18 @@ function generateEvidenceId(sha256: string): string {
 }
 
 /**
+ * Check if a file exists (async helper)
+ */
+async function fileExists(filePath: string): Promise<boolean> {
+  try {
+    await fsp.access(filePath);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
  * Store an attachment as evidence
  * 
  * @param workspaceRoot - Absolute path to workspace root
@@ -110,7 +123,7 @@ export async function storeAttachment(
     const absolutePath = path.join(workspaceRoot, relativePath);
     
     // Check if file already exists (deduplication)
-    if (fs.existsSync(absolutePath)) {
+    if (await fileExists(absolutePath)) {
       console.log(`[AttachmentStore] Deduplicated: ${attachment.name} → ${evidenceId}`);
       return {
         success: true,
@@ -122,12 +135,10 @@ export async function storeAttachment(
     }
     
     // Create directory if needed
-    if (!fs.existsSync(absoluteDir)) {
-      fs.mkdirSync(absoluteDir, { recursive: true });
-    }
+    await fsp.mkdir(absoluteDir, { recursive: true });
     
     // Write file
-    fs.writeFileSync(absolutePath, buffer);
+    await fsp.writeFile(absolutePath, buffer);
     
     // Also write metadata file for audit/replay
     const metadataPath = absolutePath + '.meta.json';
@@ -139,7 +150,7 @@ export async function storeAttachment(
       sha256,
       storedAt: new Date().toISOString(),
     };
-    fs.writeFileSync(metadataPath, JSON.stringify(metadata, null, 2));
+    await fsp.writeFile(metadataPath, JSON.stringify(metadata, null, 2));
     
     console.log(`[AttachmentStore] Stored: ${attachment.name} → ${relativePath}`);
     
@@ -172,10 +183,10 @@ export async function readAttachment(
 ): Promise<Buffer | null> {
   try {
     const absolutePath = path.join(workspaceRoot, evidencePath);
-    if (!fs.existsSync(absolutePath)) {
+    if (!(await fileExists(absolutePath))) {
       return null;
     }
-    return fs.readFileSync(absolutePath);
+    return await fsp.readFile(absolutePath);
   } catch (error) {
     console.error('[AttachmentStore] Error reading attachment:', error);
     return null;
@@ -185,12 +196,12 @@ export async function readAttachment(
 /**
  * Check if attachment exists in evidence store
  */
-export function attachmentExists(
+export async function attachmentExists(
   workspaceRoot: string,
   evidencePath: string
-): boolean {
+): Promise<boolean> {
   const absolutePath = path.join(workspaceRoot, evidencePath);
-  return fs.existsSync(absolutePath);
+  return fileExists(absolutePath);
 }
 
 /**
@@ -202,10 +213,10 @@ export async function getAttachmentMetadata(
 ): Promise<Record<string, unknown> | null> {
   try {
     const absolutePath = path.join(workspaceRoot, evidencePath) + '.meta.json';
-    if (!fs.existsSync(absolutePath)) {
+    if (!(await fileExists(absolutePath))) {
       return null;
     }
-    const content = fs.readFileSync(absolutePath, 'utf-8');
+    const content = await fsp.readFile(absolutePath, 'utf-8');
     return JSON.parse(content);
   } catch (error) {
     console.error('[AttachmentStore] Error reading metadata:', error);

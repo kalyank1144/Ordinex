@@ -9,6 +9,10 @@
 import { EventBus } from './eventBus';
 import { Mode, Stage, Evidence } from './types';
 import { safeJsonParse } from './jsonRepair';
+import { resolveModel, didModelFallback } from './modelRegistry';
+import type { ConversationMessage } from './conversationHistory';
+import { validateContextFitsSync, validateContextFits } from './tokenCounter';
+import type { TokenCounter } from './tokenCounter';
 
 export interface LLMConfig {
   apiKey: string;
@@ -29,23 +33,6 @@ export interface LLMResponse {
     output_tokens: number;
   };
 }
-
-/**
- * Model fallback map
- * Maps user-selected model IDs to actual Anthropic model names
- */
-const MODEL_MAP: Record<string, string> = {
-  'claude-3-haiku': 'claude-3-haiku-20240307',  // Fast / lightweight
-  'claude-sonnet-4-5': 'claude-sonnet-4-20250514',  // Best for building features / multi-file changes
-  'claude-3-sonnet': 'claude-3-sonnet-20240229',
-  'claude-3-opus': 'claude-3-opus-20240229',
-  'sonnet-4.5': 'claude-sonnet-4-20250514',  // Alias for claude-sonnet-4-5
-  'opus-4.5': 'claude-3-haiku-20240307',  // Fallback to Haiku
-  'gpt-5.2': 'claude-3-haiku-20240307',  // Fallback to Haiku
-  'gemini-3': 'claude-3-haiku-20240307',  // Fallback to Haiku
-};
-
-const DEFAULT_MODEL = 'claude-3-haiku-20240307';
 
 /**
  * LLM Error types for provider integration
@@ -117,11 +104,11 @@ export class LLMService {
     console.log('=== LLMService.streamAnswerWithContext START ===');
     console.log('User question:', userQuestion);
     console.log('System context length:', systemContext.length);
-    
+
     const userSelectedModel = config.model;
-    const actualModel = MODEL_MAP[userSelectedModel] || DEFAULT_MODEL;
-    const didFallback = !MODEL_MAP[userSelectedModel];
-    
+    const actualModel = resolveModel(userSelectedModel);
+    const didFallback = didModelFallback(userSelectedModel);
+
     console.log('Model mapping:', { userSelectedModel, actualModel, didFallback });
 
     // Emit model_fallback_used if we had to fallback
@@ -227,11 +214,11 @@ export class LLMService {
     console.log('=== LLMService.streamAnswer START ===');
     console.log('User question:', userQuestion);
     console.log('Config:', { model: config.model, maxTokens: config.maxTokens, hasApiKey: !!config.apiKey });
-    
+
     const userSelectedModel = config.model;
-    const actualModel = MODEL_MAP[userSelectedModel] || DEFAULT_MODEL;
-    const didFallback = !MODEL_MAP[userSelectedModel];
-    
+    const actualModel = resolveModel(userSelectedModel);
+    const didFallback = didModelFallback(userSelectedModel);
+
     console.log('Model mapping:', { userSelectedModel, actualModel, didFallback });
 
     // Emit model_fallback_used if we had to fallback
@@ -320,6 +307,215 @@ export class LLMService {
 
       throw error;
     }
+  }
+
+  /**
+   * Stream LLM answer with full conversation history (multi-turn A2).
+   * Like streamAnswerWithContext but passes the full ConversationMessage[]
+   * instead of a single user message, enabling multi-turn conversations.
+   */
+  async streamAnswerWithHistory(
+    messages: ConversationMessage[],
+    systemContext: string,
+    config: LLMConfig,
+    onChunk: (chunk: LLMStreamChunk) => void,
+    tokenCounter?: TokenCounter,
+  ): Promise<LLMResponse> {
+    const userSelectedModel = config.model;
+    const actualModel = resolveModel(userSelectedModel);
+    const didFallback = didModelFallback(userSelectedModel);
+
+    // Pre-request context validation
+    if (tokenCounter) {
+      try {
+        const fit = await validateContextFits(tokenCounter, messages, actualModel, {
+          system: systemContext,
+          maxOutputTokens: config.maxTokens || 4096,
+        });
+        if (!fit.fits) {
+          console.warn(
+            `[LLMService] Context overflow: ${fit.estimatedInputTokens} tokens ` +
+            `exceeds ${fit.availableForInput} available (overflow: ${fit.overflowTokens})`
+          );
+        }
+      } catch {
+        // Ignore counter errors, proceed with API call
+      }
+    } else {
+      const fit = validateContextFitsSync(messages, actualModel, {
+        system: systemContext,
+        maxOutputTokens: config.maxTokens || 4096,
+      });
+      if (!fit.fits) {
+        console.warn(
+          `[LLMService] Context overflow (estimate): ${fit.estimatedInputTokens} tokens ` +
+          `exceeds ${fit.availableForInput} available (overflow: ${fit.overflowTokens})`
+        );
+      }
+    }
+
+    if (didFallback) {
+      await this.eventBus.publish({
+        event_id: this.generateId(),
+        task_id: this.taskId,
+        timestamp: new Date().toISOString(),
+        type: 'model_fallback_used',
+        mode: this.mode,
+        stage: this.stage,
+        payload: {
+          requested_model: userSelectedModel,
+          actual_model: actualModel,
+          reason: 'unsupported_model',
+        },
+        evidence_ids: [],
+        parent_event_id: null,
+      });
+    }
+
+    const toolStartEventId = this.generateId();
+    await this.eventBus.publish({
+      event_id: toolStartEventId,
+      task_id: this.taskId,
+      timestamp: new Date().toISOString(),
+      type: 'tool_start',
+      mode: this.mode,
+      stage: this.stage,
+      payload: {
+        tool: 'llm_answer',
+        model: actualModel,
+        max_tokens: config.maxTokens || 4096,
+        has_context: systemContext.length > 0,
+        message_count: messages.length,
+        multi_turn: messages.length > 1,
+      },
+      evidence_ids: [],
+      parent_event_id: null,
+    });
+
+    try {
+      const response = await this.callAnthropicStreamWithHistory(
+        messages,
+        systemContext,
+        config.apiKey,
+        actualModel,
+        config.maxTokens || 4096,
+        onChunk
+      );
+
+      await this.eventBus.publish({
+        event_id: this.generateId(),
+        task_id: this.taskId,
+        timestamp: new Date().toISOString(),
+        type: 'tool_end',
+        mode: this.mode,
+        stage: this.stage,
+        payload: {
+          tool: 'llm_answer',
+          status: 'success',
+          model: actualModel,
+          usage: response.usage,
+        },
+        evidence_ids: [],
+        parent_event_id: toolStartEventId,
+      });
+
+      return response;
+    } catch (error) {
+      await this.eventBus.publish({
+        event_id: this.generateId(),
+        task_id: this.taskId,
+        timestamp: new Date().toISOString(),
+        type: 'tool_end',
+        mode: this.mode,
+        stage: this.stage,
+        payload: {
+          tool: 'llm_answer',
+          status: 'failed',
+          error: error instanceof Error ? error.message : 'Unknown error',
+        },
+        evidence_ids: [],
+        parent_event_id: toolStartEventId,
+      });
+
+      throw error;
+    }
+  }
+
+  /**
+   * Call Anthropic API with streaming, passing full conversation history.
+   */
+  private async callAnthropicStreamWithHistory(
+    messages: ConversationMessage[],
+    systemContext: string,
+    apiKey: string,
+    model: string,
+    maxTokens: number,
+    onChunk: (chunk: LLMStreamChunk) => void
+  ): Promise<LLMResponse> {
+    const Anthropic = await this.loadAnthropicSDK();
+    const client = new Anthropic({ apiKey });
+
+    let fullContent = '';
+    let usage: { input_tokens: number; output_tokens: number } | undefined;
+
+    const stream = await client.messages.stream({
+      model,
+      max_tokens: maxTokens,
+      system: systemContext,
+      messages,
+    });
+
+    for await (const event of stream) {
+      if (event.type === 'content_block_delta') {
+        if (event.delta.type === 'text_delta') {
+          const delta = event.delta.text;
+          fullContent += delta;
+
+          await this.eventBus.publish({
+            event_id: this.generateId(),
+            task_id: this.taskId,
+            timestamp: new Date().toISOString(),
+            type: 'stream_delta',
+            mode: this.mode,
+            stage: this.stage,
+            payload: { delta },
+            evidence_ids: [],
+            parent_event_id: null,
+          });
+
+          onChunk({ delta, done: false });
+        }
+      } else if (event.type === 'message_start') {
+        if (event.message.usage) {
+          usage = {
+            input_tokens: event.message.usage.input_tokens,
+            output_tokens: 0,
+          };
+        }
+      } else if (event.type === 'message_delta') {
+        if (event.usage && usage) {
+          usage.output_tokens = event.usage.output_tokens;
+        }
+      }
+    }
+
+    await this.eventBus.publish({
+      event_id: this.generateId(),
+      task_id: this.taskId,
+      timestamp: new Date().toISOString(),
+      type: 'stream_complete',
+      mode: this.mode,
+      stage: this.stage,
+      payload: {
+        total_tokens: usage ? usage.input_tokens + usage.output_tokens : 0,
+      },
+      evidence_ids: [],
+      parent_event_id: null,
+    });
+
+    onChunk({ delta: '', done: true });
+
+    return { content: fullContent, model, usage };
   }
 
   /**
@@ -551,7 +747,7 @@ export class LLMService {
     const { stepText, repoContextSummary, files, config } = params;
 
     const userSelectedModel = config.model;
-    const actualModel = MODEL_MAP[userSelectedModel] || DEFAULT_MODEL;
+    const actualModel = resolveModel(userSelectedModel);
 
     // Build system prompt for edit generation
     const systemPrompt = `You are in MISSION EDIT stage. Your task is to generate file edits to accomplish the given step.

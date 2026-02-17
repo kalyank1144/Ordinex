@@ -55,6 +55,22 @@
       {
         "command": "ordinex.undo",
         "title": "Ordinex: Undo Last Edit"
+      },
+      {
+        "command": "ordinex.focusPanel",
+        "title": "Ordinex: Focus Panel"
+      },
+      {
+        "command": "ordinex.focusInput",
+        "title": "Ordinex: Focus Prompt Input"
+      },
+      {
+        "command": "ordinex.newChat",
+        "title": "Ordinex: New Chat"
+      },
+      {
+        "command": "ordinex.stopExecution",
+        "title": "Ordinex: Stop Execution"
       }
     ],
     "keybindings": [
@@ -63,6 +79,27 @@
         "key": "shift+cmd+z",
         "mac": "shift+cmd+z",
         "when": "ordinex.hasUndoableEdits"
+      },
+      {
+        "command": "ordinex.focusPanel",
+        "key": "shift+cmd+o",
+        "mac": "shift+cmd+o"
+      },
+      {
+        "command": "ordinex.focusInput",
+        "key": "cmd+l",
+        "mac": "cmd+l"
+      },
+      {
+        "command": "ordinex.newChat",
+        "key": "shift+cmd+n",
+        "mac": "shift+cmd+n"
+      },
+      {
+        "command": "ordinex.stopExecution",
+        "key": "escape",
+        "mac": "escape",
+        "when": "view.ordinex.missionControl.visible && ordinex.isRunning"
       }
     ],
     "menus": {
@@ -79,19 +116,30 @@
       "properties": {
         "ordinex.commandPolicy.mode": {
           "type": "string",
-          "enum": ["off", "prompt", "auto"],
+          "enum": [
+            "off",
+            "prompt",
+            "auto"
+          ],
           "default": "prompt",
           "description": "Controls how terminal commands are executed. off = never, prompt = ask first (default), auto = run without asking."
         },
         "ordinex.autonomy.level": {
           "type": "string",
-          "enum": ["conservative", "balanced", "aggressive"],
+          "enum": [
+            "conservative",
+            "balanced",
+            "aggressive"
+          ],
           "default": "conservative",
           "description": "Controls AI autonomy level during mission execution. conservative = confirm every step (default), balanced = confirm risky steps, aggressive = minimal confirmations."
         },
         "ordinex.intelligence.sessionPersistence": {
           "type": "string",
-          "enum": ["off", "on"],
+          "enum": [
+            "off",
+            "on"
+          ],
           "default": "off",
           "description": "When on, session context is persisted to disk and restored across VS Code restarts."
         }
@@ -104,14 +152,16 @@
     "watch": "tsc -watch -p ./",
     "build": "tsc -p ./",
     "clean": "rm -rf dist",
-    "test": "echo 'No tests yet'"
+    "test": "vitest run"
   },
   "devDependencies": {
     "@types/node": "^20.10.0",
     "@types/vscode": "^1.85.0",
-    "typescript": "^5.3.3"
+    "typescript": "^5.3.3",
+    "vitest": "^4.0.18"
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "^0.32.1",
     "core": "workspace:*",
     "webview": "workspace:*"
   }

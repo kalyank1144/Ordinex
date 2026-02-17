@@ -270,3 +270,5 @@ Step 21.5 successfully fixed the end-to-end ANSWER mode flow by:
 **Result:** ANSWER mode now works correctly without triggering PLAN/MISSION pipeline. Users can ask questions, get real LLM responses, see proper event logs, and view evidence.
 
 **Next Steps:** Add streaming UI card component to show progressive text updates (future enhancement).
+
+//

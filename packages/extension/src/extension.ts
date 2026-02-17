@@ -19,6 +19,7 @@ import {
   CommandPhaseContext,
   MissionRunner,
   getSessionContextManager,
+  resetSessionContextManager,
   DEFAULT_INTELLIGENCE_SETTINGS,
   getProcessManager,
   ProjectMemoryManager,
@@ -30,6 +31,9 @@ import {
   extractDiffFilePaths,
   getDiffCorrelationId,
   buildUndoGroup,
+  ConversationHistory,
+  resetCheckpointManagerV2,
+  modeConfirmationPolicy,
 } from 'core';
 import type { FileReadResult } from 'core';
 import type { ModeTransitionResult } from 'core';
@@ -39,6 +43,7 @@ import type { PreflightChecksInput, PreflightOrchestratorCtx, VerifyRecipeInfo, 
 import type { EnrichedInput, EditorContext, DiagnosticEntry } from 'core';
 import type { SolutionCaptureContext } from 'core';
 import type { ActiveTaskMetadata } from 'core';
+import type { StagedEditBuffer } from 'core';
 import { FsMemoryService } from './fsMemoryService';
 import { FsToolRegistryService } from './fsToolRegistryService';
 import { FsTaskPersistenceService } from './fsTaskPersistenceService';
@@ -60,6 +65,7 @@ import {
 import {
   handlePlanMode,
   handleExportRun,
+  handleApprovePlanAndExecute,
   handleRequestPlanApproval,
   handleResolvePlanApproval,
   handleRefinePlan,
@@ -106,6 +112,7 @@ class MissionControlViewProvider implements vscode.WebviewViewProvider {
   public isProcessing: boolean = false;
   public activeApprovalManager: ApprovalManager | null = null;
   public activeMissionRunner: MissionRunner | null = null;
+  public activeMissionExecutor: import('core').MissionExecutor | null = null;
   public selectedWorkspaceRoot: string | null = null;
   public isMissionExecuting: boolean = false;
   public currentExecutingMissionId: string | null = null;
@@ -128,7 +135,9 @@ class MissionControlViewProvider implements vscode.WebviewViewProvider {
   private _undoStack: UndoStack | null = null;
   private _fsUndoService: FsUndoService | null = null;
   public _undoBeforeCache: Map<string, Map<string, FileReadResult>> = new Map();
+  public conversationHistories: Map<string, ConversationHistory> = new Map();
   public _currentWebview: vscode.Webview | null = null;
+  public _webviewView: vscode.WebviewView | null = null;
 
   constructor(
     private readonly _extensionUri: vscode.Uri,
@@ -143,6 +152,9 @@ class MissionControlViewProvider implements vscode.WebviewViewProvider {
 
     // Step 40.5 Enhancement: Initialize session persistence if enabled
     this.initSessionPersistence();
+
+    // P2-1: Watch for workspace folder changes to invalidate cached services
+    this.setupWorkspaceChangeListener();
   }
 
   // -------------------------------------------------------------------------
@@ -333,6 +345,8 @@ class MissionControlViewProvider implements vscode.WebviewViewProvider {
     this.currentTaskId = null;
     globalCurrentTaskId = null;
     this.currentStage = 'none';
+    // A2: Clear conversation history for the ended task
+    // (keep other tasks' histories in case of multi-task scenarios)
     await this.clearTaskPersistence();
   }
 
@@ -421,6 +435,52 @@ class MissionControlViewProvider implements vscode.WebviewViewProvider {
     });
   }
 
+  // -------------------------------------------------------------------------
+  // A2: Conversation History — per-task, lazy-initialized
+  // -------------------------------------------------------------------------
+
+  /**
+   * Get or create a ConversationHistory for the given task.
+   * Enables multi-turn conversations in ANSWER mode.
+   */
+  public getConversationHistory(taskId: string): ConversationHistory {
+    let history = this.conversationHistories.get(taskId);
+    if (!history) {
+      history = new ConversationHistory();
+      this.conversationHistories.set(taskId, history);
+    }
+    return history;
+  }
+
+  // ─── Token Counter (Task #5) ─────────────────────────────────────────
+  private _tokenCounter: import('./anthropicTokenCounter').AnthropicTokenCounter | null = null;
+
+  public getTokenCounter(): import('core/src/tokenCounter').TokenCounter | null {
+    return this._tokenCounter;
+  }
+
+  /** Reset the token counter (e.g. when API key changes). */
+  public resetTokenCounter(): void {
+    this._tokenCounter = null;
+  }
+
+  /**
+   * Lazily create or re-create the AnthropicTokenCounter when an API key
+   * becomes available. Called before ANSWER/MISSION mode flows.
+   */
+  private async ensureTokenCounter(): Promise<void> {
+    if (this._tokenCounter) return;
+    const apiKey = await this._context.secrets.get('ordinex.apiKey');
+    if (apiKey) {
+      try {
+        const { AnthropicTokenCounter } = require('./anthropicTokenCounter');
+        this._tokenCounter = new AnthropicTokenCounter(apiKey);
+      } catch {
+        // SDK not available — stay null, CharacterTokenCounter will be used
+      }
+    }
+  }
+
   /** Step 48: Handle undo action from webview or VS Code command. */
   private async handleUndoAction(message: any, webview: vscode.Webview): Promise<void> {
     const { group_id } = message;
@@ -478,6 +538,49 @@ class MissionControlViewProvider implements vscode.WebviewViewProvider {
       }
     }
 
+    // Refresh open editor tabs so the user sees the reverted content.
+    // VS Code caches file content in the editor; we must explicitly revert the documents.
+    const workspaceRoot = this.scaffoldProjectPath
+      || this.selectedWorkspaceRoot
+      || vscode.workspace.workspaceFolders?.[0]?.uri.fsPath
+      || '';
+    const allAffectedFiles = [...filesRestored, ...filesRecreated];
+    for (const relPath of allAffectedFiles) {
+      try {
+        const absPath = require('path').resolve(workspaceRoot, relPath);
+        const uri = vscode.Uri.file(absPath);
+        // Find the document if it's open, and revert it to disk content
+        const openDoc = vscode.workspace.textDocuments.find(
+          d => d.uri.fsPath === uri.fsPath
+        );
+        if (openDoc && !openDoc.isClosed) {
+          // Open and show the reverted file, then revert to the on-disk version
+          const editor = await vscode.window.showTextDocument(openDoc, { preview: false, preserveFocus: true });
+          await vscode.commands.executeCommand('workbench.action.files.revert');
+        }
+      } catch (revertErr) {
+        console.warn(`[Step48] Could not revert editor for ${relPath}:`, revertErr);
+      }
+    }
+    // Close tabs for files that were deleted (created files undone = deleted)
+    for (const relPath of filesDeleted) {
+      try {
+        const absPath = require('path').resolve(workspaceRoot, relPath);
+        const uri = vscode.Uri.file(absPath);
+        // Find and close any open tab for the deleted file
+        const tabGroups = vscode.window.tabGroups;
+        for (const group of tabGroups.all) {
+          for (const tab of group.tabs) {
+            if (tab.input instanceof vscode.TabInputText && tab.input.uri.fsPath === uri.fsPath) {
+              await vscode.window.tabGroups.close(tab);
+            }
+          }
+        }
+      } catch (closeErr) {
+        console.warn(`[Step48] Could not close tab for ${relPath}:`, closeErr);
+      }
+    }
+
     // Emit undo_performed event
     await this.emitEvent({
       event_id: this.generateId(),
@@ -501,6 +604,23 @@ class MissionControlViewProvider implements vscode.WebviewViewProvider {
     vscode.commands.executeCommand('setContext', 'ordinex.hasUndoableEdits', undoStack.canUndo());
     this.syncUndoStateToWebview(webview);
     await this.sendEventsToWebview(webview, taskId);
+  }
+
+  /**
+   * A9: Check if this is the user's first run and show onboarding if so.
+   * Uses globalState to persist the onboarding completion flag.
+   */
+  private checkAndShowOnboarding(webview: vscode.Webview): void {
+    const onboardingCompleted = this._context.globalState.get<boolean>('ordinex.onboardingCompleted', false);
+    if (!onboardingCompleted) {
+      console.log('[A9] First run detected — showing onboarding');
+      // Small delay to let the webview fully initialize before showing overlay
+      setTimeout(() => {
+        webview.postMessage({ type: 'ordinex:showOnboarding' });
+      }, 500);
+    } else {
+      console.log('[A9] Onboarding already completed');
+    }
   }
 
   /**
@@ -848,6 +968,85 @@ class MissionControlViewProvider implements vscode.WebviewViewProvider {
     console.log('[Step40.5] Session persistence enabled:', persistPath);
   }
 
+  // -------------------------------------------------------------------------
+  // P2-1: Workspace change invalidation
+  // -------------------------------------------------------------------------
+
+  /**
+   * Reset all cached workspace-specific services.
+   * Called when VS Code workspace folders change so that lazy getters
+   * re-initialize with the new workspace root on next access.
+   */
+  public resetWorkspaceServices(): void {
+    console.log('[P2-1] Invalidating cached workspace services...');
+
+    // Extension-level lazy singletons
+    this._projectMemoryManager = null;
+    this._memoryService = null;
+    this._generatedToolManager = null;
+    this._toolRegistryService = null;
+    this._taskPersistenceService = null;
+    this._undoStack = null;
+    this._fsUndoService = null;
+    this._undoBeforeCache.clear();
+
+    // Core-level module singletons
+    resetSessionContextManager();
+    resetCheckpointManagerV2();
+    modeConfirmationPolicy.clearCache();
+
+    // Clear task & mission state
+    this.currentTaskId = null;
+    this.currentMode = 'ANSWER';
+    this.currentStage = 'none';
+    this.isMissionExecuting = false;
+    this.currentExecutingMissionId = null;
+    this.activeMissionRunner = null;
+    this.activeMissionExecutor = null;
+    this.activeApprovalManager = null;
+    this.repairOrchestrator = null;
+    this.recentEventsWindow = [];
+    this.pendingCommandContexts.clear();
+    this.conversationHistories.clear();
+    this.pendingPreflightResult = null;
+    this.pendingPreflightInput = null;
+    this.pendingPreflightCtx = null;
+
+    // Clear module-level refs
+    globalTaskPersistenceService = null;
+    globalCurrentTaskId = null;
+
+    // Reset VS Code context keys
+    vscode.commands.executeCommand('setContext', 'ordinex.isRunning', false);
+    vscode.commands.executeCommand('setContext', 'ordinex.hasUndoableEdits', false);
+
+    // Re-initialize session persistence for the new workspace
+    this.initSessionPersistence();
+
+    // Notify the webview to clear its state
+    if (this._currentWebview) {
+      this._currentWebview.postMessage({ type: 'ordinex:newChat' });
+    }
+
+    console.log('[P2-1] Workspace services reset complete');
+  }
+
+  /**
+   * Set up workspace folder change listener.
+   * Called from the constructor to register the subscription.
+   */
+  public setupWorkspaceChangeListener(): void {
+    this._context.subscriptions.push(
+      vscode.workspace.onDidChangeWorkspaceFolders((event) => {
+        console.log('[P2-1] Workspace folders changed:', {
+          added: event.added.map(f => f.uri.fsPath),
+          removed: event.removed.map(f => f.uri.fsPath),
+        });
+        this.resetWorkspaceServices();
+      })
+    );
+  }
+
   public resolveWebviewView(
     webviewView: vscode.WebviewView,
     context: vscode.WebviewViewResolveContext,
@@ -863,12 +1062,18 @@ class MissionControlViewProvider implements vscode.WebviewViewProvider {
     // Step 48: Store webview reference for Cmd+Shift+Z command
     this._currentWebview = webviewView.webview;
 
+    // Step 52: Store WebviewView reference for focus/reveal commands
+    this._webviewView = webviewView;
+
     // Set up message passing
     webviewView.webview.onDidReceiveMessage(
       async (message) => {
         await this.handleMessage(message, webviewView.webview);
       }
     );
+
+    // A9: Check if onboarding should be shown (first-run detection)
+    this.checkAndShowOnboarding(webviewView.webview);
 
     // Step 47: Check for interrupted tasks on webview activation
     this.checkForInterruptedTasks(webviewView.webview).catch(err => {
@@ -884,6 +1089,7 @@ class MissionControlViewProvider implements vscode.WebviewViewProvider {
 
     switch (message.type) {
       case 'ordinex:submitPrompt':
+        await this.ensureTokenCounter();
         await handleSubmitPrompt(ctx, message, webview);
         break;
 
@@ -918,6 +1124,10 @@ class MissionControlViewProvider implements vscode.WebviewViewProvider {
 
       case 'ordinex:exportRun':
         await handleExportRun(ctx, message, webview);
+        break;
+
+      case 'ordinex:approvePlanAndExecute':
+        await handleApprovePlanAndExecute(ctx, message, webview);
         break;
 
       case 'ordinex:requestPlanApproval':
@@ -1016,8 +1226,247 @@ class MissionControlViewProvider implements vscode.WebviewViewProvider {
         await handleOpenFile(ctx, message);
         break;
 
+      case 'ordinex:loopAction':
+        await this.handleLoopAction(message, webview);
+        break;
+
+      // A9: Onboarding complete — persist the flag
+      case 'ordinex:onboardingComplete':
+        await this._context.globalState.update('ordinex.onboardingCompleted', true);
+        console.log('[A9] Onboarding completed — flag persisted');
+        break;
+
+      // Step 52: New Chat — reset extension-side state for a fresh session
+      case 'ordinex:newChat':
+        console.log('[Step52] New chat requested — resetting provider state');
+        this.currentTaskId = null;
+        this.currentMode = 'ANSWER';
+        this.currentStage = 'none';
+        this.isMissionExecuting = false;
+        this.currentExecutingMissionId = null;
+        this.recentEventsWindow = [];
+        this.activeMissionRunner = null;
+        this.activeMissionExecutor = null;
+        this.activeApprovalManager = null;
+        this.repairOrchestrator = null;
+        this.pendingCommandContexts.clear();
+        this.pendingPreflightResult = null;
+        this.pendingPreflightInput = null;
+        this.pendingPreflightCtx = null;
+        vscode.commands.executeCommand('setContext', 'ordinex.isRunning', false);
+        vscode.commands.executeCommand('setContext', 'ordinex.hasUndoableEdits', false);
+        break;
+
       default:
         console.log('Unknown message type:', message.type);
+    }
+  }
+
+  /**
+   * Handle AgenticLoop actions (Continue, Approve Partial, Discard).
+   */
+  private async handleLoopAction(message: any, webview: vscode.Webview): Promise<void> {
+    const { action, step_id, session_id, task_id } = message;
+    const taskId = task_id || this.currentTaskId;
+
+    console.log(`[handleLoopAction] action=${action}, step_id=${step_id}, session_id=${session_id}`);
+
+    if (!this.activeMissionExecutor) {
+      console.error('[handleLoopAction] No active MissionExecutor');
+      vscode.window.showErrorMessage('No active mission executor for loop action');
+      return;
+    }
+
+    const executor = this.activeMissionExecutor;
+
+    try {
+      switch (action) {
+        case 'continue_loop': {
+          // Find the step from the stored plan
+          const session = executor.getActiveLoopSession(step_id);
+          if (!session) {
+            vscode.window.showErrorMessage(`No active loop session for step ${step_id}`);
+            return;
+          }
+
+          // We need the step object — get it from events
+          const events = this.eventStore?.getEventsByTaskId(taskId) || [];
+          const stepEvent = events.find((e: Event) =>
+            e.type === 'step_started' && e.payload.step_id === step_id
+          );
+          const step = {
+            step_id,
+            description: (stepEvent?.payload.description as string) || step_id,
+          };
+
+          const result = await executor.continueLoop(step_id, step as any);
+          if (result.success) {
+            console.log('[handleLoopAction] Continue succeeded');
+          } else {
+            console.log('[handleLoopAction] Continue resulted in pause:', result.pauseReason);
+          }
+          break;
+        }
+
+        case 'approve_partial': {
+          const session = executor.getActiveLoopSession(step_id);
+          const buffer = executor.getActiveStagedBuffer(step_id);
+          if (!session || !buffer) {
+            vscode.window.showErrorMessage('No staged changes to approve');
+            return;
+          }
+
+          // Open VS Code diff viewer for each staged file so user can review
+          const workspaceRoot = this.scaffoldProjectPath
+            || vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+          if (workspaceRoot) {
+            await this.openStagedDiffs(buffer, workspaceRoot);
+          }
+
+          const events = this.eventStore?.getEventsByTaskId(taskId) || [];
+          const stepEvent = events.find((e: Event) =>
+            e.type === 'step_started' && e.payload.step_id === step_id
+          );
+          const step = {
+            step_id,
+            description: (stepEvent?.payload.description as string) || step_id,
+          };
+
+          const result = await executor.applyStagedEdits(step as any, session, buffer);
+          if (result.success) {
+            console.log('[handleLoopAction] Approve partial succeeded');
+          } else {
+            console.log('[handleLoopAction] Approve partial failed:', result.error);
+          }
+
+          // Send updated events to webview after approval completes
+          await this.sendEventsToWebview(webview, taskId);
+          break;
+        }
+
+        case 'discard_loop': {
+          executor.discardLoop(step_id);
+
+          // Emit loop_completed to close the loop lifecycle cleanly
+          await this.emitEvent({
+            event_id: this.generateId(),
+            task_id: taskId,
+            timestamp: new Date().toISOString(),
+            type: 'loop_completed',
+            mode: this.currentMode,
+            stage: this.currentStage,
+            payload: {
+              result: 'discarded',
+              step_id,
+              session_id,
+              files_applied: 0,
+              iterations: 0,
+            },
+            evidence_ids: [],
+            parent_event_id: null,
+          });
+
+          // Also emit execution_paused for status tracking
+          await this.emitEvent({
+            event_id: this.generateId(),
+            task_id: taskId,
+            timestamp: new Date().toISOString(),
+            type: 'execution_paused',
+            mode: this.currentMode,
+            stage: this.currentStage,
+            payload: {
+              reason: 'loop_discarded',
+              step_id,
+              session_id,
+            },
+            evidence_ids: [],
+            parent_event_id: null,
+          });
+
+          console.log('[handleLoopAction] Loop discarded');
+          break;
+        }
+
+        default:
+          console.warn(`[handleLoopAction] Unknown action: ${action}`);
+      }
+    } catch (error) {
+      console.error('[handleLoopAction] Error:', error);
+      vscode.window.showErrorMessage(`Loop action failed: ${error instanceof Error ? error.message : String(error)}`);
+    }
+
+    // Update webview
+    if (taskId) {
+      await this.sendEventsToWebview(webview, taskId);
+    }
+  }
+
+  /**
+   * Open VS Code diff viewer tabs for each staged file.
+   * Shows before (disk) vs after (staged) so user can review changes.
+   */
+  private async openStagedDiffs(buffer: StagedEditBuffer, workspaceRoot: string): Promise<void> {
+    const modifiedFiles = buffer.getModifiedFiles();
+    if (modifiedFiles.length === 0) return;
+
+    // Limit to 5 tabs to avoid overwhelming the editor
+    const filesToShow = modifiedFiles.slice(0, 5);
+
+    for (const stagedFile of filesToShow) {
+      try {
+        const fullPath = path.resolve(workspaceRoot, stagedFile.path);
+
+        // Read current disk content (before)
+        let beforeContent = '';
+        if (!stagedFile.isNew) {
+          try {
+            beforeContent = await fs.promises.readFile(fullPath, 'utf-8');
+          } catch {
+            beforeContent = ''; // File may not exist on disk
+          }
+        }
+
+        // Create virtual URIs for before/after content
+        const beforeUri = vscode.Uri.parse(
+          `untitled:${stagedFile.path}.before`
+        ).with({ scheme: 'ordinex-before' });
+        const afterUri = vscode.Uri.parse(
+          `untitled:${stagedFile.path}.after`
+        ).with({ scheme: 'ordinex-after' });
+
+        // Use temp files for diff since custom URI schemes need providers
+        const tmpDir = path.join(this._context.globalStorageUri.fsPath, 'diff-preview');
+        await fs.promises.mkdir(tmpDir, { recursive: true });
+
+        const safeName = stagedFile.path.replace(/[/\\]/g, '__');
+        const beforePath = path.join(tmpDir, `${safeName}.before`);
+        const afterPath = path.join(tmpDir, `${safeName}.after`);
+
+        await fs.promises.writeFile(beforePath, beforeContent, 'utf-8');
+        await fs.promises.writeFile(afterPath, stagedFile.content, 'utf-8');
+
+        const beforeFileUri = vscode.Uri.file(beforePath);
+        const afterFileUri = vscode.Uri.file(afterPath);
+
+        const label = stagedFile.isNew
+          ? `${stagedFile.path} (New File)`
+          : `${stagedFile.path} (Staged Changes)`;
+
+        await vscode.commands.executeCommand(
+          'vscode.diff',
+          beforeFileUri,
+          afterFileUri,
+          label,
+        );
+      } catch (err) {
+        console.warn(`[openStagedDiffs] Failed to open diff for ${stagedFile.path}:`, err);
+      }
+    }
+
+    if (modifiedFiles.length > 5) {
+      vscode.window.showInformationMessage(
+        `Showing diffs for first 5 of ${modifiedFiles.length} files. Review remaining files in the Mission tab.`
+      );
     }
   }
 
@@ -1373,6 +1822,8 @@ export function activate(context: vscode.ExtensionContext) {
 
       if (apiKey) {
         await context.secrets.store('ordinex.apiKey', apiKey);
+        // Reset token counter so it picks up the new key on next prompt
+        provider.resetTokenCounter();
         vscode.window.showInformationMessage('Ordinex API key saved successfully');
       }
     })
@@ -1405,70 +1856,9 @@ export function activate(context: vscode.ExtensionContext) {
       );
       panel.webview.html = getSettingsPanelContent();
 
-      // Wire up message handling
+      // Wire up message handling — delegate to extracted settings handler
       panel.webview.onDidReceiveMessage(async (message) => {
-        // Delegate to provider — we need a lightweight handler here since
-        // the command is registered outside the class. Re-use the same logic.
-        switch (message.type) {
-          case 'ordinex:settings:getAll': {
-            let apiKeyConfigured = false;
-            let apiKeyPreview = '';
-            try {
-              const storedKey = await context.secrets.get('ordinex.apiKey');
-              if (storedKey) {
-                apiKeyConfigured = true;
-                apiKeyPreview = 'sk-ant-...' + storedKey.slice(-4);
-              }
-            } catch { /* ignore */ }
-
-            const cfg = vscode.workspace.getConfiguration('ordinex');
-            panel.webview.postMessage({
-              type: 'ordinex:settings:update',
-              apiKeyConfigured,
-              apiKeyPreview,
-              commandPolicy: cfg.get<string>('commandPolicy.mode', 'prompt'),
-              autonomyLevel: cfg.get<string>('autonomy.level', 'conservative'),
-              sessionPersistence: cfg.get<string>('intelligence.sessionPersistence', 'off') === 'on',
-              extensionVersion: context.extension?.packageJSON?.version || '0.0.0',
-              workspacePath: vscode.workspace.workspaceFolders?.[0]?.uri.fsPath || '—',
-              eventStorePath: path.join(context.globalStorageUri.fsPath, 'events.jsonl'),
-              eventsCount: 0,
-            });
-            break;
-          }
-          case 'ordinex:settings:saveApiKey': {
-            const key = message.apiKey?.trim();
-            if (key && key.startsWith('sk-ant-')) {
-              await context.secrets.store('ordinex.apiKey', key);
-              panel.webview.postMessage({ type: 'ordinex:settings:saveResult', setting: 'API Key', success: true });
-            } else {
-              panel.webview.postMessage({ type: 'ordinex:settings:saveResult', setting: 'API Key', success: false, error: 'Invalid key format' });
-            }
-            break;
-          }
-          case 'ordinex:settings:clearApiKey':
-            await context.secrets.delete('ordinex.apiKey');
-            panel.webview.postMessage({ type: 'ordinex:settings:saveResult', setting: 'API Key', success: true });
-            break;
-          case 'ordinex:settings:setCommandPolicy':
-            if (['off', 'prompt', 'auto'].includes(message.mode)) {
-              await vscode.workspace.getConfiguration('ordinex.commandPolicy').update('mode', message.mode, vscode.ConfigurationTarget.Global);
-              panel.webview.postMessage({ type: 'ordinex:settings:saveResult', setting: 'Command Policy', success: true });
-            }
-            break;
-          case 'ordinex:settings:setAutonomyLevel':
-            if (['conservative', 'balanced', 'aggressive'].includes(message.level)) {
-              await vscode.workspace.getConfiguration('ordinex.autonomy').update('level', message.level, vscode.ConfigurationTarget.Global);
-              panel.webview.postMessage({ type: 'ordinex:settings:saveResult', setting: 'Autonomy Level', success: true });
-            }
-            break;
-          case 'ordinex:settings:setSessionPersistence': {
-            const val = message.enabled ? 'on' : 'off';
-            await vscode.workspace.getConfiguration('ordinex.intelligence').update('sessionPersistence', val, vscode.ConfigurationTarget.Global);
-            panel.webview.postMessage({ type: 'ordinex:settings:saveResult', setting: 'Session Persistence', success: true });
-            break;
-          }
-        }
+        await handleSettingsMessageHandler(provider as unknown as IProvider, message, panel.webview);
       });
     })
   );
@@ -1492,6 +1882,59 @@ export function activate(context: vscode.ExtensionContext) {
         }
       } else {
         vscode.window.showInformationMessage('Ordinex: Nothing to undo');
+      }
+    })
+  );
+
+  // Step 52: Keyboard shortcut commands
+  // Cmd+Shift+O — Focus/reveal the Ordinex sidebar panel
+  context.subscriptions.push(
+    vscode.commands.registerCommand('ordinex.focusPanel', () => {
+      const webviewView = (provider as any)._webviewView as vscode.WebviewView | null;
+      if (webviewView) {
+        webviewView.show(true);
+      } else {
+        // Fallback: open the sidebar view via built-in command
+        vscode.commands.executeCommand('ordinex.missionControl.focus');
+      }
+    })
+  );
+
+  // Cmd+L — Focus the prompt input inside the webview
+  context.subscriptions.push(
+    vscode.commands.registerCommand('ordinex.focusInput', () => {
+      const webviewView = (provider as any)._webviewView as vscode.WebviewView | null;
+      const webview = (provider as any)._currentWebview as vscode.Webview | null;
+      if (webviewView) {
+        webviewView.show(true);
+      }
+      if (webview) {
+        webview.postMessage({ type: 'ordinex:focusInput' });
+      }
+    })
+  );
+
+  // Cmd+Shift+N — New chat (clear conversation and focus input)
+  context.subscriptions.push(
+    vscode.commands.registerCommand('ordinex.newChat', () => {
+      const webviewView = (provider as any)._webviewView as vscode.WebviewView | null;
+      const webview = (provider as any)._currentWebview as vscode.Webview | null;
+      if (webviewView) {
+        webviewView.show(true);
+      }
+      if (webview) {
+        webview.postMessage({ type: 'ordinex:newChat' });
+      }
+    })
+  );
+
+  // Escape — Stop current execution (only when Ordinex is focused & running)
+  context.subscriptions.push(
+    vscode.commands.registerCommand('ordinex.stopExecution', () => {
+      const webview = (provider as any)._currentWebview as vscode.Webview | null;
+      const providerRef = provider as any;
+      if (providerRef.isMissionExecuting && webview) {
+        webview.postMessage({ type: 'ordinex:triggerStop' });
       }
     })
   );

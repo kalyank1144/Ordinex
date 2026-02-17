@@ -16,6 +16,7 @@ import { LLMEditStepInput, LLMEditStepOutput, LLMEditStepResult } from './llmEdi
 import { LLMConfig } from './llmService';
 import { FileContextEntry } from './excerptSelector';
 import { safeJsonParse } from './jsonRepair';
+import { resolveModel } from './modelRegistry';
 
 /**
  * Truncation detection result
@@ -683,13 +684,7 @@ export class TruncationSafeExecutor {
       apiKey: config.apiKey,
     });
 
-    const modelMap: Record<string, string> = {
-      'claude-3-haiku': 'claude-3-haiku-20240307',
-      'claude-sonnet-4-5': 'claude-sonnet-4-20250514',
-      'claude-3-sonnet': 'claude-3-sonnet-20240229',
-    };
-
-    const model = modelMap[config.model] || config.model || 'claude-3-haiku-20240307';
+    const model = resolveModel(config.model);
 
     // Retry logic for transient errors
     const MAX_RETRIES = 3;

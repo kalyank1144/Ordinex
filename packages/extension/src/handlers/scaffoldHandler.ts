@@ -40,6 +40,9 @@ import {
   extractAppNameFromPrompt,
 } from 'core';
 
+// Cross-handler imports
+import { handleSubmitPrompt } from './submitPromptHandler';
+
 // ---------------------------------------------------------------------------
 // handleScaffoldFlow
 // ---------------------------------------------------------------------------
@@ -497,8 +500,13 @@ export async function handlePreflightProceed(
 
         console.log(`${LOG_PREFIX} Starting post-scaffold orchestration with userPrompt: "${scaffoldPrompt}"`);
 
-        // Subscribe to post-scaffold events for UI updates
-        postScaffoldEventBus.subscribe(async () => {
+        // Subscribe to post-scaffold events for UI updates + capture project path
+        postScaffoldEventBus.subscribe(async (event) => {
+          // Capture project path as soon as scaffold_final_complete is emitted
+          if ((event as any).type === 'scaffold_final_complete' && (event as any).payload?.project_path) {
+            ctx.scaffoldProjectPath = (event as any).payload.project_path as string;
+            console.log(`${LOG_PREFIX} Captured scaffoldProjectPath from event: ${ctx.scaffoldProjectPath}`);
+          }
           await ctx.sendEventsToWebview(webview, taskId);
         });
 
@@ -740,7 +748,13 @@ export async function handleVerificationContinue(
 
   const taskId = ctx.currentTaskId || ctx.generateId();
 
-  // Emit final complete event
+  // Capture project path before clearing state
+  const projectPath = ctx.scaffoldProjectPath || ctx.pendingVerifyTargetDir || '';
+  if (projectPath && !ctx.scaffoldProjectPath) {
+    ctx.scaffoldProjectPath = projectPath;
+  }
+
+  // Emit final complete event (include project_path so buttons work)
   await ctx.emitEvent({
     event_id: ctx.generateId(),
     task_id: taskId,
@@ -750,6 +764,7 @@ export async function handleVerificationContinue(
     stage: ctx.currentStage,
     payload: {
       scaffold_id: message.scaffoldId,
+      project_path: projectPath,
       verification_outcome: 'continued_with_warnings',
       completed_at_iso: new Date().toISOString(),
     },
@@ -792,19 +807,40 @@ export async function handleNextStepSelected(
   let kind: string = message.kind || '';
   let suggestion: any = message.suggestion || {};
 
+  // Resolve project path — scaffoldProjectPath (happy path) > pendingVerifyTargetDir > event store lookup
+  let resolvedProjectPath = ctx.scaffoldProjectPath || ctx.pendingVerifyTargetDir || '';
+
+  // Fallback: look up project_path from scaffold_final_complete event in store
+  if (!resolvedProjectPath && ctx.eventStore) {
+    const taskId_ = ctx.currentTaskId || '';
+    const allEvents = taskId_ ? ctx.eventStore.getEventsByTaskId(taskId_) : [];
+    const finalComplete = allEvents.find((e: any) => e.type === 'scaffold_final_complete');
+    if (finalComplete?.payload?.project_path) {
+      resolvedProjectPath = finalComplete.payload.project_path as string;
+      ctx.scaffoldProjectPath = resolvedProjectPath; // Cache for next time
+      console.log(`${LOG_PREFIX} Resolved project path from event store: ${resolvedProjectPath}`);
+    }
+  }
+
+  // Last-resort fallback: check message itself (webview may send project_path)
+  if (!resolvedProjectPath && message.project_path) {
+    resolvedProjectPath = message.project_path;
+    console.log(`${LOG_PREFIX} Using project path from message: ${resolvedProjectPath}`);
+  }
+
   // S3: Handle S2 default buttons — step_id shortcuts without explicit kind
   if (!kind && suggestionId === 'dev_server') {
     kind = 'command';
     suggestion = {
       command: message.command || 'npm run dev',
-      projectPath: ctx.pendingVerifyTargetDir || '',
+      projectPath: resolvedProjectPath,
     };
   } else if (!kind && suggestionId === 'open_editor') {
     kind = 'editor';
   } else if (!kind && message.command) {
     // Dynamic next steps with command field
     kind = 'command';
-    suggestion = { command: message.command, projectPath: ctx.pendingVerifyTargetDir || '' };
+    suggestion = { command: message.command, projectPath: resolvedProjectPath };
   }
 
   console.log(`${LOG_PREFIX} Action selected: kind=${kind}, suggestionId=${suggestionId}`);
@@ -815,7 +851,7 @@ export async function handleNextStepSelected(
     switch (kind) {
       case 'command': {
         // Run command via ProcessManager (generic — any command in cwd)
-        const projectPath = suggestion?.projectPath || suggestion?.target_directory || ctx.pendingVerifyTargetDir;
+        const projectPath = suggestion?.projectPath || suggestion?.target_directory || resolvedProjectPath;
         if (!projectPath) {
           vscode.window.showWarningMessage('No project path available to run command.');
           return;
@@ -828,7 +864,12 @@ export async function handleNextStepSelected(
         }
         console.log(`${LOG_PREFIX} Starting process: ${commandStr} in ${projectPath}`);
 
-        // Emit process_started event
+        // Use ProcessManager to start the process
+        const pm = getProcessManager();
+        const processId = generateProcessId('devserver');
+        const processType = detectProcessType(commandStr);
+
+        // Emit process_started event (must include process_id for card keying)
         await ctx.emitEvent({
           event_id: ctx.generateId(),
           task_id: taskId,
@@ -838,6 +879,7 @@ export async function handleNextStepSelected(
           stage: ctx.currentStage,
           payload: {
             scaffold_id: scaffoldId,
+            process_id: processId,
             command: commandStr,
             project_path: projectPath,
             message: `Starting: ${commandStr}`,
@@ -846,11 +888,6 @@ export async function handleNextStepSelected(
           parent_event_id: null,
         });
         await ctx.sendEventsToWebview(webview, taskId);
-
-        // Use ProcessManager to start the process
-        const pm = getProcessManager();
-        const processId = generateProcessId('devserver');
-        const processType = detectProcessType(commandStr);
 
         // Wire ProcessManager events to Ordinex events
         const statusHandler = async (evt: ProcessStatusEvent) => {
@@ -1038,13 +1075,58 @@ export async function handleNextStepSelected(
 
       case 'editor': {
         // S3: Open project folder in editor
-        const editorPath = suggestion?.projectPath || ctx.pendingVerifyTargetDir;
+        const editorPath = suggestion?.projectPath || resolvedProjectPath;
         if (editorPath) {
           console.log(`${LOG_PREFIX} Opening in editor: ${editorPath}`);
           const uri = vscode.Uri.file(editorPath);
           await vscode.commands.executeCommand('vscode.openFolder', uri, { forceNewWindow: false });
         } else {
           vscode.window.showWarningMessage('No project path available to open.');
+        }
+        break;
+      }
+
+      case 'plan':
+      case 'quick_action': {
+        // Look up promptTemplate from next_steps_shown event in event store
+        const nextStepsEvents = ctx.eventStore?.getEventsByTaskId(taskId) || [];
+        const nextStepsEvt = nextStepsEvents.find((e: any) => e.type === 'next_steps_shown');
+        const allSuggestions = (nextStepsEvt?.payload as any)?.suggestions || [];
+        const matchedSuggestion = allSuggestions.find((s: any) => (s.id || s.action) === suggestionId);
+        const promptTemplate = matchedSuggestion?.promptTemplate || suggestion?.promptTemplate || '';
+
+        if (promptTemplate) {
+          console.log(`${LOG_PREFIX} Routing ${kind} suggestion to submit prompt: ${promptTemplate.slice(0, 80)}...`);
+          // Emit next_step_selected so the timeline shows which step was clicked
+          await ctx.emitEvent({
+            event_id: ctx.generateId(),
+            task_id: taskId,
+            timestamp: new Date().toISOString(),
+            type: 'next_step_selected' as any,
+            mode: ctx.currentMode,
+            stage: ctx.currentStage,
+            payload: {
+              scaffold_id: scaffoldId,
+              suggestion_id: suggestionId,
+              kind,
+              title: matchedSuggestion?.title || suggestion?.title || '',
+            },
+            evidence_ids: [],
+            parent_event_id: null,
+          });
+          await ctx.sendEventsToWebview(webview, taskId);
+
+          // Start a new task for this feature request
+          ctx.currentTaskId = null;
+          const targetMode = kind === 'plan' ? 'PLAN' : 'MISSION';
+          await handleSubmitPrompt(ctx, {
+            text: promptTemplate,
+            userSelectedMode: targetMode,
+          }, webview);
+        } else {
+          vscode.window.showInformationMessage(
+            `Feature suggestion: ${matchedSuggestion?.title || suggestionId}. No prompt template available.`
+          );
         }
         break;
       }

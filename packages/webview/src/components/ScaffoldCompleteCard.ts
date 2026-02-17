@@ -18,6 +18,7 @@ interface NextStep {
   label: string;
   description?: string;
   command?: string;
+  kind?: string;
 }
 
 interface ScaffoldCompleteState {
@@ -112,12 +113,14 @@ export function updateScaffoldComplete(event: any): { handled: boolean; scaffold
   }
 
   if (event.type === 'next_steps_shown') {
-    const steps = (payload.steps || payload.next_steps || []) as any[];
+    const steps = (payload.suggestions || payload.steps || payload.next_steps || []) as any[];
     state.nextSteps = steps.map((s: any) => ({
       id: s.id || s.action || '',
       label: s.label || s.title || s.action || '',
       description: s.description || '',
-      command: s.command || '',
+      // command may be a NextStepCommand object {cmd, cwd, longRunning} or a string
+      command: typeof s.command === 'string' ? s.command : (s.command?.cmd || ''),
+      kind: s.kind || '',
     }));
     state.hasNextSteps = state.nextSteps.length > 0;
   }
@@ -153,7 +156,7 @@ function buildCompleteCardHtml(state: ScaffoldCompleteState): string {
     : '';
 
   // Next steps actions
-  const actionsHtml = state.hasNextSteps ? buildNextStepsHtml(state.nextSteps, state.scaffoldId) : buildDefaultActions(state.scaffoldId);
+  const actionsHtml = state.hasNextSteps ? buildNextStepsHtml(state.nextSteps, state.scaffoldId, state.projectPath) : buildDefaultActions(state.scaffoldId, state.projectPath);
 
   return `
     <div class="scaffold-complete-card ${headerClass}" data-scaffold-complete-id="${escapeHtml(state.scaffoldId)}">
@@ -267,28 +270,32 @@ function buildVerifyBadge(state: ScaffoldCompleteState): string {
   return `<div class="sc-badge ${outcome}"><span class="sc-badge-icon">${icon}</span> ${escapeHtml(label)}</div>`;
 }
 
-function buildNextStepsHtml(steps: NextStep[], scaffoldId: string): string {
+function buildNextStepsHtml(steps: NextStep[], scaffoldId: string, projectPath?: string): string {
   // First step gets primary styling, rest get secondary
+  const pp = escapeHtml(projectPath || '');
   return steps.map((step, i) => {
     const cls = i === 0 ? 'primary' : 'secondary';
     const eid = escapeHtml(scaffoldId);
     const sid = escapeHtml(step.id);
+    const cmd = escapeHtml(step.command || '');
+    const kind = escapeHtml(step.kind || '');
     return `<button class="sc-action-btn ${cls}" onclick="(function(){
       const vscode = acquireVsCodeApi ? acquireVsCodeApi() : (window.__vscode || { postMessage: function(){} });
-      vscode.postMessage({ type: 'next_step_selected', scaffold_id: '${eid}', step_id: '${sid}', command: '${escapeHtml(step.command || '')}' });
+      vscode.postMessage({ type: 'next_step_selected', scaffold_id: '${eid}', step_id: '${sid}', kind: '${kind}', command: '${cmd}', project_path: '${pp}' });
     })()">${escapeHtml(step.label)}</button>`;
   }).join('');
 }
 
-function buildDefaultActions(scaffoldId: string): string {
+function buildDefaultActions(scaffoldId: string, projectPath?: string): string {
   const eid = escapeHtml(scaffoldId);
+  const pp = escapeHtml(projectPath || '');
   return `
     <button class="sc-action-btn primary" onclick="(function(){
       var vscode = acquireVsCodeApi ? acquireVsCodeApi() : (window.__vscode || { postMessage: function(){} });
-      vscode.postMessage({ type: 'next_step_selected', scaffold_id: '${eid}', step_id: 'dev_server' });
+      vscode.postMessage({ type: 'next_step_selected', scaffold_id: '${eid}', step_id: 'dev_server', project_path: '${pp}' });
     })()">Start Dev Server</button>
     <button class="sc-action-btn secondary" onclick="(function(){
       var vscode = acquireVsCodeApi ? acquireVsCodeApi() : (window.__vscode || { postMessage: function(){} });
-      vscode.postMessage({ type: 'next_step_selected', scaffold_id: '${eid}', step_id: 'open_editor' });
+      vscode.postMessage({ type: 'next_step_selected', scaffold_id: '${eid}', step_id: 'open_editor', project_path: '${pp}' });
     })()">Open in Editor</button>`;
 }

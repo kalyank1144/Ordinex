@@ -578,26 +578,31 @@ function checkCompleteness(
   }
   
   // Check 2: Vague scope without file context
-  const vagueScopePatterns = [
-    'improve', 'enhance', 'optimize', 'update', 'change', 'modify',
-  ];
-  const hasVagueScope = vagueScopePatterns.some(p => normalizedPrompt.includes(p));
-  const hasNoFileContext = extractReferencedFiles(prompt).length === 0 && !referenceResult.files?.length;
-  
-  if (hasVagueScope && hasNoFileContext) {
-    return {
-      complete: false,
-      reason: 'Unclear scope - no specific file or component mentioned',
-      clarification: {
-        question: 'Which file(s) or component(s) should be modified?',
-        options: [
-          { label: 'Currently open file', action: 'provide_file', value: context.lastOpenEditor },
-          { label: 'Specify file(s)', action: 'provide_file' },
-          { label: 'Apply to entire project', action: 'provide_scope', value: 'project' },
-          { label: 'Cancel', action: 'cancel' },
-        ],
-      },
-    };
+  // Only trigger for very short prompts (< 4 words). The agent has search tools
+  // to find the right files — it doesn't need the user to specify them manually.
+  const wordCount = normalizedPrompt.split(/\s+/).filter(w => w.length > 0).length;
+  if (wordCount < 4) {
+    const vagueScopePatterns = [
+      'improve', 'enhance', 'optimize', 'update', 'change', 'modify',
+    ];
+    const hasVagueScope = vagueScopePatterns.some(p => normalizedPrompt.includes(p));
+    const hasNoFileContext = extractReferencedFiles(prompt).length === 0 && !referenceResult.files?.length;
+    
+    if (hasVagueScope && hasNoFileContext) {
+      return {
+        complete: false,
+        reason: 'Unclear scope - no specific file or component mentioned',
+        clarification: {
+          question: 'Which file(s) or component(s) should be modified?',
+          options: [
+            { label: 'Currently open file', action: 'provide_file', value: context.lastOpenEditor },
+            { label: 'Specify file(s)', action: 'provide_file' },
+            { label: 'Apply to entire project', action: 'provide_scope', value: 'project' },
+            { label: 'Cancel', action: 'cancel' },
+          ],
+        },
+      };
+    }
   }
   
   // Check 3: Ambiguous intent

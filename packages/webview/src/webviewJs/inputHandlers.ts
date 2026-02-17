@@ -40,8 +40,9 @@ export function getInputHandlersJs(): string {
         promptInput.value = '';
         autoResizeTextarea();
 
-        // Clear previous streaming answer when starting new task
-        state.streamingAnswer = null;
+        // Note: Don't clear state.streamingAnswer here — completed answers should
+        // persist in the timeline. It will reset when new streaming starts
+        // (streamDelta handler resets when isComplete is true).
 
         // PHASE 4: Upload all pending attachments BEFORE sending prompt
         let attachmentRefs = [];
@@ -85,13 +86,36 @@ export function getInputHandlersJs(): string {
         }
       });
 
-      // Handle Clear
+      // Handle Clear (no confirm() — webview is sandboxed, modals are blocked)
       clearBtn.addEventListener('click', () => {
         if (state.events.length === 0 && state.narrationCards.length === 0) return;
 
-        if (confirm('Clear all mission data?')) {
+        state.events = [];
+        state.narrationCards = [];
+        state.counters = {
+          filesInScope: 0,
+          filesTouched: 0,
+          linesIncluded: 0,
+          toolCallsUsed: 0,
+          toolCallsMax: 100
+        };
+        updateStatus('ready');
+        updateStage('none');
+        renderMission();
+        renderLogs();
+        renderSystemsCounters();
+      });
+
+      // Handle New Chat button (header icon)
+      if (newChatBtn) {
+        newChatBtn.addEventListener('click', function() {
+          // Reset all state (no confirm() — webview is sandboxed, modals are blocked)
           state.events = [];
           state.narrationCards = [];
+          state.streamingMission = null;
+          state._completedMissionBlocks = [];
+          state.streamingAnswer = null;
+          state._completedAnswers = [];
           state.counters = {
             filesInScope: 0,
             filesTouched: 0,
@@ -99,13 +123,36 @@ export function getInputHandlersJs(): string {
             toolCallsUsed: 0,
             toolCallsMax: 100
           };
+          state.currentStage = 'none';
+          state.pendingScopeExpansion = null;
+
+          // Reset UI
           updateStatus('ready');
           updateStage('none');
           renderMission();
           renderLogs();
           renderSystemsCounters();
-        }
-      });
+
+          // Clear and focus input
+          if (promptInput) {
+            promptInput.value = '';
+            promptInput.focus();
+          }
+          if (typeof autoResizeTextarea === 'function') {
+            autoResizeTextarea();
+          }
+          if (typeof updateSendStopButton === 'function') {
+            updateSendStopButton();
+          }
+
+          // Notify extension backend to reset its state
+          if (typeof vscode !== 'undefined') {
+            vscode.postMessage({ type: 'ordinex:newChat' });
+          }
+
+          console.log('[NewChat] Chat cleared and reset');
+        });
+      }
 
       // Handle Mode Change
       modeSelect.addEventListener('change', () => {
@@ -170,9 +217,9 @@ export function getInputHandlersJs(): string {
 
       promptInput.addEventListener('input', autoResizeTextarea);
 
-      // Keyboard shortcuts
+      // Keyboard shortcuts — Enter sends, Shift+Enter inserts newline
       promptInput.addEventListener('keydown', (e) => {
-        if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
+        if (e.key === 'Enter' && !e.shiftKey) {
           e.preventDefault();
           sendBtn.click();
         }

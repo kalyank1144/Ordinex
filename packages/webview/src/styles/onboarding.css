@@ -1,0 +1,378 @@
+/* A9: Onboarding Flow Styles */
+
+.onboarding-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: var(--vscode-editor-background);
+  z-index: 9999;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+}
+
+.onboarding-container {
+  width: 100%;
+  max-width: 420px;
+  padding: 0 20px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  animation: onb-fadeIn 0.5s ease;
+}
+
+/* Slide transitions */
+.onboarding-slide {
+  display: none;
+  width: 100%;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  animation: onb-slideIn 0.4s ease;
+}
+
+.onboarding-slide.active {
+  display: flex;
+}
+
+@keyframes onb-fadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes onb-slideIn {
+  from { opacity: 0; transform: translateY(16px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes onb-pulse {
+  0%, 100% { transform: scale(1); }
+  50% { transform: scale(1.05); }
+}
+
+@keyframes onb-float {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-6px); }
+}
+
+/* Logo / Brand */
+.onb-logo {
+  font-size: 40px;
+  margin-bottom: 12px;
+  animation: onb-float 3s ease-in-out infinite;
+}
+
+.onb-brand {
+  font-size: 26px;
+  font-weight: 800;
+  letter-spacing: -0.5px;
+  background: linear-gradient(135deg, #6c5ce7, #a29bfe, #74b9ff);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+  margin-bottom: 6px;
+}
+
+.onb-tagline {
+  font-size: 13px;
+  color: var(--vscode-descriptionForeground);
+  line-height: 1.5;
+  margin-bottom: 24px;
+  max-width: 320px;
+}
+
+/* Differentiators */
+.onb-features {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  width: 100%;
+  margin-bottom: 28px;
+}
+
+.onb-feature {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 14px;
+  background: var(--vscode-input-background);
+  border-radius: 10px;
+  border: 1px solid var(--vscode-panel-border);
+  text-align: left;
+  transition: border-color 0.2s, transform 0.2s;
+}
+
+.onb-feature:hover {
+  border-color: rgba(108, 92, 231, 0.4);
+  transform: translateX(2px);
+}
+
+.onb-feature-icon {
+  font-size: 20px;
+  flex-shrink: 0;
+  width: 36px;
+  height: 36px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 8px;
+  background: rgba(108, 92, 231, 0.12);
+}
+
+.onb-feature-text {
+  flex: 1;
+}
+
+.onb-feature-title {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--vscode-foreground);
+  margin-bottom: 2px;
+}
+
+.onb-feature-desc {
+  font-size: 11px;
+  color: var(--vscode-descriptionForeground);
+  line-height: 1.4;
+}
+
+/* Mode Cards (Slide 2) */
+.onb-modes {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  width: 100%;
+  margin-bottom: 28px;
+}
+
+.onb-mode-card {
+  padding: 14px 16px;
+  border-radius: 10px;
+  border: 1px solid var(--vscode-panel-border);
+  text-align: left;
+  transition: border-color 0.2s, transform 0.2s;
+  position: relative;
+  overflow: hidden;
+}
+
+.onb-mode-card::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 4px;
+  height: 100%;
+}
+
+.onb-mode-card.answer { background: rgba(116, 185, 255, 0.06); }
+.onb-mode-card.answer::before { background: #74b9ff; }
+
+.onb-mode-card.plan { background: rgba(108, 92, 231, 0.06); }
+.onb-mode-card.plan::before { background: #6c5ce7; }
+
+.onb-mode-card.mission { background: rgba(0, 184, 148, 0.06); }
+.onb-mode-card.mission::before { background: #00b894; }
+
+.onb-mode-card:hover {
+  transform: translateX(2px);
+}
+
+.onb-mode-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+
+.onb-mode-icon {
+  font-size: 16px;
+}
+
+.onb-mode-name {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--vscode-foreground);
+}
+
+.onb-mode-badge {
+  font-size: 9px;
+  font-weight: 600;
+  padding: 2px 8px;
+  border-radius: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.onb-mode-card.answer .onb-mode-badge { background: rgba(116,185,255,0.2); color: #74b9ff; }
+.onb-mode-card.plan .onb-mode-badge { background: rgba(108,92,231,0.2); color: #a29bfe; }
+.onb-mode-card.mission .onb-mode-badge { background: rgba(0,184,148,0.2); color: #55efc4; }
+
+.onb-mode-desc {
+  font-size: 11px;
+  color: var(--vscode-descriptionForeground);
+  line-height: 1.5;
+  padding-left: 24px;
+}
+
+/* Sample Prompts (Slide 3) */
+.onb-prompts {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: 100%;
+  margin-bottom: 28px;
+}
+
+.onb-prompt {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 14px;
+  background: var(--vscode-input-background);
+  border: 1px solid var(--vscode-panel-border);
+  border-radius: 8px;
+  cursor: pointer;
+  text-align: left;
+  transition: all 0.2s;
+  color: var(--vscode-foreground);
+  font-family: inherit;
+  font-size: 12px;
+  width: 100%;
+}
+
+.onb-prompt:hover {
+  border-color: rgba(108, 92, 231, 0.5);
+  background: rgba(108, 92, 231, 0.08);
+  transform: translateY(-1px);
+}
+
+.onb-prompt-icon {
+  font-size: 16px;
+  flex-shrink: 0;
+}
+
+.onb-prompt-text {
+  flex: 1;
+  line-height: 1.4;
+}
+
+.onb-prompt-mode {
+  font-size: 9px;
+  font-weight: 600;
+  padding: 2px 6px;
+  border-radius: 8px;
+  flex-shrink: 0;
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+}
+
+.onb-prompt-mode.answer { background: rgba(116,185,255,0.2); color: #74b9ff; }
+.onb-prompt-mode.plan { background: rgba(108,92,231,0.2); color: #a29bfe; }
+.onb-prompt-mode.mission { background: rgba(0,184,148,0.2); color: #55efc4; }
+
+/* Buttons */
+.onb-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  width: 100%;
+  max-width: 300px;
+}
+
+.onb-btn-primary {
+  padding: 12px 24px;
+  border: none;
+  border-radius: 8px;
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: all 0.2s;
+  background: linear-gradient(135deg, #6c5ce7, #a29bfe);
+  color: #fff;
+  font-family: inherit;
+  width: 100%;
+}
+
+.onb-btn-primary:hover {
+  opacity: 0.9;
+  transform: translateY(-1px);
+}
+
+.onb-btn-secondary {
+  padding: 8px 16px;
+  border: none;
+  border-radius: 8px;
+  font-size: 12px;
+  cursor: pointer;
+  background: transparent;
+  color: var(--vscode-descriptionForeground);
+  font-family: inherit;
+  width: 100%;
+  transition: color 0.2s;
+}
+
+.onb-btn-secondary:hover {
+  color: var(--vscode-foreground);
+}
+
+/* Progress dots */
+.onb-dots {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 24px;
+}
+
+.onb-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--vscode-panel-border);
+  transition: all 0.3s;
+}
+
+.onb-dot.active {
+  background: #6c5ce7;
+  width: 24px;
+  border-radius: 4px;
+}
+
+/* Slide title */
+.onb-slide-title {
+  font-size: 18px;
+  font-weight: 700;
+  color: var(--vscode-foreground);
+  margin-bottom: 6px;
+}
+
+.onb-slide-subtitle {
+  font-size: 12px;
+  color: var(--vscode-descriptionForeground);
+  margin-bottom: 20px;
+  line-height: 1.5;
+  max-width: 320px;
+}
+
+/* Ready state (final slide) */
+.onb-ready-icon {
+  font-size: 48px;
+  margin-bottom: 12px;
+  animation: onb-pulse 2s ease-in-out infinite;
+}
+
+.onb-ready-text {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--vscode-foreground);
+  margin-bottom: 8px;
+}
+
+.onb-ready-hint {
+  font-size: 11px;
+  color: var(--vscode-descriptionForeground);
+  margin-bottom: 24px;
+  line-height: 1.5;
+}

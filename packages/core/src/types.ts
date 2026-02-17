@@ -206,7 +206,11 @@ export type EventType =
   // Step 48: Undo System
   | 'undo_performed'
   // Step 49: Error Recovery UX
-  | 'recovery_action_taken';
+  | 'recovery_action_taken'
+  // AgenticLoop Integration: Loop Pause + Continue
+  | 'loop_paused'
+  | 'loop_continued'
+  | 'loop_completed';
 
 export const CANONICAL_EVENT_TYPES: readonly EventType[] = [
   'intent_received',
@@ -401,6 +405,10 @@ export const CANONICAL_EVENT_TYPES: readonly EventType[] = [
   'undo_performed',
   // Step 49: Error Recovery UX
   'recovery_action_taken',
+  // AgenticLoop Integration: Loop Pause + Continue
+  'loop_paused',
+  'loop_continued',
+  'loop_completed',
 ] as const;
 
 export type Mode = 'ANSWER' | 'PLAN' | 'MISSION';

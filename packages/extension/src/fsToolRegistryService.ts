@@ -7,11 +7,13 @@
  *   .ordinex/tools/generated/
  *     registry.json          ← approved tool metadata (source of truth)
  *     <name>.js              ← individual tool code files
+ *
+ * P2-3: All FS operations converted to async (fs.promises)
  */
 
-import * as fs from 'fs';
 import * as path from 'path';
 import * as crypto from 'crypto';
+import { promises as fsp } from 'fs';
 import type { ToolRegistryService, ToolRegistry, ToolEntry, ToolMetadata } from 'core';
 
 export class FsToolRegistryService implements ToolRegistryService {
@@ -24,18 +26,18 @@ export class FsToolRegistryService implements ToolRegistryService {
     this.registryPath = path.join(generatedToolsRoot, 'registry.json');
   }
 
-  private ensureDirs(): void {
+  private async ensureDirs(): Promise<void> {
     if (this.initialized) return;
-    fs.mkdirSync(this.toolsDir, { recursive: true });
+    await fsp.mkdir(this.toolsDir, { recursive: true });
     this.initialized = true;
   }
 
   async saveTool(name: string, code: string, metadata: ToolMetadata): Promise<void> {
-    this.ensureDirs();
+    await this.ensureDirs();
 
     // Write code file
     const codePath = path.join(this.toolsDir, `${name}.js`);
-    fs.writeFileSync(codePath, code, 'utf-8');
+    await fsp.writeFile(codePath, code, 'utf-8');
 
     // Compute SHA-256 hash of the code
     const codeHash = crypto.createHash('sha256').update(code).digest('hex');
@@ -60,12 +62,12 @@ export class FsToolRegistryService implements ToolRegistryService {
       registry.tools.push(entry);
     }
 
-    fs.writeFileSync(this.registryPath, JSON.stringify(registry, null, 2), 'utf-8');
+    await fsp.writeFile(this.registryPath, JSON.stringify(registry, null, 2), 'utf-8');
   }
 
   async loadRegistry(): Promise<ToolRegistry> {
     try {
-      const content = fs.readFileSync(this.registryPath, 'utf-8');
+      const content = await fsp.readFile(this.registryPath, 'utf-8');
       const parsed = JSON.parse(content);
       if (parsed && parsed.version === 1 && Array.isArray(parsed.tools)) {
         return parsed as ToolRegistry;
@@ -82,12 +84,12 @@ export class FsToolRegistryService implements ToolRegistryService {
   }
 
   async deleteTool(name: string): Promise<void> {
-    this.ensureDirs();
+    await this.ensureDirs();
 
     // Remove code file
     const codePath = path.join(this.toolsDir, `${name}.js`);
     try {
-      fs.unlinkSync(codePath);
+      await fsp.unlink(codePath);
     } catch {
       // File may not exist — ignore
     }
@@ -95,13 +97,13 @@ export class FsToolRegistryService implements ToolRegistryService {
     // Remove from registry
     const registry = await this.loadRegistry();
     registry.tools = registry.tools.filter(t => t.name !== name);
-    fs.writeFileSync(this.registryPath, JSON.stringify(registry, null, 2), 'utf-8');
+    await fsp.writeFile(this.registryPath, JSON.stringify(registry, null, 2), 'utf-8');
   }
 
   async loadToolCode(name: string): Promise<string | null> {
     try {
       const codePath = path.join(this.toolsDir, `${name}.js`);
-      return fs.readFileSync(codePath, 'utf-8');
+      return await fsp.readFile(codePath, 'utf-8');
     } catch {
       return null;
     }

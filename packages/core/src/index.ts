@@ -97,13 +97,7 @@ export {
   DiffProposal,
   DiffApplicationResult
 } from './diffManager';
-export {
-  generateDiffProposal,
-  isFileInScope,
-  validateDiffAgainstScope,
-  DiffProposalInput,
-  DiffProposalOutput
-} from './diffProposalGenerator';
+// diffProposalGenerator removed (dead code — never called)
 
 // Export autonomy controller
 export {
@@ -135,6 +129,8 @@ export {
   DiagnosisResult,
   RepairIterationResult
 } from './repairOrchestrator';
+
+export type { ReadFileFn } from './repairOrchestrator';
 
 // Export test runner
 export {
@@ -221,6 +217,79 @@ export {
   ExportResult
 } from './runExporter';
 
+// Export Model Registry (A10 — single source of truth for model IDs)
+export {
+  MODEL_MAP,
+  DEFAULT_MODEL,
+  FAST_MODEL,
+  CAPABLE_MODEL,
+  EDIT_MODEL,
+  resolveModel,
+  didModelFallback,
+  MODEL_CONTEXT_WINDOWS,
+  MODEL_MAX_OUTPUT_TOKENS,
+  getContextWindow,
+  getMaxOutputTokens,
+} from './modelRegistry';
+
+// Export Token Counter (Task #5 — context window management)
+export {
+  CharacterTokenCounter,
+  estimateTokensImproved,
+  isLikelyCode,
+  validateContextFits,
+  validateContextFitsSync,
+  CHARS_PER_TOKEN,
+  FIXED_TOKEN_COSTS,
+} from './tokenCounter';
+
+export type {
+  TokenCounter,
+  TokenCountResult,
+  ContextFitResult,
+} from './tokenCounter';
+
+// Export Agentic Loop (A3 — LLM ↔ tool execution loop)
+export { AgenticLoop } from './agenticLoop';
+export type {
+  ToolExecutionProvider,
+  ToolExecutionResult,
+  LLMClient,
+  LLMClientResponse,
+  AgenticLoopConfig,
+  AgenticLoopResult,
+} from './agenticLoop';
+
+// Export Conversation History (A2 — multi-turn conversation)
+export {
+  ConversationHistory,
+} from './conversationHistory';
+
+export type {
+  ConversationMessage,
+  ConversationHistoryConfig,
+  ContentBlock,
+} from './conversationHistory';
+
+// Export Tool Schemas (A3 — Anthropic function calling)
+export {
+  ALL_TOOLS,
+  READ_ONLY_TOOLS,
+  WRITE_TOOLS,
+  EXEC_TOOLS,
+  READ_FILE_TOOL,
+  WRITE_FILE_TOOL,
+  EDIT_FILE_TOOL,
+  RUN_COMMAND_TOOL,
+  SEARCH_FILES_TOOL,
+  LIST_DIRECTORY_TOOL,
+  toolNameToCategory,
+  getToolSchema,
+  buildToolsParam,
+} from './toolSchemas';
+
+export type { ToolSchema } from './toolSchemas';
+
 // Export LLM service
 export {
   LLMService,
@@ -249,6 +318,39 @@ export {
 export {
   MissionExecutor
 } from './missionExecutor';
+
+// Export StagedEditBuffer (AgenticLoop Integration)
+export {
+  StagedEditBuffer,
+} from './stagedEditBuffer';
+
+export type {
+  StagedFile,
+  StagedBufferSnapshot,
+  EditResult,
+} from './stagedEditBuffer';
+
+// Export StagedToolProvider (AgenticLoop Integration)
+export {
+  StagedToolProvider,
+} from './stagedToolProvider';
+
+// Export LoopSessionState (AgenticLoop Integration)
+export {
+  createLoopSession,
+  canContinue,
+  maxTotalIterations,
+  isIterationBudgetExhausted,
+  remainingContinues,
+  updateSessionAfterRun,
+  incrementContinue,
+  buildLoopPausedPayload,
+} from './loopSessionState';
+
+export type {
+  LoopSession,
+  LoopPauseReason,
+} from './loopSessionState';
 
 // Export Mission Runner (Step 27 - Mission Execution Harness)
 export {
@@ -853,6 +955,7 @@ export {
   CheckpointManagerV2,
   initCheckpointManagerV2,
   getCheckpointManagerV2,
+  resetCheckpointManagerV2,
   createPreScaffoldCheckpoint,
   createPreMissionCheckpoint,
   createPreEditCheckpoint,

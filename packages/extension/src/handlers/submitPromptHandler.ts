@@ -15,6 +15,7 @@ import type {
   Mode,
   Event,
   StructuredPlan,
+  CommandMode,
 } from 'core';
 import * as vscode from 'vscode';
 import {
@@ -30,7 +31,6 @@ import {
   runCommandPhase,
   CommandPhaseContext,
   resolveCommandPolicy,
-  DEFAULT_COMMAND_POLICY,
   EventBus,
   InMemoryEvidenceStore,
 } from 'core';
@@ -200,7 +200,10 @@ export async function handleSubmitPrompt(
     }
 
     // 2b. Handle clarification needed from enrichment
-    if (enrichedInput?.clarificationNeeded) {
+    // Skip for PLAN mode — planHandler has its own clarification mechanism
+    // (clarification_presented) with interactive UI. Blocking here would leave
+    // the user stuck since clarification_requested has no response handler.
+    if (enrichedInput?.clarificationNeeded && userSelectedMode !== 'PLAN') {
       console.log('[Step40.5] Clarification needed:', enrichedInput.clarificationQuestion);
       await ctx.emitEvent({
         event_id: ctx.generateId(),
@@ -233,6 +236,8 @@ export async function handleSubmitPrompt(
       });
       await ctx.sendEventsToWebview(webview, taskId);
       return;
+    } else if (enrichedInput?.clarificationNeeded) {
+      console.log('[Step40.5] Clarification needed but skipping for PLAN mode — planHandler will handle');
     }
 
     // 3. STEP 33: Build intent analysis context
@@ -298,7 +303,7 @@ export async function handleSubmitPrompt(
               analysis = {
                 ...analysis,
                 behavior: mappedBehavior as any,
-                derived_mode: (llmResult.intent === 'ANSWER' ? 'ANSWER' : llmResult.intent === 'SCAFFOLD' ? 'SCAFFOLD' : 'MISSION') as Mode,
+                derived_mode: (llmResult.intent === 'ANSWER' ? 'ANSWER' : llmResult.intent === 'PLAN' ? 'PLAN' : llmResult.intent === 'SCAFFOLD' ? 'SCAFFOLD' : 'MISSION') as Mode,
                 reasoning: `LLM classifier: ${llmResult.reason}`,
                 confidence: llmResult.confidence,
               };
@@ -348,10 +353,20 @@ export async function handleSubmitPrompt(
       evidence_ids: [],
       parent_event_id: null,
     });
-    await ctx.setModeWithEvent(analysis.derived_mode, taskId, {
-      reason: `Intent analysis derived mode: ${analysis.behavior}`,
-      user_initiated: false,
-    });
+    // Respect user's explicit mode selection: only override if intent analysis
+    // agrees with the user, or if the user hasn't selected a specific mode.
+    // This prevents V9 mode_violation events from non-user-initiated escalations.
+    const effectiveMode = (userSelectedMode === 'ANSWER' || userSelectedMode === 'PLAN' || userSelectedMode === 'MISSION')
+      ? userSelectedMode as Mode
+      : analysis.derived_mode;
+    if (effectiveMode !== ctx.currentMode) {
+      await ctx.setModeWithEvent(effectiveMode, taskId, {
+        reason: effectiveMode === userSelectedMode
+          ? `User selected mode: ${userSelectedMode}`
+          : `Intent analysis derived mode: ${analysis.behavior}`,
+        user_initiated: effectiveMode === userSelectedMode,
+      });
+    }
     await ctx.sendEventsToWebview(webview, taskId);
 
     // 5. STEP 35 FIX: SCAFFOLD CHECK BEFORE BEHAVIOR SWITCH
@@ -374,9 +389,16 @@ export async function handleSubmitPrompt(
     }
 
     // 6. STEP 33: Handle behavior-specific logic (non-scaffold)
-    console.log(`[Step33] Executing behavior: ${analysis.behavior}`);
+    // User's explicit mode selection overrides heuristic behavior for PLAN and ANSWER modes.
+    // This ensures the user gets the mode they explicitly chose in the dropdown.
+    const effectiveBehavior = (userSelectedMode === 'PLAN' && analysis.behavior !== 'CLARIFY' && analysis.behavior !== 'CONTINUE_RUN')
+      ? 'PLAN'
+      : (userSelectedMode === 'ANSWER' && analysis.behavior !== 'CLARIFY' && analysis.behavior !== 'CONTINUE_RUN')
+        ? 'ANSWER'
+        : analysis.behavior;
+    console.log(`[Step33] Executing behavior: ${effectiveBehavior} (analysis: ${analysis.behavior}, userSelected: ${userSelectedMode})`);
 
-    switch (analysis.behavior) {
+    switch (effectiveBehavior) {
       case 'ANSWER':
         console.log('>>> BEHAVIOR: ANSWER <<<');
         await handleAnswerMode(ctx, effectivePrompt, taskId, modelId || 'sonnet-4.5', webview);
@@ -467,10 +489,11 @@ async function handleQuickAction(
         throw new Error('EventStore not initialized');
       }
 
-      // Resolve command policy
+      // Resolve command policy from VS Code settings
+      const cfg = vscode.workspace.getConfiguration('ordinex');
+      const userMode = cfg.get<string>('commandPolicy.mode');
       const commandPolicy = resolveCommandPolicy(
-        DEFAULT_COMMAND_POLICY,
-        {} // workspace settings - TODO: wire up from VS Code settings
+        userMode ? { mode: userMode as CommandMode } : undefined,
       );
 
       // Create EventBus for command phase (it needs emit() method)

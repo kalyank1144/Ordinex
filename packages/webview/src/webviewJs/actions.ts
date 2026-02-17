@@ -178,12 +178,67 @@ export function getActionsJs(): string {
       // ===== UNDO ACTION HANDLER (Step 48) =====
       window.handleUndoAction = function(groupId) {
         if (typeof vscode !== 'undefined') {
+          // Visual feedback: update the button that triggered the undo
+          var undoBtns = document.querySelectorAll('.diff-action-btn');
+          for (var i = 0; i < undoBtns.length; i++) {
+            var btn = undoBtns[i];
+            if (btn.textContent && btn.textContent.indexOf('Undo') !== -1) {
+              btn.textContent = 'Undoing...';
+              btn.disabled = true;
+              btn.style.opacity = '0.6';
+            }
+          }
           vscode.postMessage({
             type: 'undo_action',
             group_id: groupId,
           });
         } else {
           console.log('Demo mode: handleUndoAction', groupId);
+        }
+      };
+
+      // ===== DIFF REVIEW HANDLER =====
+      // Opens all changed files from a diff_applied event in editor tabs
+      window.handleDiffReview = function(diffId) {
+        // Find the diff_applied event by diff_id in state.events
+        var files = [];
+        for (var i = state.events.length - 1; i >= 0; i--) {
+          var ev = state.events[i];
+          if (ev.type === 'diff_applied' && ev.payload && ev.payload.diff_id === diffId) {
+            files = ev.payload.files_changed || [];
+            break;
+          }
+        }
+
+        if (files.length === 0) {
+          console.warn('handleDiffReview: No files found for diff_id', diffId);
+          return;
+        }
+
+        if (typeof vscode !== 'undefined') {
+          for (var fi = 0; fi < files.length; fi++) {
+            if (files[fi].path) {
+              vscode.postMessage({
+                type: 'open_file',
+                file_path: files[fi].path,
+              });
+            }
+          }
+        } else {
+          console.log('Demo mode: handleDiffReview', diffId, files);
+        }
+      };
+
+      // ===== DIFF FILE CLICK HANDLER =====
+      // Opens a single file in a new editor tab
+      window.handleDiffFileClick = function(filePath) {
+        if (typeof vscode !== 'undefined') {
+          vscode.postMessage({
+            type: 'open_file',
+            file_path: filePath,
+          });
+        } else {
+          console.log('Demo mode: handleDiffFileClick', filePath);
         }
       };
 
@@ -213,7 +268,28 @@ export function getActionsJs(): string {
         }
       };
 
-      // ===== REQUEST PLAN APPROVAL HANDLER =====
+      // ===== APPROVE PLAN AND EXECUTE (one-click) =====
+      window.handleApprovePlanAndExecute = function(taskId, planEventId) {
+        console.log('Approve Plan and Execute clicked', { taskId, planEventId });
+
+        // Send single message to extension — it will approve + switch to MISSION + execute
+        if (typeof vscode !== 'undefined') {
+          vscode.postMessage({
+            type: 'ordinex:approvePlanAndExecute',
+            task_id: taskId,
+            plan_id: planEventId
+          });
+          updateStatus('running');
+        } else {
+          console.log('Demo mode: simulating approve plan and execute');
+          updateStatus('running');
+          updateStage('retrieve');
+          addDemoEvent('stage_changed', { from: 'plan', to: 'retrieve' });
+          renderMission();
+        }
+      };
+
+      // ===== REQUEST PLAN APPROVAL HANDLER (legacy) =====
       window.handleRequestPlanApproval = function(taskId, planEventId) {
         console.log('Request Plan Approval clicked', { taskId, planEventId });
 
@@ -416,28 +492,48 @@ export function getActionsJs(): string {
         }
       };
 
+      // Handle clarification_requested suggestion button clicks
+      // Submits the selected value as a prompt response so the flow continues
+      window.handleClarificationResponse = function(taskId, value) {
+        console.log('[Clarification] Response selected:', { taskId, value });
+
+        // Disable all sibling buttons in the card to prevent double-click
+        var card = document.querySelector('.event-card .event-action-btn');
+        if (card) card = card.closest('.event-card');
+        if (card) {
+          card.querySelectorAll('.event-action-btn').forEach(function(btn) {
+            btn.disabled = true;
+            btn.style.opacity = '0.5';
+          });
+        }
+
+        // Submit the value as a prompt — the extension's submitPrompt handler
+        // will pick it up and continue the flow
+        if (typeof vscode !== 'undefined') {
+          vscode.postMessage({
+            type: 'ordinex:submitPrompt',
+            text: value,
+            userSelectedMode: state.currentMode,
+            modelId: state.selectedModel,
+          });
+        }
+      };
+
       // Reset clarification state when events update
       function resetClarificationState() {
         clarificationSelectionInProgress = false;
       }
 
-      // ===== EDIT/CANCEL PLAN HANDLERS =====
-      window.handleEditPlan = function(taskId, planEventId) {
-        console.log('Edit Plan clicked (not implemented yet)', { taskId, planEventId });
-        alert('Plan editing will be available in a future version');
-      };
-
+      // ===== CANCEL PLAN HANDLER =====
       window.handleCancelPlan = function(taskId) {
         console.log('Cancel Plan clicked', { taskId });
-        if (confirm('Are you sure you want to cancel this plan? This will clear the current task.')) {
-          // Clear events and reset
-          state.events = [];
-          state.streamingAnswer = null;
-          updateStatus('ready');
-          updateStage('none');
-          renderMission();
-          renderLogs();
-        }
+        // No confirm() — webview sandbox blocks modals. Just cancel directly.
+        state.events = [];
+        state.streamingAnswer = null;
+        updateStatus('ready');
+        updateStage('none');
+        renderMission();
+        renderLogs();
       };
 
       // ===== PLAN REFINEMENT HANDLERS (Step 25) =====
@@ -475,19 +571,16 @@ export function getActionsJs(): string {
 
         const refinementText = textarea.value.trim();
         if (!refinementText) {
-          alert('Please enter a refinement instruction describing what changes you want to the plan.');
+          // Highlight the textarea border to indicate it needs input
+          textarea.style.borderColor = 'var(--vscode-inputValidation-errorBorder)';
+          textarea.focus();
+          setTimeout(function() { textarea.style.borderColor = ''; }, 2000);
           return;
-        }
-
-        // Disable the button to prevent double-submit
-        const submitBtn = event.target;
-        if (submitBtn) {
-          submitBtn.disabled = true;
-          submitBtn.textContent = '⏳ Refining...';
         }
 
         // Send to extension backend
         if (typeof vscode !== 'undefined') {
+          updateStatus('running');
           vscode.postMessage({
             type: 'ordinex:refinePlan',
             task_id: taskId,
@@ -495,15 +588,7 @@ export function getActionsJs(): string {
             refinement_text: refinementText
           });
         } else {
-          // Demo mode
           console.log('Demo mode: would refine plan with:', refinementText);
-          alert('Plan refinement requires VS Code extension backend');
-
-          // Re-enable button
-          if (submitBtn) {
-            submitBtn.disabled = false;
-            submitBtn.textContent = '🔄 Generate Refined Plan';
-          }
         }
       };
   `;

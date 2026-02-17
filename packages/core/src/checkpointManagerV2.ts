@@ -639,6 +639,13 @@ export function getCheckpointManagerV2(): CheckpointManagerV2 | null {
 }
 
 /**
+ * P2-1: Reset the global checkpoint manager (workspace change invalidation)
+ */
+export function resetCheckpointManagerV2(): void {
+  globalCheckpointManager = null;
+}
+
+/**
  * Create a pre-scaffold checkpoint (convenience function)
  */
 export async function createPreScaffoldCheckpoint(
