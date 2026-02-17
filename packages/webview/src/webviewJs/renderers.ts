@@ -1,5 +1,96 @@
 export function getRenderersJs(): string {
   return `
+      // ===== DIAGRAM OVERLAY & PAN HELPERS =====
+      function openDiagramOverlay(btn) {
+        var container = btn.closest('.plan-diagram-container');
+        if (!container) return;
+        var diagramBody = container.querySelector('.plan-diagram-inner');
+        if (!diagramBody) return;
+        var svgContent = diagramBody.innerHTML;
+        // Remove existing overlay if any
+        var existing = document.getElementById('diagram-overlay');
+        if (existing) existing.remove();
+        var overlay = document.createElement('div');
+        overlay.id = 'diagram-overlay';
+        overlay.className = 'diagram-overlay';
+        overlay.innerHTML = '<div class="diagram-overlay-toolbar">'
+          + '<span style="font-size:12px;font-weight:600;color:var(--vscode-foreground);">Architecture Diagram</span>'
+          + '<div style="display:flex;gap:4px;">'
+          + '<button class="plan-diagram-btn" onclick="(function(){ var c=document.querySelector(\\'.diagram-overlay-content\\'); var s=parseFloat(c.dataset.zoom||1); s=Math.min(s+0.25,3); c.dataset.zoom=s; c.style.transform=\\'scale(\\'+s+\\')\\'; })()" title="Zoom in">+</button>'
+          + '<button class="plan-diagram-btn" onclick="(function(){ var c=document.querySelector(\\'.diagram-overlay-content\\'); var s=parseFloat(c.dataset.zoom||1); s=Math.max(s-0.25,0.25); c.dataset.zoom=s; c.style.transform=\\'scale(\\'+s+\\')\\'; })()" title="Zoom out">\u2212</button>'
+          + '<button class="plan-diagram-btn" onclick="(function(){ var c=document.querySelector(\\'.diagram-overlay-content\\'); c.dataset.zoom=1; c.style.transform=\\'scale(1)\\'; c.style.left=\\'0px\\'; c.style.top=\\'0px\\'; })()" title="Reset">R</button>'
+          + '<button class="plan-diagram-btn" onclick="document.getElementById(\\'diagram-overlay\\').remove()" title="Close">\u2715</button>'
+          + '</div></div>'
+          + '<div class="diagram-overlay-viewport">'
+          + '<div class="diagram-overlay-content" data-zoom="1">' + svgContent + '</div>'
+          + '</div>';
+        document.body.appendChild(overlay);
+        // Setup drag-to-pan on the overlay viewport
+        setupDiagramPan(overlay.querySelector('.diagram-overlay-viewport'), overlay.querySelector('.diagram-overlay-content'));
+      }
+
+      function setupDiagramPan(viewport, content) {
+        if (!viewport || !content) return;
+        var isDragging = false;
+        var startX = 0;
+        var startY = 0;
+        var offsetX = 0;
+        var offsetY = 0;
+        viewport.style.cursor = 'grab';
+        viewport.addEventListener('mousedown', function(e) {
+          if (e.button !== 0) return;
+          isDragging = true;
+          startX = e.clientX - offsetX;
+          startY = e.clientY - offsetY;
+          viewport.style.cursor = 'grabbing';
+          e.preventDefault();
+        });
+        viewport.addEventListener('mousemove', function(e) {
+          if (!isDragging) return;
+          offsetX = e.clientX - startX;
+          offsetY = e.clientY - startY;
+          var zoom = parseFloat(content.dataset.zoom || 1);
+          content.style.transform = 'translate(' + offsetX + 'px,' + offsetY + 'px) scale(' + zoom + ')';
+          e.preventDefault();
+        });
+        viewport.addEventListener('mouseup', function() { isDragging = false; viewport.style.cursor = 'grab'; });
+        viewport.addEventListener('mouseleave', function() { isDragging = false; viewport.style.cursor = 'grab'; });
+      }
+
+      // Expose on window so inline onclick attributes can access it
+      window.openDiagramOverlay = openDiagramOverlay;
+
+      // Also setup inline diagram pan (for the in-card diagram)
+      document.addEventListener('mousedown', function(e) {
+        var body = e.target.closest && e.target.closest('.plan-diagram-body');
+        if (!body) return;
+        var inner = body.querySelector('.plan-diagram-inner');
+        if (!inner) return;
+        var isDragging = true;
+        var startX = e.clientX - (parseInt(inner.dataset.panX) || 0);
+        var startY = e.clientY - (parseInt(inner.dataset.panY) || 0);
+        body.style.cursor = 'grabbing';
+        function onMove(ev) {
+          if (!isDragging) return;
+          var px = ev.clientX - startX;
+          var py = ev.clientY - startY;
+          inner.dataset.panX = px;
+          inner.dataset.panY = py;
+          var zoom = parseFloat(body.dataset.zoom || 1);
+          inner.style.transform = 'translate(' + px + 'px,' + py + 'px) scale(' + zoom + ')';
+          ev.preventDefault();
+        }
+        function onUp() {
+          isDragging = false;
+          body.style.cursor = 'grab';
+          document.removeEventListener('mousemove', onMove);
+          document.removeEventListener('mouseup', onUp);
+        }
+        document.addEventListener('mousemove', onMove);
+        document.addEventListener('mouseup', onUp);
+        e.preventDefault();
+      });
+
       // ===== APPROVAL CARD RENDERING =====
       function renderApprovalCard(approvalEvent) {
         const approvalId = approvalEvent.payload.approval_id;
@@ -308,56 +399,146 @@ export function getRenderersJs(): string {
         return html;
       }
 
-      // Render Streaming Answer Card (also used for completed answer)
+      // Render Streaming Answer Card (also used for completed answer) — uses plan-card design
       function renderStreamingAnswerCard() {
         if (!state.streamingAnswer || !state.streamingAnswer.text) {
           return '';
         }
 
         var isComplete = !!state.streamingAnswer.isComplete;
-        var animation = isComplete ? '' : 'animation: pulse 1.5s ease-in-out infinite;';
         var title = isComplete ? 'Answer' : 'Streaming Answer';
-        var icon = isComplete ? '\u2714' : '\ud83d\udcac';
-        var timestamp = isComplete ? '\u2713 Complete' : '\u26a1 Live';
-        var cursorHtml = isComplete ? '' : '<span style="display:inline-block;width:2px;height:16px;background:var(--vscode-charts-blue);margin-left:2px;animation:blink 1s steps(2,start) infinite;vertical-align:text-bottom;"></span>';
+        var timestampHtml = isComplete
+          ? '<span class="plan-card-time">\u2713 Complete</span>'
+          : '<span class="plan-card-time" style="display:flex;align-items:center;gap:6px;"><span class="plan-streaming-dot"></span>Live</span>';
+        var cursorHtml = isComplete ? '' : '<span style="display:inline-block;width:2px;height:16px;background:var(--vscode-button-background);margin-left:2px;animation:answerBlink 1s steps(2,start) infinite;vertical-align:text-bottom;"></span>';
 
-        return \`
-          <div class="event-card" style="border-left-color: var(--vscode-charts-blue); \${animation}">
-            <div class="event-card-header">
-              <span class="event-icon" style="color: var(--vscode-charts-blue);">\${icon}</span>
-              <span class="event-type">\${title}</span>
-              <span class="event-timestamp">\${timestamp}</span>
-            </div>
-            <div class="streaming-answer-content" style="padding-left: 24px; font-size: 13px; line-height: 1.6; color: var(--vscode-foreground); word-break: break-word;">\${simpleMarkdown(state.streamingAnswer.text)}\${cursorHtml}</div>
-          </div>
-          <style>
-            @keyframes pulse {
-              0%, 100% { opacity: 1; }
-              50% { opacity: 0.7; }
-            }
-            @keyframes blink {
-              to { visibility: hidden; }
-            }
-          </style>
-        \`;
+        return '<div class="plan-card">'
+          + '<div class="plan-card-header">'
+          + '<span class="plan-card-type"><span class="plan-card-icon" style="background:var(--vscode-charts-blue);">\ud83d\udcac</span>' + title + '</span>'
+          + timestampHtml
+          + '</div>'
+          + '<div class="plan-card-body">'
+          + '<div class="streaming-answer-content" style="font-size:13px;line-height:1.7;color:var(--vscode-foreground);word-break:break-word;">' + simpleMarkdown(state.streamingAnswer.text) + cursorHtml + '</div>'
+          + '</div>'
+          + '</div>'
+          + '<style>@keyframes answerBlink { to { visibility: hidden; } }</style>';
       }
 
-      // A6: Render Streaming Plan Card (thinking bubble while generating plan)
+      // Helper: extract plan content from partial JSON and build progressive HTML
+      // Used by both renderStreamingPlanCard and the planStreamDelta handler
+      function buildStreamingPlanInnerHtml(rawText) {
+        var categoryLabels = { setup: 'SETUP', core: 'CORE', testing: 'TEST', docs: 'DOCS', cleanup: 'CLEANUP' };
+
+        // Extract goal
+        var goalText = '';
+        var goalMatch = rawText.match(/"goal"\\s*:\\s*"([^"]+)"/);
+        if (goalMatch) {
+          goalText = goalMatch[1];
+        }
+
+        // Extract overview
+        var overviewText = '';
+        var overviewMatch = rawText.match(/"overview"\\s*:\\s*"((?:[^"\\\\\\\\]|\\\\\\\\.)*)"/);
+        if (overviewMatch) {
+          overviewText = overviewMatch[1].replace(/\\\\n/g, '\\n').replace(/\\\\\\\\/g, '');
+          if (overviewText.length > 400) overviewText = overviewText.substring(0, 400) + '\\u2026';
+        }
+
+        // Extract individual step descriptions and categories
+        var descs = [];
+        var cats = [];
+        var descRegex = /"description"\\s*:\\s*"([^"]+)"/g;
+        var catRegex = /"category"\\s*:\\s*"([^"]+)"/g;
+        var dm;
+        while ((dm = descRegex.exec(rawText)) !== null) { descs.push(dm[1]); }
+        var cm;
+        while ((cm = catRegex.exec(rawText)) !== null) { cats.push(cm[1]); }
+
+        // Extract evidence arrays per step (best effort)
+        var evidencePerStep = [];
+        var evidenceBlockRegex = /"expected_evidence"\\s*:\\s*\\[([^\\]]*?)\\]/g;
+        var em;
+        while ((em = evidenceBlockRegex.exec(rawText)) !== null) {
+          var evItems = [];
+          var evItemRegex = /"([^"]+)"/g;
+          var eim;
+          while ((eim = evItemRegex.exec(em[1])) !== null) { evItems.push(eim[1]); }
+          evidencePerStep.push(evItems);
+        }
+
+        // Build steps HTML using the same structure as the final plan card
+        var stepsHtml = '';
+        for (var si = 0; si < descs.length; si++) {
+          var catLabel = categoryLabels[cats[si]] || 'CORE';
+          var evHtml = '';
+          if (evidencePerStep[si] && evidencePerStep[si].length > 0) {
+            evHtml = '<div class="plan-step-evidence">';
+            for (var ei = 0; ei < evidencePerStep[si].length; ei++) {
+              evHtml += '<span class="plan-evidence-chip">' + escapeHtml(evidencePerStep[si][ei]) + '</span>';
+            }
+            evHtml += '</div>';
+          }
+          stepsHtml += '<div class="plan-step">'
+            + '<div class="plan-step-header">'
+            + '<span class="plan-step-label">' + catLabel + '</span>'
+            + '<span class="plan-step-num">Step ' + (si + 1) + '</span>'
+            + '</div>'
+            + '<div class="plan-step-desc">' + escapeHtml(descs[si]) + '</div>'
+            + evHtml
+            + '</div>';
+        }
+
+        // Build the inner HTML
+        var html = '';
+
+        if (goalText) {
+          html += '<div class="plan-card-goal">' + escapeHtml(goalText) + '</div>';
+        }
+
+        if (overviewText) {
+          html += '<div class="plan-section" style="margin-top:10px;">'
+            + '<div class="plan-section-title">Overview</div>'
+            + '<div class="plan-section-body" style="font-size:12px;">' + simpleMarkdown(overviewText) + '</div>'
+            + '</div>';
+        }
+
+        if (stepsHtml) {
+          html += '<div class="plan-steps-container">' + stepsHtml + '</div>';
+        }
+
+        // Streaming indicator at the bottom
+        html += '<div style="margin-top:10px;font-size:11px;color:var(--vscode-descriptionForeground);display:flex;align-items:center;gap:6px;">'
+          + '<span class="plan-streaming-dot"></span>Generating\\u2026'
+          + '</div>';
+
+        if (!goalText && descs.length === 0) {
+          html = '<div style="display:flex;align-items:center;gap:8px;padding:8px 0;">'
+            + '<span class="plan-streaming-dot"></span>'
+            + '<span style="font-size:12px;color:var(--vscode-descriptionForeground);">Analyzing your codebase and structuring the plan\\u2026</span>'
+            + '</div>';
+        }
+
+        return html;
+      }
+      window.buildStreamingPlanInnerHtml = buildStreamingPlanInnerHtml;
+
+      // A6: Render Streaming Plan Card — shows steps progressively as they generate
       function renderStreamingPlanCard() {
         if (!state.streamingPlan || !state.streamingPlan.text) {
           return '';
         }
 
-        return \`
-          <div class="event-card" style="border-left-color: var(--vscode-charts-purple); animation: pulse 1.5s ease-in-out infinite;">
-            <div class="event-card-header">
-              <span class="event-icon" style="color: var(--vscode-charts-purple);">\ud83e\udde0</span>
-              <span class="event-type">Generating Plan</span>
-              <span class="event-timestamp">\u26a1 Live</span>
-            </div>
-            <div class="streaming-plan-content" style="padding-left: 24px; font-size: 13px; line-height: 1.6; color: var(--vscode-foreground); word-break: break-word; max-height: 400px; overflow-y: auto;">\${simpleMarkdown(state.streamingPlan.text)}<span style="display:inline-block;width:2px;height:16px;background:var(--vscode-charts-purple);margin-left:2px;animation:blink 1s steps(2,start) infinite;vertical-align:text-bottom;"></span></div>
-          </div>
-        \`;
+        var progressHtml = buildStreamingPlanInnerHtml(state.streamingPlan.text);
+
+        return '<div class="plan-card">'
+          + '<div class="plan-card-header">'
+          + '<span class="plan-card-type"><span class="plan-card-icon">\\u2726</span>Generating Plan</span>'
+          + '<span class="plan-card-time" style="display:flex;align-items:center;gap:6px;"><span class="plan-streaming-dot"></span>Live</span>'
+          + '</div>'
+          + '<div class="plan-card-body">'
+          + '<div class="streaming-plan-content">' + progressHtml + '</div>'
+          + '</div>'
+          + '</div>';
       }
 
       // ===== SEQUENTIAL STREAMING BLOCKS RENDERERS =====
@@ -452,7 +633,7 @@ export function getRenderersJs(): string {
           +   '<span style="font-size:12px;font-weight:600;color:var(--vscode-foreground);">Editing' + stepLabel + iterLabel + '</span>'
           +   '<span style="font-size:10px;padding:1px 6px;border-radius:8px;background:var(--vscode-charts-orange);color:#fff;margin-left:auto;">\u26a1 Live</span>'
           + '</div>'
-          + '<div class="streaming-blocks-container" style="padding:0 0 0 8px;max-height:500px;overflow-y:auto;">'
+          + '<div class="streaming-blocks-container" style="padding:0 0 0 8px;">'
           +   blocksHtml
           + '</div>'
           + '</div>';
@@ -472,12 +653,9 @@ export function getRenderersJs(): string {
         for (var bi = 0; bi < sm.blocks.length; bi++) {
           var block = sm.blocks[bi];
           if (block.kind === 'narration' && block.text.trim()) {
-            // Each narration is its own assistant bubble
-            items.push('<div class="assistant-bubble">'
-              + '<div class="assistant-bubble-avatar">\u2726</div>'
-              + '<div class="assistant-bubble-content" style="font-size:13px;line-height:1.6;word-break:break-word;">'
+            // Each narration flows as full-width content (no avatar wrapper)
+            items.push('<div class="mission-narration-block" style="font-size:13px;line-height:1.6;word-break:break-word;padding:4px 0;">'
               + simpleMarkdown(block.text)
-              + '</div>'
               + '</div>');
           } else if (block.kind === 'tool') {
             // Each tool is its own compact row
@@ -1125,7 +1303,7 @@ export function getRenderersJs(): string {
             continue;
           }
 
-          // I2+I3: Render plan_created/plan_revised as assistant bubble wrapping PlanCard
+          // I2+I3: Render plan_created/plan_revised — no avatar bubble (icon moved inside card header)
           // I3: If a pending plan_approval exists for this plan, pass approvalId so buttons resolve directly
           if (event.type === 'plan_created' || event.type === 'plan_revised') {
             const planApproval = pendingApprovals.find(p =>
@@ -1136,11 +1314,7 @@ export function getRenderersJs(): string {
               ? renderPlanCardWithApproval(event, planApproval.approvalId)
               : renderEventCard(event);
             items.push(\`
-              <div class="assistant-bubble">
-                <div class="assistant-bubble-avatar">\u2726</div>
-                <div class="assistant-bubble-content">\${cardHtml}</div>
-              </div>
-              <div class="assistant-bubble-meta">\${formatTimestamp(event.timestamp)}</div>
+              <div class="plan-card-wrapper">\${cardHtml}</div>
             \`);
             continue;
           }
@@ -1295,27 +1469,18 @@ export function getRenderersJs(): string {
         // These cards appear at the bottom of the timeline when streaming is active.
         if (state.streamingAnswer && state.streamingAnswer.text) {
           items.push(\`
-            <div class="assistant-bubble">
-              <div class="assistant-bubble-avatar">\u2726</div>
-              <div class="assistant-bubble-content">\${renderStreamingAnswerCard()}</div>
-            </div>
+            <div class="plan-card-wrapper">\${renderStreamingAnswerCard()}</div>
           \`);
         }
         if (state.streamingPlan && state.streamingPlan.text) {
           items.push(\`
-            <div class="assistant-bubble">
-              <div class="assistant-bubble-avatar">\u2726</div>
-              <div class="assistant-bubble-content">\${renderStreamingPlanCard()}</div>
-            </div>
+            <div class="plan-card-wrapper">\${renderStreamingPlanCard()}</div>
           \`);
         }
         // Only render active (non-complete) streaming blocks at the end.
         // Completed blocks are rendered inline above loop_paused/loop_completed cards.
         if (state.streamingMission && !state.streamingMission.isComplete && state.streamingMission.blocks && state.streamingMission.blocks.length > 0) {
-          items.push('<div class="assistant-bubble">'
-            + '<div class="assistant-bubble-avatar">\u2726</div>'
-            + '<div class="assistant-bubble-content">' + renderLiveStreamingContainer() + '</div>'
-            + '</div>');
+          items.push('<div class="mission-live-container">' + renderLiveStreamingContainer() + '</div>');
         }
 
         return items.join('');
@@ -1342,103 +1507,99 @@ export function getRenderersJs(): string {
         \`;
       }
 
-      // Render Detailed Plan Card — modern, dynamic design
+      // Render Detailed Plan Card — minimal, professional design
       function renderPlanCard(event, plan) {
-        // Category icons and colors for visual variety
-        var categoryConfig = {
-          setup:    { icon: '⚙️', color: '#74b9ff', label: 'Setup' },
-          core:     { icon: '🔧', color: '#a29bfe', label: 'Core' },
-          testing:  { icon: '🧪', color: '#55efc4', label: 'Testing' },
-          deploy:   { icon: '🚀', color: '#fdcb6e', label: 'Deploy' },
-          refactor: { icon: '♻️', color: '#81ecec', label: 'Refactor' },
-          config:   { icon: '📝', color: '#fab1a0', label: 'Config' }
+        // Category labels (monochrome — no colored icons)
+        var categoryLabels = {
+          setup: 'SETUP', core: 'CORE', testing: 'TESTING',
+          deploy: 'DEPLOY', refactor: 'REFACTOR', config: 'CONFIG'
         };
 
-        // PlanMeta badges
+        // PlanMeta badges — all monochrome, subtle
         var metaBadgesHtml = '';
         var meta = plan.planMeta;
         if (meta) {
           var badges = [];
           if (meta.confidence) {
-            var confColor = meta.confidence === 'high' ? '#00b894' : meta.confidence === 'medium' ? '#fdcb6e' : '#e17055';
-            badges.push('<span style="display:inline-flex;align-items:center;gap:4px;padding:3px 10px;border-radius:12px;font-size:10px;font-weight:600;background:' + confColor + '22;color:' + confColor + ';border:1px solid ' + confColor + '44;">' + (meta.confidence === 'high' ? '●' : meta.confidence === 'medium' ? '◐' : '○') + ' ' + meta.confidence.charAt(0).toUpperCase() + meta.confidence.slice(1) + ' confidence</span>');
+            var confIcon = meta.confidence === 'high' ? '●' : meta.confidence === 'medium' ? '◐' : '○';
+            badges.push('<span class="plan-badge">' + confIcon + ' ' + meta.confidence.charAt(0).toUpperCase() + meta.confidence.slice(1) + ' confidence</span>');
           }
           if (meta.estimatedDevHours) {
-            badges.push('<span style="display:inline-flex;align-items:center;gap:4px;padding:3px 10px;border-radius:12px;font-size:10px;font-weight:600;background:rgba(116,185,255,0.15);color:#74b9ff;border:1px solid rgba(116,185,255,0.3);">⏱ ~' + meta.estimatedDevHours + 'h</span>');
+            badges.push('<span class="plan-badge">~' + meta.estimatedDevHours + 'h</span>');
           }
           if (meta.estimatedFileTouch) {
-            badges.push('<span style="display:inline-flex;align-items:center;gap:4px;padding:3px 10px;border-radius:12px;font-size:10px;font-weight:600;background:rgba(162,155,254,0.15);color:#a29bfe;border:1px solid rgba(162,155,254,0.3);">📄 ' + meta.estimatedFileTouch + ' files</span>');
+            badges.push('<span class="plan-badge">' + meta.estimatedFileTouch + ' files</span>');
           }
           if (meta.domains && meta.domains.length > 0) {
             meta.domains.forEach(function(d) {
-              badges.push('<span style="display:inline-flex;align-items:center;gap:4px;padding:3px 10px;border-radius:12px;font-size:10px;font-weight:600;background:rgba(129,236,236,0.15);color:#81ecec;border:1px solid rgba(129,236,236,0.3);">' + escapeHtml(d) + '</span>');
+              badges.push('<span class="plan-badge">' + escapeHtml(d) + '</span>');
             });
           }
           if (badges.length > 0) {
-            metaBadgesHtml = '<div style="display:flex;flex-wrap:wrap;gap:6px;margin-top:10px;">' + badges.join('') + '</div>';
+            metaBadgesHtml = '<div class="plan-badges">' + badges.join('') + '</div>';
           }
         }
 
-        // Overview section (rich markdown from LLM)
+        // Overview section
         var overviewHtml = '';
         if (plan.overview) {
-          overviewHtml = '<div style="margin-top:14px;padding:12px 14px;background:var(--vscode-editor-background);border-radius:8px;border:1px solid var(--vscode-panel-border);">'
-            + '<div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:0.5px;color:var(--vscode-descriptionForeground);margin-bottom:8px;">Overview</div>'
-            + '<div style="font-size:13px;line-height:1.6;color:var(--vscode-foreground);">' + simpleMarkdown(plan.overview) + '</div>'
+          overviewHtml = '<div class="plan-section">'
+            + '<div class="plan-section-title">Overview</div>'
+            + '<div class="plan-section-body">' + simpleMarkdown(plan.overview) + '</div>'
             + '</div>';
         }
 
-        // Architecture diagram (mermaid)
+        // Architecture diagram (mermaid) — larger with zoom controls
         var diagramHtml = '';
         if (plan.architecture_diagram) {
           var diagramId = 'plan-diagram-' + Date.now() + '-' + Math.random().toString(36).slice(2,7);
-          diagramHtml = '<div style="margin-top:14px;padding:14px;background:var(--vscode-textCodeBlock-background,rgba(0,0,0,0.15));border-radius:8px;border:1px solid var(--vscode-charts-purple);overflow-x:auto;">'
-            + '<div style="display:flex;align-items:center;gap:6px;margin-bottom:10px;"><span style="font-size:14px;">📊</span><span style="font-size:11px;font-weight:600;color:var(--vscode-charts-purple);text-transform:uppercase;letter-spacing:0.5px;">Architecture Diagram</span></div>'
-            + '<div id="' + diagramId + '" class="mermaid-pending" style="text-align:center;">' + plan.architecture_diagram.replace(/\\\\n/g, '\\n') + '</div>'
+          diagramHtml = '<div class="plan-diagram-container">'
+            + '<div class="plan-diagram-header">'
+            + '<span class="plan-section-title" style="margin-bottom:0;">Architecture</span>'
+            + '<div class="plan-diagram-controls">'
+            + '<button class="plan-diagram-btn" onclick="(function(el){ var d=el.closest(\\'.plan-diagram-container\\').querySelector(\\'.plan-diagram-body\\'); var s=parseFloat(d.dataset.zoom||1); s=Math.min(s+0.25,2.5); d.dataset.zoom=s; d.querySelector(\\'.plan-diagram-inner\\').style.transform=\\'scale(\\'+s+\\')\\'; })(this)" title="Zoom in">+</button>'
+            + '<button class="plan-diagram-btn" onclick="(function(el){ var d=el.closest(\\'.plan-diagram-container\\').querySelector(\\'.plan-diagram-body\\'); var s=parseFloat(d.dataset.zoom||1); s=Math.max(s-0.25,0.5); d.dataset.zoom=s; d.querySelector(\\'.plan-diagram-inner\\').style.transform=\\'scale(\\'+s+\\')\\'; })(this)" title="Zoom out">\u2212</button>'
+            + '<button class="plan-diagram-btn" onclick="openDiagramOverlay(this)" title="Expand diagram">\u26F6</button>'
+            + '</div>'
+            + '</div>'
+            + '<div class="plan-diagram-body" data-zoom="1">'
+            + '<div class="plan-diagram-inner mermaid-pending" id="' + diagramId + '">' + plan.architecture_diagram.replace(/\\\\n/g, '\\n') + '</div>'
+            + '</div>'
             + '</div>';
         }
 
-        // Steps with visual timeline
+        // Steps — clean numbered list, no timeline column
         var stepsArr = plan.steps || [];
         var stepsHtml = stepsArr.map(function(step, index) {
-          var cat = categoryConfig[step.category] || categoryConfig.core;
-          var isLast = index === stepsArr.length - 1;
+          var catLabel = categoryLabels[step.category] || 'CORE';
 
-          // Step evidence chips
+          // Evidence chips
           var evidenceHtml = '';
           if (step.expected_evidence && Array.isArray(step.expected_evidence) && step.expected_evidence.length > 0) {
-            evidenceHtml = '<div style="display:flex;flex-wrap:wrap;gap:4px;margin-top:6px;">'
+            evidenceHtml = '<div class="plan-step-evidence">'
               + step.expected_evidence.map(function(e) {
-                return '<span style="display:inline-block;padding:2px 8px;border-radius:10px;font-size:10px;background:rgba(255,255,255,0.06);color:var(--vscode-descriptionForeground);border:1px solid var(--vscode-panel-border);">' + escapeHtml(e) + '</span>';
+                return '<span class="plan-evidence-chip">' + escapeHtml(e) + '</span>';
               }).join('')
               + '</div>';
           }
 
-          return '<div style="display:flex;gap:12px;position:relative;">'
-            // Timeline column
-            + '<div style="display:flex;flex-direction:column;align-items:center;width:28px;flex-shrink:0;">'
-            + '<div style="width:28px;height:28px;border-radius:50%;background:' + cat.color + '22;border:2px solid ' + cat.color + ';display:flex;align-items:center;justify-content:center;font-size:12px;flex-shrink:0;" title="' + cat.label + '">' + cat.icon + '</div>'
-            + (isLast ? '' : '<div style="width:2px;flex:1;background:linear-gradient(' + cat.color + '44, transparent);min-height:16px;"></div>')
+          return '<div class="plan-step">'
+            + '<div class="plan-step-header">'
+            + '<span class="plan-step-label">' + catLabel + '</span>'
+            + '<span class="plan-step-num">Step ' + (index + 1) + '</span>'
             + '</div>'
-            // Content column
-            + '<div style="flex:1;padding-bottom:' + (isLast ? '0' : '14') + 'px;">'
-            + '<div style="display:flex;align-items:center;gap:6px;margin-bottom:4px;">'
-            + '<span style="font-size:10px;font-weight:700;color:' + cat.color + ';text-transform:uppercase;letter-spacing:0.5px;">' + cat.label + '</span>'
-            + '<span style="font-size:10px;color:var(--vscode-descriptionForeground);">Step ' + (index + 1) + '</span>'
-            + '</div>'
-            + '<div style="font-size:12px;font-weight:600;line-height:1.5;color:var(--vscode-foreground);">' + escapeHtml(step.description || '') + '</div>'
+            + '<div class="plan-step-desc">' + escapeHtml(step.description || '') + '</div>'
             + evidenceHtml
-            + '</div>'
             + '</div>';
         }).join('');
 
         // Assumptions — collapsible
         var assumptionsHtml = '';
         if (plan.assumptions && plan.assumptions.length > 0) {
-          assumptionsHtml = '<details style="margin-top:14px;" open>'
-            + '<summary style="font-size:11px;font-weight:700;color:var(--vscode-descriptionForeground);cursor:pointer;user-select:none;">Assumptions (' + plan.assumptions.length + ')</summary>'
-            + '<ul style="margin:6px 0 0;padding-left:20px;font-size:12px;line-height:1.6;color:var(--vscode-foreground);">'
-            + plan.assumptions.map(function(a) { return '<li style="margin:2px 0;">' + escapeHtml(a) + '</li>'; }).join('')
+          assumptionsHtml = '<details class="plan-details" open>'
+            + '<summary class="plan-details-summary">Assumptions (' + plan.assumptions.length + ')</summary>'
+            + '<ul class="plan-details-list">'
+            + plan.assumptions.map(function(a) { return '<li>' + escapeHtml(a) + '</li>'; }).join('')
             + '</ul>'
             + '</details>';
         }
@@ -1449,22 +1610,22 @@ export function getRenderersJs(): string {
         if (criteria) {
           var criteriaArr = typeof criteria === 'string' ? [criteria] : (criteria || []);
           if (criteriaArr.length > 0) {
-            successCriteriaHtml = '<details style="margin-top:12px;" open>'
-              + '<summary style="font-size:11px;font-weight:700;color:var(--vscode-descriptionForeground);cursor:pointer;user-select:none;">Success Criteria (' + criteriaArr.length + ')</summary>'
-              + '<ul style="margin:6px 0 0;padding-left:20px;font-size:12px;line-height:1.6;">'
-              + criteriaArr.map(function(c) { return '<li style="margin:2px 0;color:var(--vscode-charts-green);">' + escapeHtml(c) + '</li>'; }).join('')
+            successCriteriaHtml = '<details class="plan-details" open>'
+              + '<summary class="plan-details-summary plan-details-summary--success">Success Criteria (' + criteriaArr.length + ')</summary>'
+              + '<ul class="plan-details-list plan-details-list--success">'
+              + criteriaArr.map(function(c) { return '<li>' + escapeHtml(c) + '</li>'; }).join('')
               + '</ul>'
               + '</details>';
           }
         }
 
-        // Risks warning callout
+        // Risks
         var risksHtml = '';
         if (plan.risks && plan.risks.length > 0) {
-          risksHtml = '<div style="margin-top:12px;padding:10px 12px;background:rgba(225,112,85,0.1);border:1px solid rgba(225,112,85,0.3);border-radius:6px;">'
-            + '<div style="display:flex;align-items:center;gap:6px;margin-bottom:6px;"><span style="font-size:13px;">⚠️</span><span style="font-size:11px;font-weight:700;color:#e17055;">Risks</span></div>'
-            + '<ul style="margin:0;padding-left:18px;font-size:12px;line-height:1.5;color:var(--vscode-foreground);">'
-            + plan.risks.map(function(r) { return '<li style="margin:2px 0;">' + escapeHtml(r) + '</li>'; }).join('')
+          risksHtml = '<div class="plan-risks">'
+            + '<div class="plan-risks-title">\u26A0 Risks</div>'
+            + '<ul class="plan-risks-list">'
+            + plan.risks.map(function(r) { return '<li>' + escapeHtml(r) + '</li>'; }).join('')
             + '</ul>'
             + '</div>';
         }
@@ -1473,60 +1634,53 @@ export function getRenderersJs(): string {
         var scopeHtml = '';
         if (plan.scope_contract) {
           var sc = plan.scope_contract;
-          scopeHtml = '<div style="margin-top:12px;display:flex;gap:12px;padding:8px 12px;background:var(--vscode-input-background);border-radius:6px;font-size:10px;color:var(--vscode-descriptionForeground);">'
-            + '<span>📁 max ' + (sc.max_files || '?') + ' files</span>'
-            + '<span>📏 max ' + (sc.max_lines || '?') + ' lines</span>'
-            + (sc.allowed_tools && sc.allowed_tools.length > 0 ? '<span>🔧 ' + sc.allowed_tools.join(', ') + '</span>' : '')
+          scopeHtml = '<div class="plan-scope">'
+            + '<span>max ' + (sc.max_files || '?') + ' files</span>'
+            + '<span>max ' + (sc.max_lines || '?') + ' lines</span>'
+            + (sc.allowed_tools && sc.allowed_tools.length > 0 ? '<span>' + sc.allowed_tools.join(', ') + '</span>' : '')
             + '</div>';
         }
 
         // Plan type label
         var planTypeLabel = event.type === 'plan_revised' ? 'Plan Revised' : 'Plan Created';
-        var planTypeIcon = event.type === 'plan_revised' ? '🔄' : '📋';
 
-        var result = '<div class="event-card" style="border-left-color: var(--vscode-charts-purple); padding: 0; overflow: hidden;">'
-          // Header with gradient
-          + '<div style="background:linear-gradient(135deg, rgba(108,92,231,0.15), rgba(162,155,254,0.08));padding:14px 16px 12px;border-bottom:1px solid var(--vscode-panel-border);">'
-          + '<div class="event-card-header" style="margin-bottom:0;">'
-          + '<span class="event-icon" style="color:var(--vscode-charts-purple);font-size:20px;">' + planTypeIcon + '</span>'
-          + '<span class="event-type" style="font-size:13px;font-weight:700;">' + planTypeLabel + '</span>'
-          + '<span class="event-timestamp">' + formatTimestamp(event.timestamp) + '</span>'
-          + '</div>'
+        var result = '<div class="plan-card">'
+          // Header
+          + '<div class="plan-card-header">'
+          + '<span class="plan-card-type"><span class="plan-card-icon">\u2726</span>' + planTypeLabel + '</span>'
+          + '<span class="plan-card-time">' + formatTimestamp(event.timestamp) + '</span>'
           + '</div>'
           // Body
-          + '<div style="padding:14px 16px;">'
+          + '<div class="plan-card-body">'
           // Goal
-          + '<div style="font-size:15px;font-weight:700;line-height:1.5;color:var(--vscode-foreground);margin-bottom:4px;">' + escapeHtml(plan.goal || '') + '</div>'
+          + '<div class="plan-card-goal">' + escapeHtml(plan.goal || '') + '</div>'
           + metaBadgesHtml
           + overviewHtml
           + diagramHtml
           // Steps
-          + '<div style="margin-top:16px;">'
-          + '<div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:0.5px;color:var(--vscode-descriptionForeground);margin-bottom:10px;">Implementation Steps (' + stepsArr.length + ')</div>'
-          + stepsHtml
-          + '</div>'
+          + (stepsArr.length > 0 ? '<div class="plan-steps-container">' + stepsHtml + '</div>' : '')
           + assumptionsHtml
           + successCriteriaHtml
           + risksHtml
           + scopeHtml
-          // Action buttons
-          + '<div style="margin-top:16px;display:flex;gap:8px;padding-top:14px;border-top:1px solid var(--vscode-panel-border);">'
-          + '<button onclick="handleApprovePlanAndExecute(\\'' + event.task_id + '\\', \\'' + event.event_id + '\\')" style="flex:1;padding:10px 16px;background:linear-gradient(135deg,#00b894,#00cec9);color:#fff;border:none;border-radius:6px;font-size:12px;font-weight:700;cursor:pointer;transition:opacity 0.2s;" onmouseover="this.style.opacity=0.85" onmouseout="this.style.opacity=1">✓ Approve &amp; Execute</button>'
-          + '<button onclick="toggleRefinePlanInput(\\'' + event.task_id + '\\', \\'' + event.event_id + '\\', 1)" style="padding:10px 16px;background:var(--vscode-button-secondaryBackground);color:var(--vscode-button-secondaryForeground);border:none;border-radius:6px;font-size:12px;font-weight:600;cursor:pointer;">✏️ Refine</button>'
-          + '<button onclick="handleCancelPlan(\\'' + event.task_id + '\\')" style="padding:10px 16px;background:transparent;color:var(--vscode-descriptionForeground);border:1px solid var(--vscode-panel-border);border-radius:6px;font-size:12px;cursor:pointer;">✕</button>'
+          // Action buttons — all use consistent VS Code theme colors
+          + '<div class="plan-actions">'
+          + '<button class="plan-btn plan-btn--primary" onclick="handleApprovePlanAndExecute(\\'' + event.task_id + '\\', \\'' + event.event_id + '\\')">Approve &amp; Execute</button>'
+          + '<button class="plan-btn plan-btn--secondary" onclick="toggleRefinePlanInput(\\'' + event.task_id + '\\', \\'' + event.event_id + '\\', 1)">Refine</button>'
+          + '<button class="plan-btn plan-btn--ghost" onclick="handleCancelPlan(\\'' + event.task_id + '\\')">\\u2715</button>'
           + '</div>'
           // Refine Plan Input (hidden by default)
-          + '<div id="refine-plan-input-' + event.event_id + '" style="display:none;margin-top:16px;padding:16px;background:var(--vscode-input-background);border:1px solid var(--vscode-charts-purple);border-radius:8px;">'
-          + '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">'
-          + '<div style="display:flex;align-items:center;gap:6px;"><span style="font-size:14px;">✏️</span><span style="font-weight:700;color:var(--vscode-charts-purple);">Refine This Plan</span></div>'
-          + '<button onclick="toggleRefinePlanInput(\\'' + event.task_id + '\\', \\'' + event.event_id + '\\', 1)" style="background:none;border:none;color:var(--vscode-descriptionForeground);cursor:pointer;font-size:16px;">✕</button>'
+          + '<div id="refine-plan-input-' + event.event_id + '" class="plan-refine-panel" style="display:none;">'
+          + '<div class="plan-refine-header">'
+          + '<span class="plan-refine-title">Refine This Plan</span>'
+          + '<button class="plan-btn plan-btn--ghost" onclick="toggleRefinePlanInput(\\'' + event.task_id + '\\', \\'' + event.event_id + '\\', 1)" style="width:24px;height:24px;font-size:14px;">\\u2715</button>'
           + '</div>'
-          + '<textarea id="refinement-instruction-' + event.event_id + '" placeholder="Describe what you want changed...\\n\\nExamples:\\n• Add error handling to each step\\n• Break step 3 into smaller sub-steps\\n• Focus more on security considerations" rows="4" style="width:100%;padding:10px 12px;background:var(--vscode-editor-background);border:1px solid var(--vscode-panel-border);border-radius:6px;color:var(--vscode-foreground);font-family:inherit;font-size:12px;resize:vertical;box-sizing:border-box;"></textarea>'
-          + '<div style="display:flex;gap:8px;margin-top:10px;">'
-          + '<button onclick="submitPlanRefinement(\\'' + event.task_id + '\\', \\'' + event.event_id + '\\', 1)" style="flex:1;padding:8px 16px;background:var(--vscode-charts-purple);color:#fff;border:none;border-radius:6px;font-size:12px;font-weight:700;cursor:pointer;">🔄 Generate Refined Plan</button>'
-          + '<button onclick="toggleRefinePlanInput(\\'' + event.task_id + '\\', \\'' + event.event_id + '\\', 1)" style="padding:8px 16px;background:var(--vscode-button-secondaryBackground);color:var(--vscode-button-secondaryForeground);border:none;border-radius:6px;font-size:12px;cursor:pointer;">Cancel</button>'
+          + '<textarea id="refinement-instruction-' + event.event_id + '" class="plan-refine-textarea" placeholder="Describe what you want changed..." rows="4"></textarea>'
+          + '<div class="plan-refine-actions">'
+          + '<button class="plan-btn plan-btn--primary" onclick="submitPlanRefinement(\\'' + event.task_id + '\\', \\'' + event.event_id + '\\', 1)">Generate Refined Plan</button>'
+          + '<button class="plan-btn plan-btn--secondary" onclick="toggleRefinePlanInput(\\'' + event.task_id + '\\', \\'' + event.event_id + '\\', 1)">Cancel</button>'
           + '</div>'
-          + '<div style="margin-top:8px;font-size:10px;color:var(--vscode-descriptionForeground);font-style:italic;">Refining generates a new plan version and requires re-approval.</div>'
+          + '<div class="plan-refine-hint">Refining generates a new plan version and requires re-approval.</div>'
           + '</div>'
           + '</div>' // end body
           + '</div>'; // end card
@@ -1554,8 +1708,8 @@ export function getRenderersJs(): string {
         );
         // Add a visual indicator that approval is pending
         baseHtml = baseHtml.replace(
-          /(<span class="event-type"[^>]*>)(Plan Created|Plan Revised)(<\\/span>)/,
-          '$1$2$3<span style="margin-left:8px;padding:2px 8px;border-radius:10px;font-size:10px;font-weight:600;background:var(--vscode-charts-orange);color:#fff;">Awaiting Approval</span>'
+          /(<span class="plan-card-type">)(Plan Created|Plan Revised)(<\\/span>)/,
+          '$1$2$3<span class="plan-badge" style="margin-left:8px;">Awaiting Approval</span>'
         );
         return baseHtml;
       }

@@ -10,6 +10,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import * as childProcess from 'child_process';
+import * as vscode from 'vscode';
 import type { ToolExecutionProvider, ToolExecutionResult } from 'core';
 
 /** Max file size we'll read (1 MB) */
@@ -104,6 +105,8 @@ export class VSCodeToolProvider implements ToolExecutionProvider {
         fs.mkdirSync(dir, { recursive: true });
       }
       fs.writeFileSync(filePath, content, 'utf-8');
+      // Open the file in the editor so the user can see the changes
+      this.openFileInEditor(filePath);
       return { success: true, output: `Written ${content.length} bytes to ${input.path}` };
     } catch (err) {
       return {
@@ -145,6 +148,8 @@ export class VSCodeToolProvider implements ToolExecutionProvider {
       // Replace first occurrence only
       const updated = content.replace(oldText, newText);
       fs.writeFileSync(filePath, updated, 'utf-8');
+      // Open the file in the editor so the user can see the changes
+      this.openFileInEditor(filePath);
       return { success: true, output: `Edited ${input.path}` };
     } catch (err) {
       return {
@@ -152,6 +157,27 @@ export class VSCodeToolProvider implements ToolExecutionProvider {
         output: '',
         error: err instanceof Error ? err.message : String(err),
       };
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Helper: open a file in the VS Code editor tab after write/edit
+  // ---------------------------------------------------------------------------
+
+  private openFileInEditor(filePath: string): void {
+    try {
+      const uri = vscode.Uri.file(filePath);
+      vscode.workspace.openTextDocument(uri).then(doc => {
+        vscode.window.showTextDocument(doc, {
+          viewColumn: vscode.ViewColumn.One,
+          preserveFocus: true,
+          preview: false,
+        });
+      }, err => {
+        console.warn('[ToolProvider] Could not open file in editor:', err);
+      });
+    } catch (err) {
+      console.warn('[ToolProvider] openFileInEditor error:', err);
     }
   }
 

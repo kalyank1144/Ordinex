@@ -1,0 +1,490 @@
+/* ===== PLAN CARD — Minimal Professional Design ===== */
+
+/* Plan card wrapper — full width, no avatar beside it */
+.plan-card-wrapper {
+  margin: 8px 0;
+}
+
+/* Small inline icon in card header */
+.plan-card-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: var(--vscode-charts-purple);
+  color: #fff;
+  font-size: 10px;
+  margin-right: 6px;
+  vertical-align: middle;
+}
+
+.plan-card {
+  background: var(--vscode-editor-background);
+  border: 1px solid var(--vscode-panel-border);
+  border-radius: 8px;
+  margin: 8px 0;
+  overflow: hidden;
+}
+
+/* Header — clean, flat */
+.plan-card-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--vscode-panel-border);
+}
+
+.plan-card-type {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--vscode-foreground);
+}
+
+.plan-card-time {
+  font-size: 11px;
+  color: var(--vscode-descriptionForeground);
+}
+
+/* Body */
+.plan-card-body {
+  padding: 16px;
+}
+
+/* Goal title */
+.plan-card-goal {
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 1.5;
+  color: var(--vscode-foreground);
+  margin-bottom: 4px;
+}
+
+/* Badges — all monochrome, subtle */
+.plan-badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 10px;
+}
+
+.plan-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 10px;
+  border-radius: 12px;
+  font-size: 10px;
+  font-weight: 500;
+  color: var(--vscode-descriptionForeground);
+  background: var(--vscode-input-background);
+  border: 1px solid var(--vscode-panel-border);
+}
+
+/* Section containers (overview, architecture) */
+.plan-section {
+  margin-top: 14px;
+  padding: 12px 14px;
+  background: var(--vscode-input-background);
+  border-radius: 6px;
+  border: 1px solid var(--vscode-panel-border);
+}
+
+.plan-section-title {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--vscode-descriptionForeground);
+  margin-bottom: 8px;
+}
+
+.plan-section-body {
+  font-size: 13px;
+  line-height: 1.6;
+  color: var(--vscode-foreground);
+}
+
+/* Steps — clean list */
+.plan-steps-container {
+  margin-top: 16px;
+}
+
+.plan-step {
+  padding: 10px 12px;
+  border: 1px solid var(--vscode-panel-border);
+  border-radius: 6px;
+  margin-bottom: 6px;
+  background: var(--vscode-input-background);
+}
+
+.plan-step:last-child {
+  margin-bottom: 0;
+}
+
+.plan-step-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 4px;
+}
+
+.plan-step-label {
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--vscode-descriptionForeground);
+  padding: 1px 6px;
+  border-radius: 3px;
+  background: var(--vscode-editor-background);
+  border: 1px solid var(--vscode-panel-border);
+}
+
+.plan-step-num {
+  font-size: 10px;
+  color: var(--vscode-descriptionForeground);
+}
+
+.plan-step-desc {
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 1.5;
+  color: var(--vscode-foreground);
+}
+
+/* Evidence chips — styled like inline code for better contrast */
+.plan-step-evidence {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 6px;
+}
+
+.plan-evidence-chip {
+  display: inline-block;
+  padding: 1px 5px;
+  border-radius: 3px;
+  font-size: 12px;
+  font-family: var(--vscode-editor-font-family, monospace);
+  color: var(--vscode-textLink-foreground, #3794ff);
+  background: var(--vscode-textCodeBlock-background, rgba(0, 0, 0, 0.15));
+}
+
+/* Collapsible details (assumptions, success criteria) */
+.plan-details {
+  margin-top: 14px;
+}
+
+.plan-details-summary {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--vscode-descriptionForeground);
+  cursor: pointer;
+  user-select: none;
+  padding: 2px 0;
+}
+
+.plan-details-list {
+  margin: 6px 0 0;
+  padding-left: 20px;
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--vscode-foreground);
+}
+
+.plan-details-list li {
+  margin: 2px 0;
+}
+
+.plan-details-list--success li {
+  color: var(--vscode-foreground);
+}
+
+/* Success criteria summary — green accent */
+.plan-details-summary--success {
+  color: var(--vscode-charts-green, #4ec9b0);
+}
+
+/* Risks callout — subtle, not alarming */
+.plan-risks {
+  margin-top: 12px;
+  padding: 10px 12px;
+  background: var(--vscode-input-background);
+  border: 1px solid var(--vscode-panel-border);
+  border-radius: 6px;
+}
+
+.plan-risks-title {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--vscode-charts-red, #f14c4c);
+  margin-bottom: 6px;
+}
+
+.plan-risks-list {
+  margin: 0;
+  padding-left: 18px;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--vscode-foreground);
+}
+
+.plan-risks-list li {
+  margin: 2px 0;
+}
+
+/* Scope bar */
+.plan-scope {
+  margin-top: 12px;
+  display: flex;
+  gap: 12px;
+  padding: 8px 12px;
+  background: var(--vscode-input-background);
+  border-radius: 6px;
+  font-size: 10px;
+  color: var(--vscode-descriptionForeground);
+}
+
+/* Action buttons — consistent, theme-native */
+.plan-actions {
+  margin-top: 16px;
+  display: flex;
+  gap: 8px;
+  padding-top: 14px;
+  border-top: 1px solid var(--vscode-panel-border);
+}
+
+.plan-btn {
+  padding: 8px 16px;
+  border: none;
+  border-radius: 6px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: opacity 0.15s ease;
+}
+
+.plan-btn:hover:not(:disabled) {
+  opacity: 0.85;
+}
+
+.plan-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.plan-btn--primary {
+  flex: 1;
+  background: var(--vscode-button-background);
+  color: var(--vscode-button-foreground);
+}
+
+.plan-btn--primary:hover:not(:disabled) {
+  background: var(--vscode-button-hoverBackground);
+}
+
+.plan-btn--secondary {
+  background: var(--vscode-button-secondaryBackground);
+  color: var(--vscode-button-secondaryForeground);
+}
+
+.plan-btn--secondary:hover:not(:disabled) {
+  background: var(--vscode-button-secondaryHoverBackground);
+}
+
+.plan-btn--ghost {
+  background: transparent;
+  color: var(--vscode-descriptionForeground);
+  border: 1px solid var(--vscode-panel-border);
+  padding: 8px 12px;
+}
+
+.plan-btn--ghost:hover:not(:disabled) {
+  background: var(--vscode-list-hoverBackground);
+  color: var(--vscode-foreground);
+}
+
+/* Refine panel */
+.plan-refine-panel {
+  margin-top: 16px;
+  padding: 14px;
+  background: var(--vscode-input-background);
+  border: 1px solid var(--vscode-panel-border);
+  border-radius: 6px;
+}
+
+.plan-refine-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 10px;
+}
+
+.plan-refine-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--vscode-foreground);
+}
+
+.plan-refine-textarea {
+  width: 100%;
+  padding: 10px 12px;
+  background: var(--vscode-editor-background);
+  border: 1px solid var(--vscode-panel-border);
+  border-radius: 6px;
+  color: var(--vscode-foreground);
+  font-family: inherit;
+  font-size: 12px;
+  resize: vertical;
+  box-sizing: border-box;
+}
+
+.plan-refine-textarea:focus {
+  outline: 1px solid var(--vscode-focusBorder);
+}
+
+.plan-refine-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.plan-refine-hint {
+  margin-top: 8px;
+  font-size: 10px;
+  color: var(--vscode-descriptionForeground);
+  font-style: italic;
+}
+
+/* Architecture diagram container */
+.plan-diagram-container {
+  margin-top: 14px;
+  background: var(--vscode-textCodeBlock-background, rgba(0, 0, 0, 0.1));
+  border: 1px solid var(--vscode-panel-border);
+  border-radius: 6px;
+  overflow: hidden;
+}
+
+.plan-diagram-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--vscode-panel-border);
+}
+
+.plan-diagram-controls {
+  display: flex;
+  gap: 4px;
+}
+
+.plan-diagram-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: 1px solid var(--vscode-panel-border);
+  border-radius: 4px;
+  background: var(--vscode-editor-background);
+  color: var(--vscode-descriptionForeground);
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.plan-diagram-btn:hover {
+  background: var(--vscode-list-hoverBackground);
+  color: var(--vscode-foreground);
+}
+
+.plan-diagram-body {
+  padding: 16px;
+  text-align: center;
+  overflow: hidden;
+  min-height: 120px;
+  position: relative;
+  cursor: grab;
+}
+
+.plan-diagram-body:active {
+  cursor: grabbing;
+}
+
+.plan-diagram-inner {
+  display: inline-block;
+  transform-origin: center center;
+  transition: none;
+}
+
+.plan-diagram-inner svg {
+  max-width: 100%;
+  height: auto;
+}
+
+/* Fullscreen diagram overlay */
+.diagram-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 9999;
+  background: var(--vscode-editor-background);
+  display: flex;
+  flex-direction: column;
+}
+
+.diagram-overlay-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--vscode-panel-border);
+  background: var(--vscode-sideBar-background, var(--vscode-editor-background));
+  flex-shrink: 0;
+}
+
+.diagram-overlay-viewport {
+  flex: 1;
+  overflow: hidden;
+  position: relative;
+  cursor: grab;
+}
+
+.diagram-overlay-viewport:active {
+  cursor: grabbing;
+}
+
+.diagram-overlay-content {
+  position: absolute;
+  left: 0;
+  top: 0;
+  transform-origin: 0 0;
+  padding: 40px;
+}
+
+.diagram-overlay-content svg {
+  max-width: none;
+  height: auto;
+}
+
+/* Streaming plan — live indicator dot */
+.plan-streaming-dot {
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--vscode-button-background);
+  animation: planStreamPulse 1.5s ease-in-out infinite;
+}
+
+@keyframes planStreamPulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.3; }
+}

@@ -577,7 +577,7 @@ export function assessPromptClarity(
   }
 
   // +5 if contains action verbs
-  const actionVerbs = ['add', 'fix', 'build', 'refactor', 'implement', 'create', 'update', 'optimize', 'test'];
+  const actionVerbs = ['add', 'fix', 'build', 'refactor', 'implement', 'create', 'update', 'optimize', 'test', 'change', 'modify', 'remove', 'delete', 'replace', 'move', 'rename', 'convert', 'migrate', 'upgrade', 'improve', 'enhance'];
   if (actionVerbs.some(v => prompt.toLowerCase().includes(v))) {
     rawScore += 5;
     breakdown.push('+5 action verb');
@@ -673,64 +673,54 @@ export function assessPromptClarity(
 // ============================================================================
 
 /**
- * Determine if clarification should be shown
+ * Determine if clarification should be shown.
+ * 
+ * Philosophy: The agent is proactive — it has tools (search_files, read_file,
+ * list_directory) to figure things out on its own. Clarification should ONLY
+ * be shown for genuinely vague prompts where the agent truly cannot proceed.
+ * 
+ * Instead of maintaining keyword lists (which always miss cases), we use
+ * negative signals — only trigger clarification when the prompt is clearly
+ * too vague to act on.
  */
 export function shouldShowClarification(
   assessment: PromptAssessment,
   prompt: string
 ): boolean {
   const { clarity, clarity_score } = assessment;
-  const promptLower = prompt.toLowerCase();
+  const promptLower = prompt.toLowerCase().trim();
 
-  // High clarity: skip clarification
+  // High clarity: never show clarification
   if (clarity === 'high') {
     return false;
   }
 
-  // Check for action verb + specific target patterns (skip clarification)
-  const actionVerbs = ['create', 'add', 'build', 'implement', 'make', 'write', 'develop', 'fix', 'refactor'];
-  const hasActionVerb = actionVerbs.some(v => promptLower.includes(v));
-  
-  // Specific target patterns - component/feature names, technology mentions
-  const specificTargets = [
-    'component', 'page', 'feature', 'button', 'form', 'modal', 'dialog', 'table', 'list',
-    'header', 'footer', 'sidebar', 'navbar', 'menu', 'card', 'chart', 'dashboard',
-    'authentication', 'login', 'signup', 'register', 'profile', 'settings', 'search',
-    'api', 'hook', 'context', 'provider', 'store', 'reducer', 'action', 'selector',
-    'todo', 'task', 'item', 'user', 'product', 'order', 'cart', 'checkout'
-  ];
-  const hasSpecificTarget = specificTargets.some(t => promptLower.includes(t));
-  
-  // Framework/technology mentions suggest specificity
-  const techMentions = ['react', 'vue', 'angular', 'next', 'node', 'express', 'typescript'];
-  const hasTechMention = techMentions.some(t => promptLower.includes(t));
-
-  // Skip clarification if: action verb + (specific target OR tech mention)
-  if (hasActionVerb && (hasSpecificTarget || hasTechMention)) {
-    console.log(`[Ordinex:PlanEnhancement] Skipping clarification: action verb + specific target detected`);
-    return false;
-  }
-
-  // For medium clarity (40-69), also check other specificity signals
+  // Medium clarity (score 40-69): default to skipping clarification.
+  // The agent can figure it out. Only show if GENUINELY ambiguous.
   if (clarity === 'medium') {
-    const hasExplicitScope = /only|just|specifically|focus|limit to/i.test(prompt);
-    const hasFileComponentMention = /\.(ts|tsx|js|jsx|py|go|java)|[A-Z][a-z]+[A-Z][a-zA-Z]*\.tsx?/i.test(prompt);
-    
-    // Skip if user mentions specific file/component OR explicit scope
-    if (hasExplicitScope || hasFileComponentMention) {
+    // Still skip for most medium-clarity prompts — the agent is smart enough
+    // Only show if the prompt is BOTH short AND has no nouns/targets at all
+    const wordCount = promptLower.split(/\s+/).length;
+    if (wordCount >= 4) {
+      // 4+ words is enough context for the agent to work with
+      console.log(`[Ordinex:PlanEnhancement] Skipping clarification: ${wordCount} words is sufficient context`);
       return false;
     }
-    
-    // If clarity score is 50+, still skip for prompts with decent specificity
-    if (clarity_score >= 50 && (hasActionVerb || hasSpecificTarget)) {
-      console.log(`[Ordinex:PlanEnhancement] Skipping clarification: score ${clarity_score} with action/target`);
-      return false;
-    }
-    
+    // Very short medium-clarity prompts (1-3 words) — show clarification
+    console.log(`[Ordinex:PlanEnhancement] Showing clarification: only ${wordCount} words with medium clarity`);
     return true;
   }
 
-  // Always show for low clarity
+  // Low clarity (score < 40): only show for truly vague prompts
+  // Even with low score, if the prompt has 5+ words, the agent can likely proceed
+  const wordCount = promptLower.split(/\s+/).length;
+  if (wordCount >= 5) {
+    console.log(`[Ordinex:PlanEnhancement] Skipping clarification despite low score: ${wordCount} words provides enough context`);
+    return false;
+  }
+
+  // Truly vague: short prompt + low clarity score → ask for clarification
+  console.log(`[Ordinex:PlanEnhancement] Showing clarification: low clarity (${clarity_score}) with only ${wordCount} words`);
   return true;
 }
 

@@ -372,7 +372,7 @@ export async function generateAndEmitPlan(
     {
       apiKey,
       model: modelId,
-      maxTokens: 4096,
+      maxTokens: 8192,
     },
     workspaceRoot,
     openFiles,
@@ -1134,7 +1134,7 @@ export async function handleRefinePlan(
           {
             apiKey,
             model: FAST_MODEL,
-            maxTokens: 4096,
+            maxTokens: 8192,
           },
           workspaceRoot,
           openFiles,

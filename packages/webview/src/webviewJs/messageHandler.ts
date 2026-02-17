@@ -108,7 +108,7 @@ export function getMessageHandlerJs(): string {
               if (stateCount > domCount) {
                 // Append only the NEW blocks (avoid full re-render)
                 var scrollEl = getScrollableContent();
-                var shouldAutoScroll = scrollEl && isNearBottom(scrollEl, 150) && !state._missionUserPinnedScroll;
+                var shouldAutoScroll = scrollEl && isNearBottom(scrollEl, 300) && !state._missionUserPinnedScroll;
                 for (var bi = domCount; bi < stateCount; bi++) {
                   var block = state.streamingMission.blocks[bi];
                   var html = '';
@@ -146,13 +146,13 @@ export function getMessageHandlerJs(): string {
 
       function isNearBottom(el, thresholdPx) {
         if (!el) return true;
-        return (el.scrollHeight - el.scrollTop - el.clientHeight) <= thresholdPx;
+        return (el.scrollHeight - el.scrollTop - el.clientHeight) <= (thresholdPx || 300);
       }
 
       function preserveStreamingScrollIntent(container, updateFn) {
         var scrollEl = getScrollableContent();
         if (!scrollEl) return updateFn();
-        var shouldAutoStick = isNearBottom(scrollEl, 150) && !state._missionUserPinnedScroll;
+        var shouldAutoStick = isNearBottom(scrollEl, 300) && !state._missionUserPinnedScroll;
         updateFn();
         if (shouldAutoStick) {
           // Use instant scroll during rapid streaming — smooth scroll can't keep up
@@ -166,7 +166,7 @@ export function getMessageHandlerJs(): string {
         if (!scrollEl || scrollEl.dataset.streamScrollBound === '1') return;
         scrollEl.dataset.streamScrollBound = '1';
         scrollEl.addEventListener('scroll', function() {
-          state._missionUserPinnedScroll = !isNearBottom(scrollEl, 150);
+          state._missionUserPinnedScroll = !isNearBottom(scrollEl, 300);
         }, { passive: true });
       }
 
@@ -320,13 +320,15 @@ export function getMessageHandlerJs(): string {
                   });
                 }
 
-                // Update status based on recent events (check last 5 for any "waiting" state)
+                // ALWAYS check status based on recent events — even during streaming.
+                // This ensures the UI resets to "ready" when terminal events arrive.
                 var READY_EVENT_TYPES = [
                   'final', 'scaffold_final_complete', 'failure_detected',
                   'execution_paused', 'clarification_requested', 'loop_paused',
                   'plan_created', 'plan_ready', 'decision_point_needed',
                   'command_proposed', 'mission_completed', 'mission_cancelled',
-                  'loop_completed', 'answer_completed'
+                  'loop_completed', 'answer_completed',
+                  'diff_proposed', 'diff_applied'
                 ];
                 var recentEvents = state.events.slice(-5);
                 var hasReadyEvent = recentEvents.some(function(ev) {
@@ -386,7 +388,7 @@ export function getMessageHandlerJs(): string {
 
             // ===== A6: PLAN MODE STREAMING =====
             case 'ordinex:planStreamDelta':
-              // Plan generation is streaming — show thinking bubble
+              // Plan generation is streaming — accumulate text and show clean progress
               if (!state.streamingPlan) {
                 state.streamingPlan = {
                   taskId: message.task_id || 'unknown',
@@ -396,11 +398,11 @@ export function getMessageHandlerJs(): string {
 
               state.streamingPlan.text += message.delta;
 
-              // Try direct DOM update with markdown rendering
+              // Update the streaming plan card with progressive step content
               {
                 const planStreamDiv = missionTab.querySelector('.streaming-plan-content');
                 if (planStreamDiv) {
-                  planStreamDiv.innerHTML = simpleMarkdown(state.streamingPlan.text) + '<span style="display:inline-block;width:2px;height:16px;background:var(--vscode-charts-purple);margin-left:2px;animation:blink 1s steps(2,start) infinite;vertical-align:text-bottom;"></span>';
+                  planStreamDiv.innerHTML = buildStreamingPlanInnerHtml(state.streamingPlan.text);
                 } else {
                   // DOM element doesn't exist yet — re-render to create streaming card
                   renderMission();
@@ -457,6 +459,8 @@ export function getMessageHandlerJs(): string {
               state._missionLastParsedHtml = '';
               state._missionUserPinnedScroll = false;
               renderMission();
+              // Reset status to ready — the agent has finished this streaming phase
+              updateStatus('ready');
               break;
 
             // Phase 2: Inline tool activity — sequential blocks model

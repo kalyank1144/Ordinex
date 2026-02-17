@@ -472,15 +472,13 @@ export function getActionsJs(): string {
       // ===== CANCEL PLAN HANDLER =====
       window.handleCancelPlan = function(taskId) {
         console.log('Cancel Plan clicked', { taskId });
-        if (confirm('Are you sure you want to cancel this plan? This will clear the current task.')) {
-          // Clear events and reset
-          state.events = [];
-          state.streamingAnswer = null;
-          updateStatus('ready');
-          updateStage('none');
-          renderMission();
-          renderLogs();
-        }
+        // No confirm() — webview sandbox blocks modals. Just cancel directly.
+        state.events = [];
+        state.streamingAnswer = null;
+        updateStatus('ready');
+        updateStage('none');
+        renderMission();
+        renderLogs();
       };
 
       // ===== PLAN REFINEMENT HANDLERS (Step 25) =====
@@ -518,19 +516,16 @@ export function getActionsJs(): string {
 
         const refinementText = textarea.value.trim();
         if (!refinementText) {
-          alert('Please enter a refinement instruction describing what changes you want to the plan.');
+          // Highlight the textarea border to indicate it needs input
+          textarea.style.borderColor = 'var(--vscode-inputValidation-errorBorder)';
+          textarea.focus();
+          setTimeout(function() { textarea.style.borderColor = ''; }, 2000);
           return;
-        }
-
-        // Disable the button to prevent double-submit
-        const submitBtn = event.target;
-        if (submitBtn) {
-          submitBtn.disabled = true;
-          submitBtn.textContent = '⏳ Refining...';
         }
 
         // Send to extension backend
         if (typeof vscode !== 'undefined') {
+          updateStatus('running');
           vscode.postMessage({
             type: 'ordinex:refinePlan',
             task_id: taskId,
@@ -538,15 +533,7 @@ export function getActionsJs(): string {
             refinement_text: refinementText
           });
         } else {
-          // Demo mode
           console.log('Demo mode: would refine plan with:', refinementText);
-          alert('Plan refinement requires VS Code extension backend');
-
-          // Re-enable button
-          if (submitBtn) {
-            submitBtn.disabled = false;
-            submitBtn.textContent = '🔄 Generate Refined Plan';
-          }
         }
       };
   `;

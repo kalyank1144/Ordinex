@@ -157,19 +157,76 @@ export async function generateLLMPlan(
     }
   );
 
-  // Parse JSON response
+  // Parse JSON response with robust extraction
   try {
-    // Extract JSON from response (in case LLM adds extra text)
-    const jsonMatch = response.content.match(/\{[\s\S]*\}/);
-    if (!jsonMatch) {
+    const rawContent = response.content;
+    console.log('[PlanGenerator] Raw response length:', rawContent.length);
+
+    // Strategy 1: Extract JSON from markdown code fences (```json ... ```)
+    let jsonStr: string | null = null;
+    const fenceMatch = rawContent.match(/```(?:json)?\s*\n?([\s\S]*?)\n?```/);
+    if (fenceMatch) {
+      jsonStr = fenceMatch[1].trim();
+      console.log('[PlanGenerator] Extracted JSON from code fence');
+    }
+
+    // Strategy 2: Match the outermost { ... }
+    if (!jsonStr) {
+      const braceMatch = rawContent.match(/\{[\s\S]*\}/);
+      if (braceMatch) {
+        jsonStr = braceMatch[0];
+        console.log('[PlanGenerator] Extracted JSON from brace match');
+      }
+    }
+
+    if (!jsonStr) {
       throw new Error('No JSON object found in LLM response');
     }
 
-    const plan: StructuredPlan = JSON.parse(jsonMatch[0]);
+    // Try to parse, and if it fails, attempt JSON repair for truncated responses
+    let plan: StructuredPlan;
+    try {
+      plan = JSON.parse(jsonStr);
+    } catch (parseErr) {
+      console.warn('[PlanGenerator] Initial JSON parse failed, attempting repair...');
+      // Try to repair truncated JSON by closing open braces/brackets
+      let repaired = jsonStr;
+
+      // Remove trailing incomplete string values (cut off mid-string)
+      repaired = repaired.replace(/,\s*"[^"]*$/, '');
+      repaired = repaired.replace(/,\s*"[^"]*":\s*"[^"]*$/, '');
+      repaired = repaired.replace(/,\s*"[^"]*":\s*\[[^\]]*$/, '');
+
+      // Count open vs close braces/brackets and append missing closers
+      const openBraces = (repaired.match(/\{/g) || []).length;
+      const closeBraces = (repaired.match(/\}/g) || []).length;
+      const openBrackets = (repaired.match(/\[/g) || []).length;
+      const closeBrackets = (repaired.match(/\]/g) || []).length;
+
+      // Close any open strings
+      const quoteCount = (repaired.match(/(?<!\\)"/g) || []).length;
+      if (quoteCount % 2 !== 0) {
+        repaired += '"';
+      }
+
+      for (let i = 0; i < openBrackets - closeBrackets; i++) repaired += ']';
+      for (let i = 0; i < openBraces - closeBraces; i++) repaired += '}';
+
+      console.log('[PlanGenerator] Repaired JSON, added', (openBraces - closeBraces), 'braces and', (openBrackets - closeBrackets), 'brackets');
+
+      try {
+        plan = JSON.parse(repaired);
+        console.log('[PlanGenerator] Repaired JSON parsed successfully');
+      } catch (repairErr) {
+        // Last resort: try to extract just the goal and steps from partial JSON
+        console.error('[PlanGenerator] JSON repair also failed:', repairErr);
+        throw parseErr; // throw original error
+      }
+    }
 
     // Validate required fields
     if (!plan.goal || !plan.steps || !Array.isArray(plan.steps)) {
-      throw new Error('Invalid plan structure: missing required fields');
+      throw new Error('Invalid plan structure: missing required fields (goal=' + !!plan.goal + ', steps=' + !!plan.steps + ')');
     }
 
     // Set defaults for optional fields
@@ -203,21 +260,20 @@ export async function generateLLMPlan(
       console.warn('⚠️ [PLAN DEBUG] Plan may be too generic:', validation.reasons);
       console.warn('[PLAN DEBUG] Goal:', plan.goal);
       console.warn('[PLAN DEBUG] Steps:', plan.steps.map(s => s.description).join('; '));
-      
-      // NOTE: We log for debugging but DO NOT add warnings to the UI
-      // The validation may have false positives, so we trust the LLM output
-      // Future: Implement automatic retry with enhanced prompt instead of warning user
     }
 
+    console.log('[PlanGenerator] Successfully parsed plan with', plan.steps.length, 'steps');
     return plan;
   } catch (error) {
     console.error('Failed to parse LLM plan:', error);
-    console.error('LLM response:', response.content);
+    console.error('LLM response length:', response.content.length);
+    console.error('LLM response (first 500 chars):', response.content.substring(0, 500));
+    console.error('LLM response (last 200 chars):', response.content.substring(response.content.length - 200));
     
     // Fallback to a basic plan structure
     return {
       goal: prompt,
-      assumptions: ['LLM failed to generate proper plan structure'],
+      assumptions: ['Plan generation encountered a parsing issue — try again or rephrase your request'],
       success_criteria: ['Complete the requested task'],
       scope_contract: {
         max_files: 10,
@@ -241,7 +297,7 @@ export async function generateLLMPlan(
           expected_evidence: ['Tests passed']
         }
       ],
-      risks: ['Unknown - LLM plan generation failed']
+      risks: ['Plan JSON parsing failed — the LLM response may have been truncated']
     };
   }
 }

@@ -39,6 +39,7 @@ const CSS_FILES = [
   'responsive.css',
   'missionControlBar.css',
   'onboarding.css',
+  'plan.css',
 ];
 
 let cssCache: string | null = null;
