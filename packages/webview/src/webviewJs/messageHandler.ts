@@ -320,34 +320,24 @@ export function getMessageHandlerJs(): string {
                   });
                 }
 
-                // Update status based on last event
-                const lastEvent = state.events[state.events.length - 1];
-                if (lastEvent) {
-                  if (lastEvent.type === 'final' || lastEvent.type === 'scaffold_final_complete') {
-                    updateStatus('ready');
-                  } else if (lastEvent.type === 'failure_detected') {
-                    updateStatus('error');
-                  } else if (lastEvent.type === 'tool_end' && lastEvent.payload.tool === 'llm_answer') {
-                    updateStatus('ready');
-                  } else if (lastEvent.type === 'execution_paused') {
-                    // Paused states mean the agent is waiting for user input — enable the send button
-                    updateStatus('ready');
-                  } else if (lastEvent.type === 'clarification_requested') {
-                    // Clarification needs user response — enable the send button
-                    updateStatus('ready');
-                  } else if (lastEvent.type === 'loop_paused') {
-                    // Loop paused (hard limit or error) — enable the send button
-                    updateStatus('ready');
-                  } else if (lastEvent.type === 'plan_created' || lastEvent.type === 'plan_ready') {
-                    // Plan ready for review — enable the send button
-                    updateStatus('ready');
-                  } else if (lastEvent.type === 'decision_point_needed') {
-                    // Decision needed from user — enable the send button
-                    updateStatus('ready');
-                  } else if (lastEvent.type === 'mission_completed' || lastEvent.type === 'mission_cancelled') {
-                    // Mission finished — enable the send button
-                    updateStatus('ready');
-                  }
+                // Update status based on recent events (check last 5 for any "waiting" state)
+                var READY_EVENT_TYPES = [
+                  'final', 'scaffold_final_complete', 'failure_detected',
+                  'execution_paused', 'clarification_requested', 'loop_paused',
+                  'plan_created', 'plan_ready', 'decision_point_needed',
+                  'command_proposed', 'mission_completed', 'mission_cancelled',
+                  'loop_completed', 'answer_completed'
+                ];
+                var recentEvents = state.events.slice(-5);
+                var hasReadyEvent = recentEvents.some(function(ev) {
+                  return READY_EVENT_TYPES.indexOf(ev.type) !== -1
+                    || (ev.type === 'tool_end' && ev.payload && ev.payload.tool === 'llm_answer');
+                });
+                var lastEvent = state.events[state.events.length - 1];
+                if (lastEvent && lastEvent.type === 'failure_detected') {
+                  updateStatus('error');
+                } else if (hasReadyEvent) {
+                  updateStatus('ready');
                 }
               }
               break;
@@ -616,6 +606,67 @@ export function getMessageHandlerJs(): string {
               console.log('[A9] Received showOnboarding message');
               if (typeof checkOnboarding === 'function') {
                 checkOnboarding(true);
+              }
+              break;
+
+            // Step 52: Keyboard shortcut — focus the prompt input
+            case 'ordinex:focusInput':
+              console.log('[Step52] Focus input triggered');
+              if (promptInput) {
+                promptInput.focus();
+              }
+              break;
+
+            // Step 52: Keyboard shortcut — new chat (clear + focus)
+            case 'ordinex:newChat':
+              console.log('[Step52] New chat triggered via keyboard shortcut');
+              state.events = [];
+              state.narrationCards = [];
+              state.streamingMission = null;
+              state._completedMissionBlocks = [];
+              state.streamingAnswer = null;
+              state._completedAnswers = [];
+              state.counters = {
+                filesInScope: 0,
+                filesTouched: 0,
+                linesIncluded: 0,
+                toolCallsUsed: 0,
+                toolCallsMax: 100
+              };
+              state.currentStage = 'none';
+              state.pendingScopeExpansion = null;
+              updateStatus('ready');
+              updateStage('none');
+              renderMission();
+              renderLogs();
+              renderSystemsCounters();
+              if (promptInput) {
+                promptInput.value = '';
+                promptInput.focus();
+              }
+              if (typeof autoResizeTextarea === 'function') {
+                autoResizeTextarea();
+              }
+              if (typeof updateSendStopButton === 'function') {
+                updateSendStopButton();
+              }
+              // Notify extension backend
+              if (typeof vscode !== 'undefined') {
+                vscode.postMessage({ type: 'ordinex:newChat' });
+              }
+              break;
+
+            // Step 52: Keyboard shortcut — stop execution (Escape)
+            case 'ordinex:triggerStop':
+              console.log('[Step52] Stop execution triggered via keyboard');
+              if (state.taskStatus === 'running') {
+                if (typeof vscode !== 'undefined') {
+                  vscode.postMessage({ type: 'ordinex:stopExecution' });
+                }
+                updateStatus('ready');
+                if (typeof updateSendStopButton === 'function') {
+                  updateSendStopButton();
+                }
               }
               break;
 

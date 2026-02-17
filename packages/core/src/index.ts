@@ -955,6 +955,7 @@ export {
   CheckpointManagerV2,
   initCheckpointManagerV2,
   getCheckpointManagerV2,
+  resetCheckpointManagerV2,
   createPreScaffoldCheckpoint,
   createPreMissionCheckpoint,
   createPreEditCheckpoint,

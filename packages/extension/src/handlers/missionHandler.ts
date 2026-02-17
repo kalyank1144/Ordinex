@@ -214,6 +214,7 @@ export async function handleExecutePlan(
 
         ctx.isMissionExecuting = false;
         ctx.currentExecutingMissionId = null;
+        vscode.commands.executeCommand('setContext', 'ordinex.isRunning', false);
         console.log('[handleExecutePlan] Mission execution flag cleared');
 
         // Flush immediately before sequencing
@@ -560,6 +561,7 @@ export async function handleStartSelectedMission(
     // CRITICAL: Set mission executing flag BEFORE starting execution
     ctx.isMissionExecuting = true;
     ctx.currentExecutingMissionId = selectedMissionId;
+    vscode.commands.executeCommand('setContext', 'ordinex.isRunning', true);
     console.log(`${LOG_PREFIX} Mission execution flag set, ID: ${selectedMissionId}`);
 
     // Trigger handleExecutePlan with the mission plan
@@ -997,6 +999,10 @@ export async function handleStopAutonomy(
 
     // Stop the repair loop
     await ctx.repairOrchestrator.stop(ctx.currentMode);
+
+    // Step 52: Clear running context key
+    ctx.isMissionExecuting = false;
+    vscode.commands.executeCommand('setContext', 'ordinex.isRunning', false);
 
     // Send updated events to webview
     await ctx.sendEventsToWebview(webview, taskId);

@@ -95,5 +95,6 @@ export function getStateJs(): string {
       const exportRunBtn = document.getElementById('exportRunBtn');
       const sendStopBtn = document.getElementById('sendStopBtn');
       const attachBtn = document.getElementById('attachBtn');
+      const newChatBtn = document.getElementById('newChatBtn');
   `;
 }

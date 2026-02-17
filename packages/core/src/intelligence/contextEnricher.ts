@@ -637,15 +637,16 @@ export function buildEnrichedPrompt(
     parts.push(`[Open files: ${codebaseContext.openFiles.join(', ')}]`);
   }
 
-  // V4: Inject memory context (structured blocks)
+  // V4: Inject memory context (structured blocks) — P1-3: redact secrets before injection
   const memoryParts: string[] = [];
   if (memoryContext?.facts) {
     const lineCount = memoryContext.facts_line_count ?? memoryContext.facts.split('\n').length;
-    memoryParts.push(`## Project Facts (last ${lineCount} lines)\n${memoryContext.facts}`);
+    const safeFacts = redactSecrets(memoryContext.facts);
+    memoryParts.push(`## Project Facts (last ${lineCount} lines)\n${safeFacts}`);
   }
   if (memoryContext?.solutions && memoryContext.solutions.length > 0) {
     const block = memoryContext.solutions.slice(0, 3).map((s, i) =>
-      `${i + 1}. **Problem:** ${s.solution.problem}\n   **Fix:** ${s.solution.fix}\n   **Verified by:** \`${s.solution.verification.command}\` (${s.solution.verification.type})`
+      `${i + 1}. **Problem:** ${redactSecrets(s.solution.problem)}\n   **Fix:** ${redactSecrets(s.solution.fix)}\n   **Verified by:** \`${redactSecrets(s.solution.verification.command)}\` (${s.solution.verification.type})`
     ).join('\n');
     memoryParts.push(`## Proven Solutions (top ${memoryContext.solutions.length})\n${block}`);
   }

@@ -19,6 +19,7 @@ import {
   CommandPhaseContext,
   MissionRunner,
   getSessionContextManager,
+  resetSessionContextManager,
   DEFAULT_INTELLIGENCE_SETTINGS,
   getProcessManager,
   ProjectMemoryManager,
@@ -31,6 +32,8 @@ import {
   getDiffCorrelationId,
   buildUndoGroup,
   ConversationHistory,
+  resetCheckpointManagerV2,
+  modeConfirmationPolicy,
 } from 'core';
 import type { FileReadResult } from 'core';
 import type { ModeTransitionResult } from 'core';
@@ -134,6 +137,7 @@ class MissionControlViewProvider implements vscode.WebviewViewProvider {
   public _undoBeforeCache: Map<string, Map<string, FileReadResult>> = new Map();
   public conversationHistories: Map<string, ConversationHistory> = new Map();
   public _currentWebview: vscode.Webview | null = null;
+  public _webviewView: vscode.WebviewView | null = null;
 
   constructor(
     private readonly _extensionUri: vscode.Uri,
@@ -148,6 +152,9 @@ class MissionControlViewProvider implements vscode.WebviewViewProvider {
 
     // Step 40.5 Enhancement: Initialize session persistence if enabled
     this.initSessionPersistence();
+
+    // P2-1: Watch for workspace folder changes to invalidate cached services
+    this.setupWorkspaceChangeListener();
   }
 
   // -------------------------------------------------------------------------
@@ -918,6 +925,85 @@ class MissionControlViewProvider implements vscode.WebviewViewProvider {
     console.log('[Step40.5] Session persistence enabled:', persistPath);
   }
 
+  // -------------------------------------------------------------------------
+  // P2-1: Workspace change invalidation
+  // -------------------------------------------------------------------------
+
+  /**
+   * Reset all cached workspace-specific services.
+   * Called when VS Code workspace folders change so that lazy getters
+   * re-initialize with the new workspace root on next access.
+   */
+  public resetWorkspaceServices(): void {
+    console.log('[P2-1] Invalidating cached workspace services...');
+
+    // Extension-level lazy singletons
+    this._projectMemoryManager = null;
+    this._memoryService = null;
+    this._generatedToolManager = null;
+    this._toolRegistryService = null;
+    this._taskPersistenceService = null;
+    this._undoStack = null;
+    this._fsUndoService = null;
+    this._undoBeforeCache.clear();
+
+    // Core-level module singletons
+    resetSessionContextManager();
+    resetCheckpointManagerV2();
+    modeConfirmationPolicy.clearCache();
+
+    // Clear task & mission state
+    this.currentTaskId = null;
+    this.currentMode = 'ANSWER';
+    this.currentStage = 'none';
+    this.isMissionExecuting = false;
+    this.currentExecutingMissionId = null;
+    this.activeMissionRunner = null;
+    this.activeMissionExecutor = null;
+    this.activeApprovalManager = null;
+    this.repairOrchestrator = null;
+    this.recentEventsWindow = [];
+    this.pendingCommandContexts.clear();
+    this.conversationHistories.clear();
+    this.pendingPreflightResult = null;
+    this.pendingPreflightInput = null;
+    this.pendingPreflightCtx = null;
+
+    // Clear module-level refs
+    globalTaskPersistenceService = null;
+    globalCurrentTaskId = null;
+
+    // Reset VS Code context keys
+    vscode.commands.executeCommand('setContext', 'ordinex.isRunning', false);
+    vscode.commands.executeCommand('setContext', 'ordinex.hasUndoableEdits', false);
+
+    // Re-initialize session persistence for the new workspace
+    this.initSessionPersistence();
+
+    // Notify the webview to clear its state
+    if (this._currentWebview) {
+      this._currentWebview.postMessage({ type: 'ordinex:newChat' });
+    }
+
+    console.log('[P2-1] Workspace services reset complete');
+  }
+
+  /**
+   * Set up workspace folder change listener.
+   * Called from the constructor to register the subscription.
+   */
+  public setupWorkspaceChangeListener(): void {
+    this._context.subscriptions.push(
+      vscode.workspace.onDidChangeWorkspaceFolders((event) => {
+        console.log('[P2-1] Workspace folders changed:', {
+          added: event.added.map(f => f.uri.fsPath),
+          removed: event.removed.map(f => f.uri.fsPath),
+        });
+        this.resetWorkspaceServices();
+      })
+    );
+  }
+
   public resolveWebviewView(
     webviewView: vscode.WebviewView,
     context: vscode.WebviewViewResolveContext,
@@ -932,6 +1018,9 @@ class MissionControlViewProvider implements vscode.WebviewViewProvider {
 
     // Step 48: Store webview reference for Cmd+Shift+Z command
     this._currentWebview = webviewView.webview;
+
+    // Step 52: Store WebviewView reference for focus/reveal commands
+    this._webviewView = webviewView;
 
     // Set up message passing
     webviewView.webview.onDidReceiveMessage(
@@ -1102,6 +1191,27 @@ class MissionControlViewProvider implements vscode.WebviewViewProvider {
       case 'ordinex:onboardingComplete':
         await this._context.globalState.update('ordinex.onboardingCompleted', true);
         console.log('[A9] Onboarding completed — flag persisted');
+        break;
+
+      // Step 52: New Chat — reset extension-side state for a fresh session
+      case 'ordinex:newChat':
+        console.log('[Step52] New chat requested — resetting provider state');
+        this.currentTaskId = null;
+        this.currentMode = 'ANSWER';
+        this.currentStage = 'none';
+        this.isMissionExecuting = false;
+        this.currentExecutingMissionId = null;
+        this.recentEventsWindow = [];
+        this.activeMissionRunner = null;
+        this.activeMissionExecutor = null;
+        this.activeApprovalManager = null;
+        this.repairOrchestrator = null;
+        this.pendingCommandContexts.clear();
+        this.pendingPreflightResult = null;
+        this.pendingPreflightInput = null;
+        this.pendingPreflightCtx = null;
+        vscode.commands.executeCommand('setContext', 'ordinex.isRunning', false);
+        vscode.commands.executeCommand('setContext', 'ordinex.hasUndoableEdits', false);
         break;
 
       default:
@@ -1729,6 +1839,59 @@ export function activate(context: vscode.ExtensionContext) {
         }
       } else {
         vscode.window.showInformationMessage('Ordinex: Nothing to undo');
+      }
+    })
+  );
+
+  // Step 52: Keyboard shortcut commands
+  // Cmd+Shift+O — Focus/reveal the Ordinex sidebar panel
+  context.subscriptions.push(
+    vscode.commands.registerCommand('ordinex.focusPanel', () => {
+      const webviewView = (provider as any)._webviewView as vscode.WebviewView | null;
+      if (webviewView) {
+        webviewView.show(true);
+      } else {
+        // Fallback: open the sidebar view via built-in command
+        vscode.commands.executeCommand('ordinex.missionControl.focus');
+      }
+    })
+  );
+
+  // Cmd+L — Focus the prompt input inside the webview
+  context.subscriptions.push(
+    vscode.commands.registerCommand('ordinex.focusInput', () => {
+      const webviewView = (provider as any)._webviewView as vscode.WebviewView | null;
+      const webview = (provider as any)._currentWebview as vscode.Webview | null;
+      if (webviewView) {
+        webviewView.show(true);
+      }
+      if (webview) {
+        webview.postMessage({ type: 'ordinex:focusInput' });
+      }
+    })
+  );
+
+  // Cmd+Shift+N — New chat (clear conversation and focus input)
+  context.subscriptions.push(
+    vscode.commands.registerCommand('ordinex.newChat', () => {
+      const webviewView = (provider as any)._webviewView as vscode.WebviewView | null;
+      const webview = (provider as any)._currentWebview as vscode.Webview | null;
+      if (webviewView) {
+        webviewView.show(true);
+      }
+      if (webview) {
+        webview.postMessage({ type: 'ordinex:newChat' });
+      }
+    })
+  );
+
+  // Escape — Stop current execution (only when Ordinex is focused & running)
+  context.subscriptions.push(
+    vscode.commands.registerCommand('ordinex.stopExecution', () => {
+      const webview = (provider as any)._currentWebview as vscode.Webview | null;
+      const providerRef = provider as any;
+      if (providerRef.isMissionExecuting && webview) {
+        webview.postMessage({ type: 'ordinex:triggerStop' });
       }
     })
   );

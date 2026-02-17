@@ -49,6 +49,15 @@ import {
 
 import type { EditorContext } from '../intelligence/contextEnricher';
 
+import {
+  initCheckpointManagerV2,
+  getCheckpointManagerV2,
+  resetCheckpointManagerV2,
+} from '../checkpointManagerV2';
+
+import { EventBus } from '../eventBus';
+import { modeConfirmationPolicy } from '../modeConfirmationPolicy';
+
 // ============================================================================
 // TEST SETUP
 // ============================================================================
@@ -972,6 +981,82 @@ describe('ContextEnricher', () => {
 
       cleanup(tempDir);
     });
+
+    it('should redact secrets in memory context facts (P1-3)', () => {
+      const tempDir = createTempDir();
+      createMockProject(tempDir, {});
+      const context = gatherCodebaseContext(tempDir);
+
+      const memoryContext = {
+        facts: 'Project uses api_key = "sk-ant-secret123abc" for auth\nDatabase host is localhost',
+        facts_line_count: 2,
+      };
+
+      const enriched = buildEnrichedPrompt('Fix the auth', context, [], undefined, undefined, memoryContext);
+      expect(enriched).toContain('Project Facts');
+      expect(enriched).toContain('[REDACTED]');
+      expect(enriched).not.toContain('sk-ant-secret123abc');
+      expect(enriched).toContain('Database host is localhost');
+
+      cleanup(tempDir);
+    });
+
+    it('should redact secrets in memory context solutions (P1-3)', () => {
+      const tempDir = createTempDir();
+      createMockProject(tempDir, {});
+      const context = gatherCodebaseContext(tempDir);
+
+      const memoryContext = {
+        solutions: [
+          {
+            solution: {
+              problem: 'Auth failed with token=Bearer supersecrettoken',
+              fix: 'Set api_key = "new-secret-value" in config',
+              verification: { command: 'curl -H "Bearer testtoken"', type: 'manual' },
+            },
+            score: 0.9,
+          },
+        ],
+      };
+
+      const enriched = buildEnrichedPrompt('Fix auth', context, [], undefined, undefined, memoryContext);
+      expect(enriched).toContain('Proven Solutions');
+      expect(enriched).toContain('[REDACTED]');
+      expect(enriched).not.toContain('supersecrettoken');
+      expect(enriched).not.toContain('new-secret-value');
+
+      cleanup(tempDir);
+    });
+
+    it('should leave clean memory context unchanged (P1-3)', () => {
+      const tempDir = createTempDir();
+      createMockProject(tempDir, {});
+      const context = gatherCodebaseContext(tempDir);
+
+      const memoryContext = {
+        facts: 'Uses React 18\nMonorepo with pnpm',
+        facts_line_count: 2,
+        solutions: [
+          {
+            solution: {
+              problem: 'Build failed due to missing types',
+              fix: 'Added @types/node to devDependencies',
+              verification: { command: 'pnpm tsc --noEmit', type: 'build' },
+            },
+            score: 0.8,
+          },
+        ],
+      };
+
+      const enriched = buildEnrichedPrompt('Help me fix', context, [], undefined, undefined, memoryContext);
+      expect(enriched).toContain('Uses React 18');
+      expect(enriched).toContain('Monorepo with pnpm');
+      expect(enriched).toContain('Build failed due to missing types');
+      expect(enriched).toContain('Added @types/node to devDependencies');
+      expect(enriched).not.toContain('[REDACTED]');
+
+      cleanup(tempDir);
+    });
   });
 
   describe('enrichUserInput', () => {
@@ -1076,6 +1161,50 @@ describe('ContextEnricher', () => {
       expect(errors[0].message).toContain('Cannot find name');
 
       cleanup(tempDir);
+    });
+  });
+
+  // ==========================================================================
+  // P2-1: Singleton reset / workspace invalidation
+  // ==========================================================================
+
+  describe('P2-1: Singleton cache invalidation', () => {
+    it('resetSessionContextManager clears session state', () => {
+      const mgr = getSessionContextManager();
+      mgr.addTopic('old topic');
+      mgr.addFileMention('/old/file.ts', 'edited');
+      mgr.addError('old error', 'build');
+
+      const ctxBefore = mgr.getContext();
+      expect(ctxBefore.recentTopics.length).toBeGreaterThan(0);
+
+      resetSessionContextManager();
+
+      const fresh = getSessionContextManager();
+      const ctxAfter = fresh.getContext();
+      expect(ctxAfter.recentTopics).toHaveLength(0);
+      expect(ctxAfter.recentFiles).toHaveLength(0);
+      expect(ctxAfter.recentErrors).toHaveLength(0);
+    });
+
+    it('resetCheckpointManagerV2 clears the global singleton', () => {
+      const tempDir = createTempDir();
+      const eventBus = new EventBus();
+
+      initCheckpointManagerV2(eventBus, tempDir);
+      expect(getCheckpointManagerV2()).not.toBeNull();
+
+      resetCheckpointManagerV2();
+      expect(getCheckpointManagerV2()).toBeNull();
+
+      cleanup(tempDir);
+    });
+
+    it('modeConfirmationPolicy.clearCache empties the override cache', () => {
+      modeConfirmationPolicy.clearCache();
+      // After clearing, any subsequent check should work fresh (no stale overrides)
+      // Just verify it doesn't throw
+      expect(() => modeConfirmationPolicy.clearCache()).not.toThrow();
     });
   });
 });

@@ -13,6 +13,7 @@ import type { IProvider } from '../handlerContext';
 import * as vscode from 'vscode';
 import * as path from 'path';
 import * as fs from 'fs';
+import { promises as fsp } from 'fs';
 import {
   collectAnswerContext,
   buildAnswerModeSystemMessage,
@@ -204,16 +205,14 @@ export async function handleAnswerMode(
     // 7. Create evidence for the assistant answer
     const evidenceDir = path.join(ctx._context.globalStorageUri.fsPath, 'evidence');
 
-    // Ensure evidence directory exists
-    if (!fs.existsSync(evidenceDir)) {
-      fs.mkdirSync(evidenceDir, { recursive: true });
-    }
+    // P2-3: Async FS ops in answer handler
+    await fsp.mkdir(evidenceDir, { recursive: true });
 
     const evidenceId = ctx.generateId();
     const evidenceFilePath = path.join(evidenceDir, `${evidenceId}.txt`);
 
     // Write answer to evidence file
-    fs.writeFileSync(evidenceFilePath, response.content, 'utf-8');
+    await fsp.writeFile(evidenceFilePath, response.content, 'utf-8');
 
     await ctx.sendEventsToWebview(webview, taskId);
 
