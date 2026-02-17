@@ -1193,6 +1193,7 @@ export function getRenderersJs(): string {
         let currentStage = 'none';
         let progressBuffer = []; // accumulate consecutive Tier 2 events
         let progressGroupIndex = 0;
+        var deferredDiffApplied = null; // render at end, after streaming blocks
 
         // Flush accumulated progress events as a collapsible group
         function flushProgressBuffer() {
@@ -1234,6 +1235,10 @@ export function getRenderersJs(): string {
                 items.push(renderStageHeader(newStage));
                 currentStage = newStage;
               }
+            }
+            // Hide step_completed from progress groups — the diff_applied card is the clean end marker
+            if (event.type === 'step_completed') {
+              continue;
             }
             progressBuffer.push(event);
             continue;
@@ -1319,25 +1324,15 @@ export function getRenderersJs(): string {
             continue;
           }
 
-          // I3: Render diff_proposed with inline Accept/Reject buttons when pending approval exists
+          // diff_proposed is an internal event for the undo system — skip rendering
+          // (the diff_applied card below shows the actual file changes summary)
           if (event.type === 'diff_proposed') {
-            const diffId = event.payload.diff_id || event.payload.proposal_id || '';
-            const diffApproval = pendingApprovals.find(p =>
-              (p.approvalType === 'apply_diff' || p.approvalType === 'diff') &&
-              (!p.requestEvent.payload.details || !p.requestEvent.payload.details.diff_id || p.requestEvent.payload.details.diff_id === diffId)
-            );
-            const cardHtml = renderEventCard(event);
-            if (diffApproval) {
-              const approvalButtons = \`
-                <div style="display: flex; gap: 8px; margin-top: 8px; padding: 0 12px 10px;">
-                  <button class="approval-btn approve" onclick="handleApproval('\${diffApproval.approvalId}', 'approved')">✓ Accept Changes</button>
-                  <button class="approval-btn reject" onclick="handleApproval('\${diffApproval.approvalId}', 'rejected')">✗ Reject</button>
-                </div>
-              \`;
-              items.push(cardHtml + approvalButtons);
-            } else {
-              items.push(cardHtml);
-            }
+            continue;
+          }
+
+          // Defer diff_applied — render AFTER streaming narration blocks (at end of timeline)
+          if (event.type === 'diff_applied') {
+            deferredDiffApplied = event;
             continue;
           }
 
@@ -1411,6 +1406,16 @@ export function getRenderersJs(): string {
             }
           }
 
+          // Hide loop_completed card — the diff_applied card is the clean end marker
+          if (event.type === 'loop_completed') {
+            continue;
+          }
+
+          // Hide mission_completed card — redundant when diff_applied card shows
+          if (event.type === 'mission_completed') {
+            continue;
+          }
+
           // Render event card
           items.push(renderEventCard(event));
 
@@ -1481,6 +1486,54 @@ export function getRenderersJs(): string {
         // Completed blocks are rendered inline above loop_paused/loop_completed cards.
         if (state.streamingMission && !state.streamingMission.isComplete && state.streamingMission.blocks && state.streamingMission.blocks.length > 0) {
           items.push('<div class="mission-live-container">' + renderLiveStreamingContainer() + '</div>');
+        }
+
+        // Render deferred diff_applied card at the very END — after narration/streaming blocks.
+        // This ensures the Codex-style file changes summary always appears below the agent's work.
+        if (deferredDiffApplied) {
+          var daPayload = deferredDiffApplied.payload || {};
+          var daFiles = daPayload.files_changed || [];
+          var daTotalAdd = daPayload.total_additions || 0;
+          var daTotalDel = daPayload.total_deletions || 0;
+          var daDiffId = daPayload.diff_id || '';
+
+          var statsText = daFiles.length + ' file' + (daFiles.length !== 1 ? 's' : '') + ' changed';
+          var addDelHtml = '';
+          if (daTotalAdd > 0) addDelHtml += '<span class="diff-stat-add">+' + daTotalAdd + '</span>';
+          if (daTotalDel > 0) addDelHtml += '<span class="diff-stat-del">-' + daTotalDel + '</span>';
+
+          var fileRows = '';
+          for (var dfi = 0; dfi < daFiles.length; dfi++) {
+            var df = daFiles[dfi];
+            var dfPath = df.path || '';
+            var dfBasename = dfPath.split('/').pop() || dfPath;
+            var dfAdditions = df.additions || 0;
+            var dfDeletions = df.deletions || 0;
+
+            fileRows += '<div class="diff-file-row diff-file-clickable" onclick="handleDiffFileClick(\\'' + escapeJsString(dfPath) + '\\')" title="' + escapeHtml(dfPath) + '">'
+              + '<span class="diff-file-name">' + escapeHtml(dfBasename) + '</span>'
+              + (dfAdditions > 0 ? '<span class="diff-stat-add">+' + dfAdditions + '</span>' : '')
+              + (dfDeletions > 0 ? '<span class="diff-stat-del">-' + dfDeletions + '</span>' : '')
+              + '<span class="diff-file-dot">\\u25CF</span>'
+              + '</div>';
+          }
+
+          var undoBtn = daDiffId
+            ? '<button class="diff-action-btn" onclick="handleUndoAction(\\'' + escapeJsString(daDiffId) + '\\')">Undo \\u21A9</button>'
+            : '';
+          var reviewBtn = daDiffId
+            ? '<button class="diff-action-btn diff-review-btn" onclick="handleDiffReview(\\'' + escapeJsString(daDiffId) + '\\')">Review \\u2197</button>'
+            : '';
+
+          items.push(\`
+            <div class="diff-applied-card">
+              <div class="diff-applied-header">
+                <span class="diff-applied-stats">\${escapeHtml(statsText)} \${addDelHtml}</span>
+                <span class="diff-applied-actions">\${undoBtn}\${reviewBtn}</span>
+              </div>
+              <div class="diff-applied-files">\${fileRows}</div>
+            </div>
+          \`);
         }
 
         return items.join('');

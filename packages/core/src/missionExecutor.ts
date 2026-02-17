@@ -1540,9 +1540,9 @@ export class MissionExecutor {
       `staged_files=${buffer.size}, total_iterations=${session.iteration_count}/${session.max_total_iterations}` +
       (loopResult.error ? `, error=${loopResult.error}` : ''));
 
-    // If the loop ended with end_turn and has staged changes, auto-proceed to approval
+    // If the loop ended with end_turn and has staged changes, auto-apply to disk
     if (loopResult.stopReason === 'end_turn' && buffer.size > 0) {
-      return this.approveAndApplyStagedEdits(step, session, buffer);
+      return this.applyStagedEdits(step, session, buffer);
     }
 
     // If the loop ended with end_turn but no changes on an edit step:
@@ -1615,7 +1615,7 @@ export class MissionExecutor {
         // (the agent was clearly working and producing output)
         if (buffer.size > 0) {
           console.log(`[MissionExecutor] Hard limit reached with ${buffer.size} staged files — auto-applying`);
-          return this.approveAndApplyStagedEdits(step, session, buffer);
+          return this.applyStagedEdits(step, session, buffer);
         }
 
         const stagedSummary = buffer.toSummary();
@@ -1682,10 +1682,14 @@ export class MissionExecutor {
   }
 
   /**
-   * Approve and apply staged edits to disk.
-   * Called when: (a) loop ends with end_turn, or (b) user clicks "Approve Partial".
+   * Apply staged edits to disk (auto-apply, no blocking approval).
+   *
+   * Flow: emit diff_proposed (undo system captures originals) → checkpoint →
+   * apply patches → emit diff_applied (undo system captures after) → loop_completed.
+   *
+   * Called when: (a) loop ends with end_turn, or (b) hard limit with staged changes.
    */
-  async approveAndApplyStagedEdits(
+  async applyStagedEdits(
     step: StructuredPlan['steps'][0],
     session: LoopSession,
     buffer: StagedEditBuffer,
@@ -1710,14 +1714,13 @@ export class MissionExecutor {
       filePatches.push({ path: f.path, action: 'delete' });
     }
 
-    // Build diff summary for approval
+    // Build diff summary
     const totalAdditions = modifiedFiles.reduce(
       (sum, f) => sum + f.content.split('\n').length, 0);
     const totalDeletions = buffer.getAll().filter(f => f.isDeleted).length * 50; // estimate
 
-    // Request approval
     const diffId = createDiffId(this.taskId, stepId);
-    console.log(`[MissionExecutor] Requesting approval for ${filePatches.length} staged files`);
+    console.log(`[MissionExecutor] Preparing to apply ${filePatches.length} staged files (diff: ${diffId})`);
 
     // Emit diff_proposed for the staged changes
     await this.emitEvent({
@@ -1732,7 +1735,7 @@ export class MissionExecutor {
         step_id: stepId,
         source: 'agentic_loop',
         session_id: session.session_id,
-        files: filePatches.map(fp => ({
+        files_changed: filePatches.map(fp => ({
           path: fp.path,
           action: fp.action,
           lines: fp.newContent ? fp.newContent.split('\n').length : 0,
@@ -1746,53 +1749,9 @@ export class MissionExecutor {
       parent_event_id: null,
     });
 
-    const approval = await this.approvalManager.requestApproval(
-      this.taskId,
-      this.mode,
-      'edit',
-      'apply_diff',
-      `Apply ${filePatches.length} staged file(s) from AgenticLoop (+${totalAdditions} lines)`,
-      {
-        diff_id: diffId,
-        files_changed: filePatches.map(fp => ({
-          path: fp.path,
-          added_lines: fp.newContent ? fp.newContent.split('\n').length : 0,
-          removed_lines: fp.action === 'delete' ? 50 : 0,
-        })),
-      },
-    );
-
-    if (approval.decision === 'denied') {
-      console.log('[MissionExecutor] Staged edits rejected by user');
-
-      await this.emitEvent({
-        event_id: randomUUID(),
-        task_id: this.taskId,
-        timestamp: new Date().toISOString(),
-        type: 'execution_paused',
-        mode: this.mode,
-        stage: 'edit',
-        payload: {
-          reason: 'diff_rejected',
-          diff_id: diffId,
-          step_id: stepId,
-        },
-        evidence_ids: [],
-        parent_event_id: null,
-      });
-
-      this.cleanupLoopState(stepId);
-
-      return {
-        success: false,
-        stage: 'edit',
-        shouldPause: true,
-        pauseReason: 'diff_rejected',
-      };
-    }
-
-    // Approved — checkpoint + apply
-    console.log('[MissionExecutor] Staged edits approved, applying to disk...');
+    // Auto-apply: no blocking approval gate.
+    // diff_proposed event (emitted above) lets the undo system capture original content.
+    console.log(`[MissionExecutor] Auto-applying ${filePatches.length} staged file(s) to disk...`);
 
     // Checkpoint before apply
     const checkpointId = createCheckpointId(this.taskId, stepId);
@@ -1902,16 +1861,21 @@ export class MissionExecutor {
       };
     }
 
-    // Open first changed file
+    // Open all changed files in editor tabs so the user can see what changed
     if (filePatches.length > 0) {
       try {
-        await this.workspaceWriter!.openFilesBeside([filePatches[0].path]);
+        const filesToOpen = filePatches
+          .filter(fp => fp.action !== 'delete')
+          .map(fp => fp.path);
+        if (filesToOpen.length > 0) {
+          await this.workspaceWriter!.openFilesBeside(filesToOpen);
+        }
       } catch {
-        // Non-fatal
+        // Non-fatal — file opening should never block the flow
       }
     }
 
-    // Emit diff_applied
+    // Emit diff_applied with enriched payload for the file changes summary card
     await this.emitEvent({
       event_id: randomUUID(),
       task_id: this.taskId,
@@ -1921,6 +1885,7 @@ export class MissionExecutor {
       stage: 'edit',
       payload: {
         diff_id: diffId,
+        step_id: stepId,
         checkpoint_id: checkpointResult.checkpointId,
         source: 'agentic_loop',
         files_changed: filePatches.map(fp => ({
@@ -1929,6 +1894,10 @@ export class MissionExecutor {
           additions: fp.newContent ? fp.newContent.split('\n').length : 0,
           deletions: fp.action === 'delete' ? 50 : 0,
         })),
+        total_additions: totalAdditions,
+        total_deletions: totalDeletions,
+        iterations: session.iteration_count,
+        tool_calls: session.tool_calls_count,
         summary: `Applied ${filePatches.length} file(s) from AgenticLoop`,
       },
       evidence_ids: [],

@@ -178,12 +178,67 @@ export function getActionsJs(): string {
       // ===== UNDO ACTION HANDLER (Step 48) =====
       window.handleUndoAction = function(groupId) {
         if (typeof vscode !== 'undefined') {
+          // Visual feedback: update the button that triggered the undo
+          var undoBtns = document.querySelectorAll('.diff-action-btn');
+          for (var i = 0; i < undoBtns.length; i++) {
+            var btn = undoBtns[i];
+            if (btn.textContent && btn.textContent.indexOf('Undo') !== -1) {
+              btn.textContent = 'Undoing...';
+              btn.disabled = true;
+              btn.style.opacity = '0.6';
+            }
+          }
           vscode.postMessage({
             type: 'undo_action',
             group_id: groupId,
           });
         } else {
           console.log('Demo mode: handleUndoAction', groupId);
+        }
+      };
+
+      // ===== DIFF REVIEW HANDLER =====
+      // Opens all changed files from a diff_applied event in editor tabs
+      window.handleDiffReview = function(diffId) {
+        // Find the diff_applied event by diff_id in state.events
+        var files = [];
+        for (var i = state.events.length - 1; i >= 0; i--) {
+          var ev = state.events[i];
+          if (ev.type === 'diff_applied' && ev.payload && ev.payload.diff_id === diffId) {
+            files = ev.payload.files_changed || [];
+            break;
+          }
+        }
+
+        if (files.length === 0) {
+          console.warn('handleDiffReview: No files found for diff_id', diffId);
+          return;
+        }
+
+        if (typeof vscode !== 'undefined') {
+          for (var fi = 0; fi < files.length; fi++) {
+            if (files[fi].path) {
+              vscode.postMessage({
+                type: 'open_file',
+                file_path: files[fi].path,
+              });
+            }
+          }
+        } else {
+          console.log('Demo mode: handleDiffReview', diffId, files);
+        }
+      };
+
+      // ===== DIFF FILE CLICK HANDLER =====
+      // Opens a single file in a new editor tab
+      window.handleDiffFileClick = function(filePath) {
+        if (typeof vscode !== 'undefined') {
+          vscode.postMessage({
+            type: 'open_file',
+            file_path: filePath,
+          });
+        } else {
+          console.log('Demo mode: handleDiffFileClick', filePath);
         }
       };
 

@@ -242,6 +242,17 @@ export async function handleExecutePlan(
         }
       }
 
+      // Capture file content for undo on diff_proposed/diff_applied.
+      // MUST await: diff_proposed must finish reading "before" content
+      // before applyStagedEdits writes patches to disk.
+      if (event.type === 'diff_proposed' || event.type === 'diff_applied') {
+        try {
+          await ctx.captureForUndo(event);
+        } catch (err) {
+          console.warn('[handleExecutePlan] Undo capture failed:', err);
+        }
+      }
+
       // Important events update immediately; progress events are debounced
       if (IMMEDIATE_EVENTS.has(event.type)) {
         if (webviewUpdateTimer) { clearTimeout(webviewUpdateTimer); webviewUpdateTimer = null; }
@@ -274,6 +285,7 @@ export async function handleExecutePlan(
     try {
       llmClient = new AnthropicLLMClient(apiKey);
       toolProvider = new VSCodeToolProvider(workspaceRoot);
+      toolProvider.setWebview(webview);
     } catch (err) {
       console.warn('[handleExecutePlan] Could not create LLM client/tool provider for AgenticLoop, falling back to TruncationSafeExecutor:', err);
     }

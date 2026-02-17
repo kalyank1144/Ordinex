@@ -488,3 +488,120 @@
   0%, 100% { opacity: 1; }
   50% { opacity: 0.3; }
 }
+
+/* ===== Diff Applied — File Changes Summary Card (Codex-style) ===== */
+
+.diff-applied-card {
+  margin: 10px 0;
+  padding: 12px 14px;
+  border-radius: 8px;
+  border: 1px solid var(--vscode-panel-border, rgba(128,128,128,0.25));
+  background: var(--vscode-editor-background, #1e1e1e);
+}
+
+.diff-applied-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 10px;
+}
+
+.diff-applied-stats {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--vscode-foreground);
+}
+
+.diff-applied-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.diff-applied-files {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  border-top: 1px solid var(--vscode-panel-border, rgba(128,128,128,0.2));
+  padding-top: 8px;
+}
+
+.diff-file-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 6px;
+  border-radius: 4px;
+  font-size: 13px;
+}
+
+.diff-file-clickable {
+  cursor: pointer;
+}
+
+.diff-file-row:hover {
+  background: var(--vscode-list-hoverBackground, rgba(128,128,128,0.1));
+}
+
+.diff-file-clickable:hover .diff-file-name {
+  color: var(--vscode-textLink-foreground, #3794ff);
+  text-decoration: underline;
+}
+
+.diff-file-name {
+  font-family: var(--vscode-editor-font-family, monospace);
+  font-size: 13px;
+  color: var(--vscode-foreground);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex: 1;
+}
+
+.diff-stat-add {
+  font-size: 12px;
+  font-family: var(--vscode-editor-font-family, monospace);
+  color: var(--vscode-charts-green, #388a34);
+  flex-shrink: 0;
+}
+
+.diff-stat-del {
+  font-size: 12px;
+  font-family: var(--vscode-editor-font-family, monospace);
+  color: var(--vscode-charts-red, #f14c4c);
+  flex-shrink: 0;
+}
+
+.diff-file-dot {
+  font-size: 8px;
+  color: var(--vscode-charts-yellow, #cca700);
+  flex-shrink: 0;
+}
+
+.diff-action-btn {
+  padding: 3px 10px;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--vscode-descriptionForeground, #888);
+  font-size: 12px;
+  cursor: pointer;
+  transition: color 0.15s, background 0.15s;
+}
+
+.diff-action-btn:hover {
+  color: var(--vscode-foreground);
+  background: var(--vscode-toolbar-hoverBackground, rgba(128,128,128,0.15));
+}
+
+.diff-review-btn {
+  color: var(--vscode-textLink-foreground, #3794ff);
+}
+
+.diff-review-btn:hover {
+  color: var(--vscode-textLink-activeForeground, #3794ff);
+}

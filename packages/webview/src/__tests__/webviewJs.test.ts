@@ -12,6 +12,8 @@ import { describe, it, expect } from 'vitest';
 import { getStateJs } from '../webviewJs/state';
 import { getInputHandlersJs } from '../webviewJs/inputHandlers';
 import { getMessageHandlerJs } from '../webviewJs/messageHandler';
+import { getRenderersJs } from '../webviewJs/renderers';
+import { getActionsJs } from '../webviewJs/actions';
 import { getSendStopBtnJs } from '../webviewJs/sendStopBtn';
 import { getInitJs } from '../webviewJs/init';
 import { getOnboardingJs } from '../webviewJs/onboarding';
@@ -212,6 +214,113 @@ describe('Webview JS Modules', () => {
 
     it('posts onboarding complete message', () => {
       expect(js).toContain('ordinex:onboardingComplete');
+    });
+  });
+
+  // ========================================================================
+  // renderers.ts — diff_applied card
+  // ========================================================================
+
+  describe('getRenderersJs — diff_applied file changes card', () => {
+    const js = getRenderersJs();
+
+    it('produces valid JavaScript', () => {
+      assertValidJs(js, 'renderers');
+    });
+
+    it('skips diff_proposed events (internal for undo system)', () => {
+      expect(js).toContain('diff_proposed is an internal event');
+    });
+
+    it('defers diff_applied rendering to end of timeline', () => {
+      expect(js).toContain('deferredDiffApplied');
+      expect(js).toContain("event.type === 'diff_applied'");
+    });
+
+    it('renders Codex-style file changes card with stats', () => {
+      expect(js).toContain('diff-applied-card');
+      expect(js).toContain('diff-applied-header');
+      expect(js).toContain('diff-applied-stats');
+      expect(js).toContain('diff-applied-files');
+    });
+
+    it('renders per-file additions and deletions with colored spans', () => {
+      expect(js).toContain('diff-stat-add');
+      expect(js).toContain('diff-stat-del');
+      expect(js).toContain('diff-file-name');
+      expect(js).toContain('diff-file-dot');
+    });
+
+    it('renders Undo button using existing handleUndoAction', () => {
+      expect(js).toContain('handleUndoAction');
+      expect(js).toContain('diff-action-btn');
+    });
+
+    it('renders Review button wired to handleDiffReview', () => {
+      expect(js).toContain('diff-review-btn');
+      expect(js).toContain('handleDiffReview');
+    });
+
+    it('renders clickable file rows with handleDiffFileClick', () => {
+      expect(js).toContain('diff-file-clickable');
+      expect(js).toContain('handleDiffFileClick');
+    });
+
+    it('hides loop_completed card from timeline', () => {
+      expect(js).toContain("event.type === 'loop_completed'");
+      // Should have a continue statement to skip rendering
+      expect(js).toContain('Hide loop_completed card');
+    });
+
+    it('hides mission_completed card from timeline', () => {
+      expect(js).toContain("event.type === 'mission_completed'");
+      expect(js).toContain('Hide mission_completed card');
+    });
+
+    it('hides step_completed from progress groups', () => {
+      expect(js).toContain("event.type === 'step_completed'");
+    });
+
+    it('keeps streaming block injection for loop_completed', () => {
+      // The streaming blocks must still be injected at loop_completed position
+      expect(js).toContain('renderCompletedBlocksAsTimelineItems');
+    });
+  });
+
+  // ========================================================================
+  // actions.ts — undo action handler
+  // ========================================================================
+
+  describe('getActionsJs — undo, review, file click handlers', () => {
+    const js = getActionsJs();
+
+    it('produces valid JavaScript', () => {
+      assertValidJs(js, 'actions');
+    });
+
+    it('defines handleUndoAction function', () => {
+      expect(js).toContain('window.handleUndoAction');
+    });
+
+    it('sends undo_action message with group_id', () => {
+      expect(js).toContain("type: 'undo_action'");
+      expect(js).toContain('group_id');
+    });
+
+    it('shows visual feedback on undo (disables button)', () => {
+      expect(js).toContain('Undoing...');
+      expect(js).toContain('btn.disabled = true');
+    });
+
+    it('defines handleDiffReview to open all changed files by diff_id', () => {
+      expect(js).toContain('window.handleDiffReview');
+      expect(js).toContain('diff_applied');
+      expect(js).toContain('files_changed');
+      expect(js).toContain("type: 'open_file'");
+    });
+
+    it('defines handleDiffFileClick to open a single file', () => {
+      expect(js).toContain('window.handleDiffFileClick');
     });
   });
 });

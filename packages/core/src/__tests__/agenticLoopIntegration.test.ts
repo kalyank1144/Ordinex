@@ -24,6 +24,7 @@ import {
 } from '../loopSessionState';
 import { StagedToolProvider } from '../stagedToolProvider';
 import type { ToolExecutionProvider, ToolExecutionResult } from '../agenticLoop';
+import { extractDiffFilePaths as extractDiffFilePathsFn, getDiffCorrelationId as getDiffCorrelationIdFn } from '../undoContentCapture';
 
 // ==========================================================================
 // StagedEditBuffer
@@ -664,5 +665,110 @@ describe('StateReducer loop events', () => {
     const state = reducer.reduceForTask('task-1', events);
     // loop_completed doesn't change status (stays running from intent_received)
     expect(state.status).toBe('running');
+  });
+});
+
+// ==========================================================================
+// Auto-Apply Flow: diff_proposed/diff_applied payload compatibility
+// ==========================================================================
+
+describe('Auto-Apply Flow — event payload compatibility', () => {
+  it('diff_proposed payload uses files_changed for extractDiffFilePaths compatibility', () => {
+    // The undo system uses extractDiffFilePaths which expects:
+    //   payload.files_changed (array of {path} objects)
+    // Verify the payload structure matches
+    const filePatches = [
+      { path: 'src/a.ts', action: 'update' as const, newContent: 'line1\nline2\n' },
+      { path: 'src/b.ts', action: 'create' as const, newContent: 'new file\n' },
+    ];
+
+    // This simulates what applyStagedEdits builds
+    const diffProposedPayload = {
+      diff_id: 'diff-test-1',
+      step_id: 'step_1',
+      source: 'agentic_loop',
+      session_id: 'sess-1',
+      files_changed: filePatches.map(fp => ({
+        path: fp.path,
+        action: fp.action,
+        lines: fp.newContent ? fp.newContent.split('\n').length : 0,
+      })),
+      total_additions: 5,
+      total_deletions: 0,
+    };
+
+    // Verify files_changed has the path field (required by extractDiffFilePaths)
+    expect(diffProposedPayload.files_changed).toHaveLength(2);
+    expect(diffProposedPayload.files_changed[0]).toHaveProperty('path', 'src/a.ts');
+    expect(diffProposedPayload.files_changed[1]).toHaveProperty('path', 'src/b.ts');
+    expect(diffProposedPayload.files_changed[0]).toHaveProperty('action', 'update');
+    expect(diffProposedPayload.files_changed[1]).toHaveProperty('action', 'create');
+  });
+
+  it('diff_applied payload includes enriched fields for file changes card', () => {
+    const filePatches = [
+      { path: 'src/a.ts', action: 'update' as const, newContent: 'updated content\nline2\n' },
+      { path: 'src/new.ts', action: 'create' as const, newContent: 'new file content\n' },
+    ];
+
+    // This simulates what applyStagedEdits builds for diff_applied
+    const diffAppliedPayload = {
+      diff_id: 'diff-test-1',
+      step_id: 'step_1',
+      checkpoint_id: 'cp-test-1',
+      source: 'agentic_loop',
+      files_changed: filePatches.map(fp => ({
+        path: fp.path,
+        action: fp.action,
+        additions: fp.newContent ? fp.newContent.split('\n').length : 0,
+        deletions: fp.action === 'delete' ? 50 : 0,
+      })),
+      total_additions: 4,
+      total_deletions: 0,
+      iterations: 3,
+      tool_calls: 5,
+      summary: 'Applied 2 file(s) from AgenticLoop',
+    };
+
+    // Verify all enriched fields are present
+    expect(diffAppliedPayload.step_id).toBe('step_1');
+    expect(diffAppliedPayload.checkpoint_id).toBe('cp-test-1');
+    expect(diffAppliedPayload.total_additions).toBe(4);
+    expect(diffAppliedPayload.total_deletions).toBe(0);
+    expect(diffAppliedPayload.iterations).toBe(3);
+    expect(diffAppliedPayload.tool_calls).toBe(5);
+
+    // Verify files_changed has per-file stats
+    expect(diffAppliedPayload.files_changed).toHaveLength(2);
+    expect(diffAppliedPayload.files_changed[0]).toEqual({
+      path: 'src/a.ts',
+      action: 'update',
+      additions: 3,
+      deletions: 0,
+    });
+    expect(diffAppliedPayload.files_changed[1]).toEqual({
+      path: 'src/new.ts',
+      action: 'create',
+      additions: 2,
+      deletions: 0,
+    });
+  });
+
+  it('extractDiffFilePaths correctly reads files_changed with path objects', () => {
+    const payload = {
+      files_changed: [
+        { path: 'src/a.ts', action: 'update', lines: 10 },
+        { path: 'src/b.ts', action: 'create', lines: 5 },
+      ],
+    };
+
+    const paths = extractDiffFilePathsFn(payload);
+    expect(paths).toEqual(['src/a.ts', 'src/b.ts']);
+  });
+
+  it('getDiffCorrelationId reads diff_id from payload', () => {
+    expect(getDiffCorrelationIdFn({ diff_id: 'diff-123' })).toBe('diff-123');
+    expect(getDiffCorrelationIdFn({ proposal_id: 'prop-1', diff_id: 'diff-1' })).toBe('prop-1');
+    expect(getDiffCorrelationIdFn({})).toBeNull();
   });
 });

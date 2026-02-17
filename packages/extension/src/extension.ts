@@ -538,6 +538,49 @@ class MissionControlViewProvider implements vscode.WebviewViewProvider {
       }
     }
 
+    // Refresh open editor tabs so the user sees the reverted content.
+    // VS Code caches file content in the editor; we must explicitly revert the documents.
+    const workspaceRoot = this.scaffoldProjectPath
+      || this.selectedWorkspaceRoot
+      || vscode.workspace.workspaceFolders?.[0]?.uri.fsPath
+      || '';
+    const allAffectedFiles = [...filesRestored, ...filesRecreated];
+    for (const relPath of allAffectedFiles) {
+      try {
+        const absPath = require('path').resolve(workspaceRoot, relPath);
+        const uri = vscode.Uri.file(absPath);
+        // Find the document if it's open, and revert it to disk content
+        const openDoc = vscode.workspace.textDocuments.find(
+          d => d.uri.fsPath === uri.fsPath
+        );
+        if (openDoc && !openDoc.isClosed) {
+          // Open and show the reverted file, then revert to the on-disk version
+          const editor = await vscode.window.showTextDocument(openDoc, { preview: false, preserveFocus: true });
+          await vscode.commands.executeCommand('workbench.action.files.revert');
+        }
+      } catch (revertErr) {
+        console.warn(`[Step48] Could not revert editor for ${relPath}:`, revertErr);
+      }
+    }
+    // Close tabs for files that were deleted (created files undone = deleted)
+    for (const relPath of filesDeleted) {
+      try {
+        const absPath = require('path').resolve(workspaceRoot, relPath);
+        const uri = vscode.Uri.file(absPath);
+        // Find and close any open tab for the deleted file
+        const tabGroups = vscode.window.tabGroups;
+        for (const group of tabGroups.all) {
+          for (const tab of group.tabs) {
+            if (tab.input instanceof vscode.TabInputText && tab.input.uri.fsPath === uri.fsPath) {
+              await vscode.window.tabGroups.close(tab);
+            }
+          }
+        }
+      } catch (closeErr) {
+        console.warn(`[Step48] Could not close tab for ${relPath}:`, closeErr);
+      }
+    }
+
     // Emit undo_performed event
     await this.emitEvent({
       event_id: this.generateId(),
@@ -1289,7 +1332,7 @@ class MissionControlViewProvider implements vscode.WebviewViewProvider {
             description: (stepEvent?.payload.description as string) || step_id,
           };
 
-          const result = await executor.approveAndApplyStagedEdits(step as any, session, buffer);
+          const result = await executor.applyStagedEdits(step as any, session, buffer);
           if (result.success) {
             console.log('[handleLoopAction] Approve partial succeeded');
           } else {

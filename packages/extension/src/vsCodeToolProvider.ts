@@ -23,10 +23,16 @@ const DEFAULT_TIMEOUT_MS = 30_000;
 export class VSCodeToolProvider implements ToolExecutionProvider {
   private readonly workspaceRoot: string;
   private readonly readOnly: boolean;
+  private _webview: vscode.Webview | null = null;
 
   constructor(workspaceRoot: string, options?: { readOnly?: boolean }) {
     this.workspaceRoot = workspaceRoot;
     this.readOnly = options?.readOnly ?? false;
+  }
+
+  /** Set the webview reference so we can post messages for events */
+  setWebview(webview: vscode.Webview): void {
+    this._webview = webview;
   }
 
   async executeTool(
@@ -101,12 +107,17 @@ export class VSCodeToolProvider implements ToolExecutionProvider {
       const filePath = this.resolvePath(String(input.path || ''));
       const content = String(input.content || '');
       const dir = path.dirname(filePath);
+      const isNew = !fs.existsSync(filePath);
+      const originalContent = isNew ? '' : fs.readFileSync(filePath, 'utf-8');
+
       if (!fs.existsSync(dir)) {
         fs.mkdirSync(dir, { recursive: true });
       }
       fs.writeFileSync(filePath, content, 'utf-8');
-      // Open the file in the editor so the user can see the changes
-      this.openFileInEditor(filePath);
+
+      // Open the file in the editor and show diff
+      await this.showFileChangeInEditor(filePath, originalContent, content, isNew ? 'created' : 'written');
+
       return { success: true, output: `Written ${content.length} bytes to ${input.path}` };
     } catch (err) {
       return {
@@ -136,8 +147,8 @@ export class VSCodeToolProvider implements ToolExecutionProvider {
         return { success: false, output: '', error: `File not found: ${input.path}` };
       }
 
-      const content = fs.readFileSync(filePath, 'utf-8');
-      if (!content.includes(oldText)) {
+      const originalContent = fs.readFileSync(filePath, 'utf-8');
+      if (!originalContent.includes(oldText)) {
         return {
           success: false,
           output: '',
@@ -146,10 +157,12 @@ export class VSCodeToolProvider implements ToolExecutionProvider {
       }
 
       // Replace first occurrence only
-      const updated = content.replace(oldText, newText);
+      const updated = originalContent.replace(oldText, newText);
       fs.writeFileSync(filePath, updated, 'utf-8');
-      // Open the file in the editor so the user can see the changes
-      this.openFileInEditor(filePath);
+
+      // Open the file in the editor and show diff
+      await this.showFileChangeInEditor(filePath, originalContent, updated, 'edited');
+
       return { success: true, output: `Edited ${input.path}` };
     } catch (err) {
       return {
@@ -161,23 +174,27 @@ export class VSCodeToolProvider implements ToolExecutionProvider {
   }
 
   // ---------------------------------------------------------------------------
-  // Helper: open a file in the VS Code editor tab after write/edit
+  // Helper: show file change in the VS Code editor with diff view
   // ---------------------------------------------------------------------------
 
-  private openFileInEditor(filePath: string): void {
+  private async showFileChangeInEditor(
+    filePath: string,
+    _originalContent: string,
+    _newContent: string,
+    action: string,
+  ): Promise<void> {
     try {
       const uri = vscode.Uri.file(filePath);
-      vscode.workspace.openTextDocument(uri).then(doc => {
-        vscode.window.showTextDocument(doc, {
-          viewColumn: vscode.ViewColumn.One,
-          preserveFocus: true,
-          preview: false,
-        });
-      }, err => {
-        console.warn('[ToolProvider] Could not open file in editor:', err);
+      // Open the modified file in the editor
+      const doc = await vscode.workspace.openTextDocument(uri);
+      await vscode.window.showTextDocument(doc, {
+        viewColumn: vscode.ViewColumn.One,
+        preserveFocus: true,
+        preview: false,
       });
+      console.log(`[ToolProvider] File ${action}: ${filePath}`);
     } catch (err) {
-      console.warn('[ToolProvider] openFileInEditor error:', err);
+      console.warn('[ToolProvider] Could not open file in editor:', err);
     }
   }
 
