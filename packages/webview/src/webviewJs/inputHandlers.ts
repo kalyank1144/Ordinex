@@ -193,7 +193,9 @@ export function getInputHandlersJs(): string {
       // Close history panel when clicking outside
       document.addEventListener('click', function(e) {
         if (isHistoryOpen()) {
-          if (!historyPanel.contains(e.target) && e.target !== historyBtn && !historyBtn.contains(e.target)) {
+          var clickedInsidePanel = historyPanel && historyPanel.contains(e.target);
+          var clickedOnBtn = historyBtn && (e.target === historyBtn || historyBtn.contains(e.target));
+          if (!clickedInsidePanel && !clickedOnBtn) {
             closeHistoryPanel();
           }
         }

@@ -1340,14 +1340,23 @@ class MissionControlViewProvider implements vscode.WebviewViewProvider {
           break;
         }
 
-        // Update extension state
+        // Update extension state — reset to defaults first to avoid leaking
+        // the previous task's mode/stage when the target task lacks those events.
         this.currentTaskId = switchTaskId;
         globalCurrentTaskId = switchTaskId;
+        this.currentMode = 'ANSWER';
+        this.currentStage = 'none';
 
-        // Derive mode and stage from the task's events
+        // Derive mode and stage from the task's events (if available)
         const lastModeEvent = [...taskEvents].reverse().find((e: Event) => e.type === 'mode_set');
         if (lastModeEvent && lastModeEvent.payload?.mode) {
           this.currentMode = lastModeEvent.payload.mode as Mode;
+        } else {
+          // Fallback: use the mode from the first event
+          const firstEventMode = taskEvents[0]?.mode;
+          if (firstEventMode) {
+            this.currentMode = firstEventMode as Mode;
+          }
         }
         const lastStageEvent = [...taskEvents].reverse().find((e: Event) => e.type === 'stage_changed');
         if (lastStageEvent && lastStageEvent.payload?.to) {
@@ -1367,6 +1376,30 @@ class MissionControlViewProvider implements vscode.WebviewViewProvider {
         this.pendingPreflightInput = null;
         this.pendingPreflightCtx = null;
         vscode.commands.executeCommand('setContext', 'ordinex.isRunning', false);
+
+        // Clear undo stack from the previous task so stale edits aren't attributed
+        // to the newly switched task, then sync the clean state to the webview.
+        this._undoStack = null;
+        this._undoBeforeCache.clear();
+        vscode.commands.executeCommand('setContext', 'ordinex.hasUndoableEdits', false);
+        webview.postMessage({
+          type: 'updateUndoState',
+          undoable_group_ids: [],
+          top_undoable_group_id: null,
+        });
+
+        // Persist the active-task pointer so IDE restart restores this task
+        const persistService = this.getTaskPersistenceService();
+        if (persistService) {
+          await persistService.setActiveTask({
+            task_id: switchTaskId,
+            mode: this.currentMode,
+            stage: this.currentStage,
+            status: 'paused',
+            last_updated_at: new Date().toISOString(),
+            cleanly_exited: true,
+          });
+        }
 
         // Send events to webview — webview handles re-rendering
         webview.postMessage({
