@@ -37,6 +37,25 @@ export function getUtilsJs(): string {
         return hours + 'h ' + (minutes % 60) + 'm';
       }
 
+      function formatRelativeTime(isoString) {
+        if (!isoString) return '';
+        var now = Date.now();
+        var then = new Date(isoString).getTime();
+        var diffMs = now - then;
+        if (diffMs < 0) return 'just now';
+        var diffSec = Math.floor(diffMs / 1000);
+        if (diffSec < 60) return 'just now';
+        var diffMin = Math.floor(diffSec / 60);
+        if (diffMin < 60) return diffMin + 'm ago';
+        var diffHr = Math.floor(diffMin / 60);
+        if (diffHr < 24) return diffHr + 'h ago';
+        var diffDay = Math.floor(diffHr / 24);
+        if (diffDay === 1) return 'yesterday';
+        if (diffDay < 7) return diffDay + 'd ago';
+        var d = new Date(isoString);
+        return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+      }
+
       function humanizeModelName(modelId) {
         if (!modelId) return '';
         var modelMap = {
