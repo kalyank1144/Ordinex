@@ -91,6 +91,77 @@ export class EventStore {
   }
 
   /**
+   * Get distinct task IDs with summary metadata, ordered by most recent activity.
+   * Returns: { task_id, title (first prompt), mode, first_event_at, last_event_at, event_count }
+   */
+  getDistinctTaskSummaries(): Array<{
+    task_id: string;
+    title: string;
+    mode: string;
+    first_event_at: string;
+    last_event_at: string;
+    event_count: number;
+  }> {
+    const taskMap = new Map<string, {
+      task_id: string;
+      title: string;
+      mode: string;
+      first_event_at: string;
+      last_event_at: string;
+      event_count: number;
+    }>();
+
+    for (const event of this.events) {
+      const tid = event.task_id;
+      if (!tid) continue;
+
+      const existing = taskMap.get(tid);
+      if (!existing) {
+        taskMap.set(tid, {
+          task_id: tid,
+          title: '',
+          mode: event.mode || 'ANSWER',
+          first_event_at: event.timestamp,
+          last_event_at: event.timestamp,
+          event_count: 1,
+        });
+      } else {
+        existing.last_event_at = event.timestamp;
+        existing.event_count++;
+      }
+
+      // Extract title from intent_received event
+      if (event.type === 'intent_received' && event.payload?.prompt) {
+        const entry = taskMap.get(tid)!;
+        if (!entry.title) {
+          entry.title = String(event.payload.prompt);
+        }
+      }
+
+      // Capture mode from mode_set event
+      if (event.type === 'mode_set' && event.payload?.mode) {
+        const entry = taskMap.get(tid)!;
+        entry.mode = String(event.payload.mode);
+      }
+    }
+
+    // Sort by last_event_at descending (most recent first)
+    const summaries = Array.from(taskMap.values());
+    summaries.sort((a, b) => {
+      return new Date(b.last_event_at).getTime() - new Date(a.last_event_at).getTime();
+    });
+
+    // Fill in default titles for tasks without intent_received
+    for (const s of summaries) {
+      if (!s.title) {
+        s.title = `Task ${s.task_id.substring(0, 8)}...`;
+      }
+    }
+
+    return summaries;
+  }
+
+  /**
    * Validate event against canonical types
    */
   private validateEvent(event: Event): ValidationResult {

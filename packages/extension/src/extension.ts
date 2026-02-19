@@ -624,61 +624,110 @@ class MissionControlViewProvider implements vscode.WebviewViewProvider {
   }
 
   /**
-   * Step 47: Check for interrupted tasks on webview activation.
-   * Reads pointer + metadata, runs pure analysis, emits task_interrupted event.
+   * Task restoration on webview activation.
+   *
+   * Case 1: Extension state already has currentTaskId (panel was hidden/shown, not restarted)
+   *         → Silently re-send events. No card needed.
+   * Case 2: No currentTaskId but persistence has an active task (IDE restart)
+   *         → If clean exit: silently restore timeline. No card.
+   *         → If actual crash (cleanly_exited=false, status=running): show recovery card.
+   * Case 3: No persisted task → clean empty state (nothing to do).
    */
-  private async checkForInterruptedTasks(webview: vscode.Webview): Promise<void> {
+  private async restoreOrDetectCrash(webview: vscode.Webview): Promise<void> {
+    // Case 1: Extension already knows the active task (panel was just hidden/shown)
+    if (this.currentTaskId && this.eventStore) {
+      const events = this.eventStore.getEventsByTaskId(this.currentTaskId);
+      if (events.length > 0) {
+        console.log('[Persistence] Silent restore — re-sending', events.length, 'events for task', this.currentTaskId);
+        webview.postMessage({
+          type: 'ordinex:taskSwitched',
+          task_id: this.currentTaskId,
+          events,
+          mode: this.currentMode,
+          stage: this.currentStage,
+        });
+        this.syncUndoStateToWebview(webview);
+        return;
+      }
+    }
+
+    // Case 2: Check file-based persistence (IDE restart scenario)
     const service = this.getTaskPersistenceService();
     if (!service) return;
 
     try {
       const task = await service.getActiveTask();
-      if (!task) return; // No active task — clean state
+      if (!task) return; // Case 3: No persisted task — clean state
 
-      // Get event count for this task
-      let eventCount = 0;
-      if (this.eventStore) {
-        const events = this.eventStore.getEventsByTaskId(task.task_id);
-        eventCount = events.length;
-      }
+      const isLikelyCrash = !task.cleanly_exited && task.status === 'running';
 
-      // Check if checkpoint exists
-      const hasCheckpoint = !!task.last_checkpoint_id;
+      if (isLikelyCrash) {
+        // Actual crash — show recovery card so user can choose to restore checkpoint
+        console.log('[Persistence] Crash detected for task', task.task_id, '— showing recovery card');
 
-      // Pure analysis (from core)
-      const analysis = analyzeRecoveryOptions(task, eventCount, hasCheckpoint);
+        let eventCount = 0;
+        if (this.eventStore) {
+          eventCount = this.eventStore.getEventsByTaskId(task.task_id).length;
+        }
 
-      // Emit task_interrupted event with FULL payload (stateless card)
-      const interruptedEvent: Event = {
-        event_id: this.generateId(),
-        task_id: task.task_id,
-        timestamp: new Date().toISOString(),
-        type: 'task_interrupted',
-        mode: (task.mode as Mode) || 'ANSWER',
-        stage: (task.stage as any) || 'none',
-        payload: {
+        const hasCheckpoint = !!task.last_checkpoint_id;
+        const analysis = analyzeRecoveryOptions(task, eventCount, hasCheckpoint);
+
+        const interruptedEvent: Event = {
+          event_id: this.generateId(),
           task_id: task.task_id,
-          was_clean_exit: task.cleanly_exited,
-          is_likely_crash: !task.cleanly_exited && task.status === 'running',
-          is_stale: analysis.recommended_action === 'discard',
-          recommended_action: analysis.recommended_action,
-          options: analysis.options,
-          last_checkpoint_id: task.last_checkpoint_id || null,
-          last_updated_at: task.last_updated_at,
-          mode: task.mode,
-          stage: task.stage,
-          event_count: eventCount,
-          time_since_interruption_ms: analysis.time_since_interruption_ms,
-          reason: analysis.reason,
-        },
-        evidence_ids: [],
-        parent_event_id: null,
-      };
+          timestamp: new Date().toISOString(),
+          type: 'task_interrupted',
+          mode: (task.mode as Mode) || 'ANSWER',
+          stage: (task.stage as any) || 'none',
+          payload: {
+            task_id: task.task_id,
+            was_clean_exit: false,
+            is_likely_crash: true,
+            is_stale: analysis.recommended_action === 'discard',
+            recommended_action: analysis.recommended_action,
+            options: analysis.options,
+            last_checkpoint_id: task.last_checkpoint_id || null,
+            last_updated_at: task.last_updated_at,
+            mode: task.mode,
+            stage: task.stage,
+            event_count: eventCount,
+            time_since_interruption_ms: analysis.time_since_interruption_ms,
+            reason: analysis.reason,
+          },
+          evidence_ids: [],
+          parent_event_id: null,
+        };
 
-      await this.emitEvent(interruptedEvent);
-      await this.sendEventsToWebview(webview, task.task_id);
+        await this.emitEvent(interruptedEvent);
+        await this.sendEventsToWebview(webview, task.task_id);
+      } else {
+        // Clean exit (paused) — silently restore the timeline
+        console.log('[Persistence] Clean restore for task', task.task_id);
+
+        // Rehydrate extension state
+        this.currentTaskId = task.task_id;
+        globalCurrentTaskId = task.task_id;
+        this.currentMode = (task.mode as Mode) || 'ANSWER';
+        this.currentStage = (task.stage as any) || 'none';
+
+        // Send events to webview for seamless timeline display
+        if (this.eventStore) {
+          const events = this.eventStore.getEventsByTaskId(task.task_id);
+          if (events.length > 0) {
+            webview.postMessage({
+              type: 'ordinex:taskSwitched',
+              task_id: task.task_id,
+              events,
+              mode: this.currentMode,
+              stage: this.currentStage,
+            });
+            this.syncUndoStateToWebview(webview);
+          }
+        }
+      }
     } catch (err) {
-      console.error('[Step47] Error checking for interrupted tasks:', err);
+      console.error('[Persistence] Error in restoreOrDetectCrash:', err);
     }
   }
 
@@ -1075,9 +1124,11 @@ class MissionControlViewProvider implements vscode.WebviewViewProvider {
     // A9: Check if onboarding should be shown (first-run detection)
     this.checkAndShowOnboarding(webviewView.webview);
 
-    // Step 47: Check for interrupted tasks on webview activation
-    this.checkForInterruptedTasks(webviewView.webview).catch(err => {
-      console.error('[Step47] checkForInterruptedTasks failed:', err);
+    // Silent task restoration or crash detection.
+    // Clean exits: silently restore the timeline (no card).
+    // Actual crashes: show recovery card with working Resume/Discard.
+    this.restoreOrDetectCrash(webviewView.webview).catch(err => {
+      console.error('[Persistence] restoreOrDetectCrash failed:', err);
     });
   }
 
@@ -1256,6 +1307,112 @@ class MissionControlViewProvider implements vscode.WebviewViewProvider {
         vscode.commands.executeCommand('setContext', 'ordinex.isRunning', false);
         vscode.commands.executeCommand('setContext', 'ordinex.hasUndoableEdits', false);
         break;
+
+      // Task History: Return all distinct task summaries for the history panel
+      case 'ordinex:getTaskHistory':
+        if (this.eventStore) {
+          const summaries = this.eventStore.getDistinctTaskSummaries();
+          webview.postMessage({
+            type: 'ordinex:taskHistory',
+            tasks: summaries,
+            currentTaskId: this.currentTaskId,
+          });
+        }
+        break;
+
+      // Task History: Switch to a previously completed task
+      case 'ordinex:switchTask': {
+        const switchTaskId = message.task_id;
+        if (!switchTaskId || !this.eventStore) break;
+
+        console.log('[TaskHistory] Switching to task:', switchTaskId);
+
+        // Reset running state (don't interrupt running missions)
+        if (this.isMissionExecuting) {
+          vscode.window.showWarningMessage('Cannot switch tasks while a mission is executing. Stop the current mission first.');
+          break;
+        }
+
+        // Load events for the target task
+        const taskEvents = this.eventStore.getEventsByTaskId(switchTaskId);
+        if (taskEvents.length === 0) {
+          vscode.window.showWarningMessage('No events found for this task.');
+          break;
+        }
+
+        // Update extension state — reset to defaults first to avoid leaking
+        // the previous task's mode/stage when the target task lacks those events.
+        this.currentTaskId = switchTaskId;
+        globalCurrentTaskId = switchTaskId;
+        this.currentMode = 'ANSWER';
+        this.currentStage = 'none';
+
+        // Derive mode and stage from the task's events (if available)
+        const lastModeEvent = [...taskEvents].reverse().find((e: Event) => e.type === 'mode_set');
+        if (lastModeEvent && lastModeEvent.payload?.mode) {
+          this.currentMode = lastModeEvent.payload.mode as Mode;
+        } else {
+          // Fallback: use the mode from the first event
+          const firstEventMode = taskEvents[0]?.mode;
+          if (firstEventMode) {
+            this.currentMode = firstEventMode as Mode;
+          }
+        }
+        const lastStageEvent = [...taskEvents].reverse().find((e: Event) => e.type === 'stage_changed');
+        if (lastStageEvent && lastStageEvent.payload?.to) {
+          this.currentStage = lastStageEvent.payload.to as typeof this.currentStage;
+        }
+
+        // Reset transient state
+        this.isMissionExecuting = false;
+        this.currentExecutingMissionId = null;
+        this.recentEventsWindow = [];
+        this.activeMissionRunner = null;
+        this.activeMissionExecutor = null;
+        this.activeApprovalManager = null;
+        this.repairOrchestrator = null;
+        this.pendingCommandContexts.clear();
+        this.pendingPreflightResult = null;
+        this.pendingPreflightInput = null;
+        this.pendingPreflightCtx = null;
+        vscode.commands.executeCommand('setContext', 'ordinex.isRunning', false);
+
+        // Clear undo stack from the previous task so stale edits aren't attributed
+        // to the newly switched task, then sync the clean state to the webview.
+        this._undoStack = null;
+        this._undoBeforeCache.clear();
+        vscode.commands.executeCommand('setContext', 'ordinex.hasUndoableEdits', false);
+        webview.postMessage({
+          type: 'updateUndoState',
+          undoable_group_ids: [],
+          top_undoable_group_id: null,
+        });
+
+        // Persist the active-task pointer so IDE restart restores this task
+        const persistService = this.getTaskPersistenceService();
+        if (persistService) {
+          await persistService.setActiveTask({
+            task_id: switchTaskId,
+            mode: this.currentMode,
+            stage: this.currentStage,
+            status: 'paused',
+            last_updated_at: new Date().toISOString(),
+            cleanly_exited: true,
+          });
+        }
+
+        // Send events to webview — webview handles re-rendering
+        webview.postMessage({
+          type: 'ordinex:taskSwitched',
+          task_id: switchTaskId,
+          events: taskEvents,
+          mode: this.currentMode,
+          stage: this.currentStage,
+        });
+
+        console.log('[TaskHistory] Switched to task:', switchTaskId, 'with', taskEvents.length, 'events');
+        break;
+      }
 
       default:
         console.log('Unknown message type:', message.type);
@@ -1798,7 +1955,8 @@ export function activate(context: vscode.ExtensionContext) {
   context.subscriptions.push(
     vscode.window.registerWebviewViewProvider(
       MissionControlViewProvider.viewType,
-      provider
+      provider,
+      { webviewOptions: { retainContextWhenHidden: true } }
     )
   );
 

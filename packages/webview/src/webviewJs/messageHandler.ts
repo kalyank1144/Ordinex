@@ -613,6 +613,100 @@ export function getMessageHandlerJs(): string {
               }
               break;
 
+            // Task History: Populate the history panel with task summaries
+            case 'ordinex:taskHistory':
+              console.log('[TaskHistory] Received', (message.tasks || []).length, 'task summaries');
+              if (historyPanelList && message.tasks) {
+                var tasks = message.tasks;
+                var currentTid = message.currentTaskId || null;
+                if (tasks.length === 0) {
+                  historyPanelList.innerHTML = '<div class="history-empty">No previous tasks.</div>';
+                } else {
+                  var html = '';
+                  for (var ti = 0; ti < tasks.length; ti++) {
+                    var t = tasks[ti];
+                    var truncTitle = t.title.length > 60 ? t.title.substring(0, 57) + '...' : t.title;
+                    var isActive = (currentTid && t.task_id === currentTid);
+                    var modeBadge = t.mode || 'ANSWER';
+                    var modeClass = 'history-mode-' + modeBadge.toLowerCase();
+                    var relTime = formatRelativeTime(t.last_event_at);
+                    html += '<div class="history-item' + (isActive ? ' history-item-active' : '') + '" onclick="handleSwitchTask(\\'';
+                    html += escapeJsString(t.task_id);
+                    html += '\\')" title="' + escapeHtml(t.title) + '">';
+                    html += '<div class="history-item-top">';
+                    html += '<span class="history-item-title">' + escapeHtml(truncTitle) + '</span>';
+                    html += '</div>';
+                    html += '<div class="history-item-meta">';
+                    html += '<span class="history-mode-badge ' + modeClass + '">' + escapeHtml(modeBadge) + '</span>';
+                    html += '<span class="history-item-time">' + escapeHtml(relTime) + '</span>';
+                    if (isActive) {
+                      html += '<span class="history-active-badge">Active</span>';
+                    }
+                    html += '</div>';
+                    html += '</div>';
+                  }
+                  historyPanelList.innerHTML = html;
+                }
+              }
+              break;
+
+            // Task History: Restore a previously completed task
+            case 'ordinex:taskSwitched':
+              console.log('[TaskHistory] Task switched to:', message.task_id);
+              // Replace events with the switched task's events
+              state.events = message.events || [];
+              state.narrationCards = [];
+              state.streamingMission = null;
+              state._completedMissionBlocks = [];
+              state.streamingAnswer = null;
+              if (state._completedAnswers) state._completedAnswers = [];
+              state.currentStage = message.stage || 'none';
+              state.currentMode = message.mode || 'ANSWER';
+              state.pendingScopeExpansion = null;
+
+              // Reset counters and recalculate from loaded events
+              state.counters = {
+                filesInScope: 0,
+                filesTouched: 0,
+                linesIncluded: 0,
+                toolCallsUsed: 0,
+                toolCallsMax: 100
+              };
+              for (var sei = 0; sei < state.events.length; sei++) {
+                var sev = state.events[sei];
+                if (sev.type === 'context_collected') {
+                  var fc = (sev.payload.files_included || []).length;
+                  var lc = sev.payload.total_lines || 0;
+                  state.counters.filesInScope = Math.max(state.counters.filesInScope, fc);
+                  state.counters.linesIncluded = Math.max(state.counters.linesIncluded, lc);
+                }
+                if (sev.type === 'retrieval_completed') {
+                  state.counters.filesInScope = Math.max(state.counters.filesInScope, sev.payload.results_count || 0);
+                }
+                if (sev.type === 'tool_start') {
+                  state.counters.toolCallsUsed++;
+                }
+                if (sev.type === 'diff_applied') {
+                  var dfc = (sev.payload.files_changed || []).length;
+                  state.counters.filesTouched += dfc;
+                }
+              }
+
+              // Update mode selector to match the loaded task
+              if (modeSelect && message.mode) {
+                modeSelect.value = message.mode;
+              }
+
+              // Re-render everything
+              updateStatus('ready');
+              updateStage(state.currentStage);
+              renderMission();
+              renderLogs();
+              renderSystemsCounters();
+
+              console.log('[TaskHistory] Rendered', state.events.length, 'events for task', message.task_id);
+              break;
+
             // Step 52: Keyboard shortcut — focus the prompt input
             case 'ordinex:focusInput':
               console.log('[Step52] Focus input triggered');

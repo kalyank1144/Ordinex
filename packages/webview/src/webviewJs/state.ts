@@ -96,5 +96,9 @@ export function getStateJs(): string {
       const sendStopBtn = document.getElementById('sendStopBtn');
       const attachBtn = document.getElementById('attachBtn');
       const newChatBtn = document.getElementById('newChatBtn');
+      const historyBtn = document.getElementById('historyBtn');
+      const historyPanel = document.getElementById('historyPanel');
+      const historyPanelList = document.getElementById('historyPanelList');
+      const historyCloseBtn = document.getElementById('historyCloseBtn');
   `;
 }

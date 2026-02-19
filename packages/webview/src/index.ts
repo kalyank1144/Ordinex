@@ -154,6 +154,13 @@ ${css}
         📦 Export Run
       </button>
       <div class="stage-label" id="stageLabel">none</div>
+      <button id="historyBtn" class="header-icon-btn" title="Task History">
+        <svg width="16" height="16" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
+          <path d="M8 3.5V8l3 2" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/>
+          <path d="M1.5 8a6.5 6.5 0 1 1 1.02 3.5" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/>
+          <polyline points="1 5.5 1.5 8 4 7.5" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/>
+        </svg>
+      </button>
       <button id="newChatBtn" class="header-icon-btn" title="New Chat (⌘⇧N)">
         <svg width="16" height="16" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
           <path d="M14 8.5V14a1 1 0 0 1-1 1H3a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1h5.5" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/>
@@ -161,6 +168,17 @@ ${css}
           <line x1="5" y1="4" x2="11" y2="4" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/>
         </svg>
       </button>
+    </div>
+  </div>
+
+  <!-- Task History Panel (full overlay) -->
+  <div class="history-panel" id="historyPanel" style="display:none;">
+    <div class="history-panel-header">
+      <span class="history-panel-title">Task History</span>
+      <button class="history-close-btn" id="historyCloseBtn">&times;</button>
+    </div>
+    <div class="history-panel-list" id="historyPanelList">
+      <div class="history-empty">No previous tasks.</div>
     </div>
   </div>
 

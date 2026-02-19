@@ -170,6 +170,95 @@ describe('EventStore', () => {
       expect(found).toEqual(event);
     });
   });
+
+  describe('getDistinctTaskSummaries', () => {
+    it('should return empty array when no events exist', () => {
+      const summaries = eventStore.getDistinctTaskSummaries();
+      expect(summaries).toEqual([]);
+    });
+
+    it('should return one summary per task', async () => {
+      await eventStore.append(createTestEvent({ task_id: 'task_a', event_id: 'e1' }));
+      await eventStore.append(createTestEvent({ task_id: 'task_b', event_id: 'e2' }));
+      await eventStore.append(createTestEvent({ task_id: 'task_a', event_id: 'e3' }));
+
+      const summaries = eventStore.getDistinctTaskSummaries();
+      expect(summaries).toHaveLength(2);
+      const ids = summaries.map(s => s.task_id);
+      expect(ids).toContain('task_a');
+      expect(ids).toContain('task_b');
+    });
+
+    it('should order by most recent activity first', async () => {
+      await eventStore.append(createTestEvent({
+        task_id: 'old_task', event_id: 'e1',
+        timestamp: '2025-01-01T00:00:00.000Z',
+      }));
+      await eventStore.append(createTestEvent({
+        task_id: 'new_task', event_id: 'e2',
+        timestamp: '2025-06-01T00:00:00.000Z',
+      }));
+
+      const summaries = eventStore.getDistinctTaskSummaries();
+      expect(summaries[0].task_id).toBe('new_task');
+      expect(summaries[1].task_id).toBe('old_task');
+    });
+
+    it('should extract title from intent_received prompt', async () => {
+      await eventStore.append(createTestEvent({
+        task_id: 'task_titled', event_id: 'e1',
+        type: 'intent_received',
+        payload: { prompt: 'Change the button color' },
+      }));
+
+      const summaries = eventStore.getDistinctTaskSummaries();
+      expect(summaries[0].title).toBe('Change the button color');
+    });
+
+    it('should use default title when no intent_received exists', async () => {
+      await eventStore.append(createTestEvent({
+        task_id: 'task_notitled', event_id: 'e1',
+        type: 'mode_set', payload: { mode: 'PLAN' },
+      }));
+
+      const summaries = eventStore.getDistinctTaskSummaries();
+      expect(summaries[0].title).toMatch(/^Task task_no/);
+    });
+
+    it('should extract mode from mode_set event', async () => {
+      await eventStore.append(createTestEvent({
+        task_id: 'task_m', event_id: 'e1', mode: 'ANSWER',
+        type: 'intent_received', payload: { prompt: 'hello' },
+      }));
+      await eventStore.append(createTestEvent({
+        task_id: 'task_m', event_id: 'e2', mode: 'MISSION',
+        type: 'mode_set', payload: { mode: 'MISSION' },
+      }));
+
+      const summaries = eventStore.getDistinctTaskSummaries();
+      expect(summaries[0].mode).toBe('MISSION');
+    });
+
+    it('should track correct event count and timestamps', async () => {
+      await eventStore.append(createTestEvent({
+        task_id: 'task_c', event_id: 'e1',
+        timestamp: '2025-03-01T10:00:00.000Z',
+      }));
+      await eventStore.append(createTestEvent({
+        task_id: 'task_c', event_id: 'e2',
+        timestamp: '2025-03-01T11:00:00.000Z',
+      }));
+      await eventStore.append(createTestEvent({
+        task_id: 'task_c', event_id: 'e3',
+        timestamp: '2025-03-01T12:00:00.000Z',
+      }));
+
+      const summaries = eventStore.getDistinctTaskSummaries();
+      expect(summaries[0].event_count).toBe(3);
+      expect(summaries[0].first_event_at).toBe('2025-03-01T10:00:00.000Z');
+      expect(summaries[0].last_event_at).toBe('2025-03-01T12:00:00.000Z');
+    });
+  });
 });
 
 describe('EventBus', () => {

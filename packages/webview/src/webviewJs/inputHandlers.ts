@@ -154,6 +154,64 @@ export function getInputHandlersJs(): string {
         });
       }
 
+      // ===== TASK HISTORY HANDLERS =====
+      function isHistoryOpen() {
+        return historyPanel && historyPanel.style.display === 'flex';
+      }
+
+      function openHistoryPanel() {
+        if (!historyPanel) return;
+        historyPanel.style.display = 'flex';
+        // Request task history from backend
+        if (typeof vscode !== 'undefined') {
+          vscode.postMessage({ type: 'ordinex:getTaskHistory' });
+        }
+      }
+
+      function closeHistoryPanel() {
+        if (!historyPanel) return;
+        historyPanel.style.display = 'none';
+      }
+
+      if (historyBtn) {
+        historyBtn.addEventListener('click', function(e) {
+          e.stopPropagation();
+          if (isHistoryOpen()) {
+            closeHistoryPanel();
+          } else {
+            openHistoryPanel();
+          }
+        });
+      }
+
+      if (historyCloseBtn) {
+        historyCloseBtn.addEventListener('click', function() {
+          closeHistoryPanel();
+        });
+      }
+
+      // Close history panel when clicking outside
+      document.addEventListener('click', function(e) {
+        if (isHistoryOpen()) {
+          var clickedInsidePanel = historyPanel && historyPanel.contains(e.target);
+          var clickedOnBtn = historyBtn && (e.target === historyBtn || historyBtn.contains(e.target));
+          if (!clickedInsidePanel && !clickedOnBtn) {
+            closeHistoryPanel();
+          }
+        }
+      });
+
+      // Switch to a task from history
+      window.handleSwitchTask = function(taskId) {
+        if (typeof vscode !== 'undefined') {
+          vscode.postMessage({
+            type: 'ordinex:switchTask',
+            task_id: taskId,
+          });
+        }
+        closeHistoryPanel();
+      };
+
       // Handle Mode Change
       modeSelect.addEventListener('change', () => {
         state.currentMode = modeSelect.value;
