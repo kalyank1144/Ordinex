@@ -19,21 +19,19 @@ import type {
 } from 'core';
 import * as vscode from 'vscode';
 import {
-  analyzeIntentWithFlow,
+  routeIntent,
   detectActiveRun,
-  isGreenfieldRequest,
-  llmClassifyIntent,
-  needsLlmClassification,
   detectCommandIntent,
   enrichUserInput,
   generateTemplatePlan,
-  // Step 34.5: Command Execution imports
+  buildFollowUpContext,
   runCommandPhase,
   CommandPhaseContext,
   resolveCommandPolicy,
   EventBus,
   InMemoryEvidenceStore,
 } from 'core';
+import type { RoutedIntent, IntentRoutingResult } from 'core';
 
 // Cross-handler imports
 import { handleAnswerMode } from './answerHandler';
@@ -154,27 +152,14 @@ export async function handleSubmitPrompt(
       console.warn('[Step40.5] No workspace root, skipping enrichment');
     }
 
-    // Intent analysis must see RAW user text, NOT enriched prompt with [Project: ...] metadata
-    // that adds framework/noun keywords and triggers false greenfield detection
-    const promptForIntent = text;
-
-    // 2.5: Enrich follow-up prompt with scaffold context if available
-    if (ctx.scaffoldProjectPath && ctx.eventStore && ctx.currentTaskId) {
-      const recentEvents = ctx.eventStore.getEventsByTaskId(ctx.currentTaskId);
-      const verifyErrors = recentEvents
-        .filter((e: Event) => e.type === 'scaffold_verify_step_completed' && e.payload.step_status === 'fail')
-        .map((e: Event) => `[${e.payload.step_name}] ${e.payload.message || ''}`)
-        .join('\n');
-
-      if (verifyErrors) {
-        const scaffoldContext = `[Context: The scaffolded project at "${ctx.scaffoldProjectPath}" has build errors:\n${verifyErrors}\n]\n\n`;
-        effectivePrompt = scaffoldContext + effectivePrompt;
-        console.log('[ScaffoldContext] Enriched follow-up prompt with scaffold error context');
-      } else {
-        const scaffoldContext = `[Context: Working on scaffolded project at "${ctx.scaffoldProjectPath}"]\n\n`;
-        effectivePrompt = scaffoldContext + effectivePrompt;
-        console.log('[ScaffoldContext] Enriched follow-up prompt with scaffold path context');
-      }
+    // 2.5: Enrich follow-up prompt with scaffold session context
+    if (ctx.scaffoldSession) {
+      const sessionContext = buildFollowUpContext(ctx.scaffoldSession);
+      effectivePrompt = `${sessionContext}\n\n${effectivePrompt}`;
+      console.log('[ScaffoldSession] Enriched follow-up prompt with structured session context');
+    } else if (ctx.scaffoldProjectPath) {
+      effectivePrompt = `[Context: Working on scaffolded project at "${ctx.scaffoldProjectPath}"]\n\n${effectivePrompt}`;
+      console.log('[ScaffoldContext] Fallback: enriched with scaffold path only');
     }
 
     // 2a. Handle out-of-scope requests
@@ -200,9 +185,6 @@ export async function handleSubmitPrompt(
     }
 
     // 2b. Handle clarification needed from enrichment
-    // Skip for PLAN mode — planHandler has its own clarification mechanism
-    // (clarification_presented) with interactive UI. Blocking here would leave
-    // the user stuck since clarification_requested has no response handler.
     if (enrichedInput?.clarificationNeeded && userSelectedMode !== 'PLAN') {
       console.log('[Step40.5] Clarification needed:', enrichedInput.clarificationQuestion);
       await ctx.emitEvent({
@@ -240,212 +222,151 @@ export async function handleSubmitPrompt(
       console.log('[Step40.5] Clarification needed but skipping for PLAN mode — planHandler will handle');
     }
 
-    // 3. STEP 33: Build intent analysis context
+    // =========================================================================
+    // 3. UNIFIED INTENT ROUTING — single pipeline, no hardcoded models
+    //
+    // Uses routeIntent() which handles:
+    //   slash overrides → high-confidence heuristics → LLM classification → fallback
+    // The user's selected model is passed through for any LLM classification.
+    // =========================================================================
     const events = ctx.eventStore?.getEventsByTaskId(taskId) || [];
     const activeRun = detectActiveRun(events);
-    const analysisContext: IntentAnalysisContext = {
-      clarificationAttempts: events.filter(e => e.type === 'clarification_requested').length,
-      lastOpenEditor: vscode.window.activeTextEditor?.document.fileName,
-      activeRun: activeRun === null ? undefined : activeRun,
-      lastAppliedDiff: ctx.getLastAppliedDiff(events),
-    };
-    console.log('[Step33] Analysis context:', analysisContext);
 
-    // 4. STEP 33: Analyze intent using ENRICHED prompt (behavior-first) with flow_kind detection
-    const commandDetection = detectCommandIntent(promptForIntent);
-    console.log('[Step33] Command detection:', commandDetection);
-
-    // Use analyzeIntentWithFlow to get flow_kind for greenfield detection
-    let analysisWithFlow = analyzeIntentWithFlow(promptForIntent, analysisContext);
-    let analysis = analysisWithFlow; // Same object, but typed to include flow_kind
-
-    console.log('[Step35] Flow kind:', analysisWithFlow.flow_kind);
-    console.log('[Step35] Is greenfield request:', isGreenfieldRequest(promptForIntent));
-
-    // LLM classifier fallback: when heuristics are ambiguous, use Haiku for classification
-    const greenfieldSignal = isGreenfieldRequest(promptForIntent);
-    const greenfieldConfidence = greenfieldSignal ? 0.9 : 0.1;
-    const commandConfidence = commandDetection.confidence;
-    if (needsLlmClassification(greenfieldConfidence, commandConfidence, analysis.confidence)) {
-      try {
-        const apiKey = await ctx._context.secrets.get('ordinex.apiKey');
-        if (apiKey) {
-          console.log('[LLM Classifier] Heuristics ambiguous — calling Haiku for classification');
-          const llmResult = await llmClassifyIntent({
-            text: promptForIntent,
-            contextHint: ctx.scaffoldProjectPath ? 'Working in scaffolded project' : undefined,
-            llmConfig: { apiKey, model: 'claude-haiku-4-5-20251001' },
-          });
-          console.log('[LLM Classifier] Result:', llmResult);
-
-          if (llmResult.confidence >= 0.7) {
-            // Map LLM intent to behavior/flow_kind override
-            const intentToBehavior: Record<string, string> = {
-              'SCAFFOLD': 'PLAN',
-              'RUN_COMMAND': 'QUICK_ACTION',
-              'PLAN': 'PLAN',
-              'QUICK_ACTION': 'QUICK_ACTION',
-              'ANSWER': 'ANSWER',
-            };
-            const intentToFlowKind: Record<string, string> = {
-              'SCAFFOLD': 'scaffold',
-              'RUN_COMMAND': 'standard',
-              'PLAN': 'standard',
-              'QUICK_ACTION': 'standard',
-              'ANSWER': 'standard',
-            };
-
-            const mappedBehavior = intentToBehavior[llmResult.intent];
-            const mappedFlowKind = intentToFlowKind[llmResult.intent];
-
-            if (mappedBehavior) {
-              console.log(`[LLM Classifier] Overriding behavior: ${analysis.behavior} → ${mappedBehavior}, flow: ${analysisWithFlow.flow_kind} → ${mappedFlowKind}`);
-              analysis = {
-                ...analysis,
-                behavior: mappedBehavior as any,
-                derived_mode: (llmResult.intent === 'ANSWER' ? 'ANSWER' : llmResult.intent === 'PLAN' ? 'PLAN' : llmResult.intent === 'SCAFFOLD' ? 'SCAFFOLD' : 'MISSION') as Mode,
-                reasoning: `LLM classifier: ${llmResult.reason}`,
-                confidence: llmResult.confidence,
-              };
-              analysisWithFlow = { ...analysisWithFlow, flow_kind: mappedFlowKind as any };
-            }
-          }
-        }
-      } catch (llmError) {
-        console.warn('[LLM Classifier] Fallback failed (graceful degradation):', llmError);
+    let llmConfig: { apiKey: string; model: string } | undefined;
+    try {
+      const apiKey = await ctx._context.secrets.get('ordinex.apiKey');
+      if (apiKey) {
+        llmConfig = { apiKey, model: modelId || 'claude-sonnet-4-5-20241022' };
       }
-    }
+    } catch { /* no API key — heuristic-only routing */ }
 
-    // If a clear command intent is detected, do not block on stale active-run state
-    if (analysis.behavior === 'CONTINUE_RUN' && commandDetection.isCommandIntent && commandDetection.confidence >= 0.75) {
-      console.log('[Step33] Overriding CONTINUE_RUN due to command intent');
-      analysis = {
-        ...analysis,
-        behavior: 'QUICK_ACTION',
-        derived_mode: 'MISSION',
-        reasoning: `Command intent override: ${commandDetection.reasoning}`,
-      };
-    }
-
-    console.log('[Step33] Intent analysis:', {
-      behavior: analysis.behavior,
-      derived_mode: analysis.derived_mode,
-      confidence: analysis.confidence,
-      reasoning: analysis.reasoning
+    const routingResult: IntentRoutingResult = await routeIntent(text, {
+      llmConfig,
+      behaviorConfidence: 0.5,
+      events,
     });
 
-    // 4. Emit mode_set with Step 33 analysis
+    console.log('[IntentRouter] Result:', {
+      intent: routingResult.intent,
+      source: routingResult.source,
+      confidence: routingResult.confidence,
+      llmCalled: routingResult.llmCalled,
+      reasoning: routingResult.reasoning,
+    });
+
+    // Map RoutedIntent → Mode for event emission
+    const intentToMode: Record<RoutedIntent, Mode> = {
+      SCAFFOLD: 'PLAN',
+      PLAN: 'PLAN',
+      RUN_COMMAND: 'MISSION',
+      QUICK_ACTION: 'MISSION',
+      ANSWER: 'ANSWER',
+      CLARIFY: 'ANSWER',
+    };
+    const derivedMode = intentToMode[routingResult.intent] || 'ANSWER';
+
+    // Emit mode_set event
     await ctx.emitEvent({
       event_id: ctx.generateId(),
       task_id: taskId,
       timestamp: new Date().toISOString(),
       type: 'mode_set',
-      mode: analysis.derived_mode,
+      mode: derivedMode,
       stage: ctx.currentStage,
       payload: {
-        mode: analysis.derived_mode,
-        effectiveMode: analysis.derived_mode,
-        behavior: analysis.behavior,
+        mode: derivedMode,
+        effectiveMode: derivedMode,
+        behavior: routingResult.intent,
         user_selected_mode: userSelectedMode,
-        confidence: analysis.confidence,
-        reasoning: analysis.reasoning,
+        confidence: routingResult.confidence,
+        reasoning: routingResult.reasoning,
+        routing_source: routingResult.source,
       },
       evidence_ids: [],
       parent_event_id: null,
     });
-    // Respect user's explicit mode selection: only override if intent analysis
-    // agrees with the user, or if the user hasn't selected a specific mode.
-    // This prevents V9 mode_violation events from non-user-initiated escalations.
+
+    // Respect user's explicit mode selection
     const effectiveMode = (userSelectedMode === 'ANSWER' || userSelectedMode === 'PLAN' || userSelectedMode === 'MISSION')
       ? userSelectedMode as Mode
-      : analysis.derived_mode;
+      : derivedMode;
     if (effectiveMode !== ctx.currentMode) {
       await ctx.setModeWithEvent(effectiveMode, taskId, {
         reason: effectiveMode === userSelectedMode
           ? `User selected mode: ${userSelectedMode}`
-          : `Intent analysis derived mode: ${analysis.behavior}`,
+          : `Intent router: ${routingResult.reasoning}`,
         user_initiated: effectiveMode === userSelectedMode,
       });
     }
     await ctx.sendEventsToWebview(webview, taskId);
 
-    // 5. STEP 35 FIX: SCAFFOLD CHECK BEFORE BEHAVIOR SWITCH
-    // Greenfield requests route to scaffold flow UNLESS a clear command intent overrides
-    const commandOverridesScaffold = commandDetection.isCommandIntent && commandDetection.confidence >= 0.75;
+    // =========================================================================
+    // 4. ROUTE TO HANDLER based on unified intent
+    // =========================================================================
 
-    if (analysisWithFlow.flow_kind === 'scaffold' && !commandOverridesScaffold) {
-      console.log('[Step35] SCAFFOLD flow detected - routing DIRECTLY to scaffold handler');
-      console.log('[Step35] Bypassing behavior switch (was:', analysis.behavior, ')');
+    // SCAFFOLD — route to scaffold flow
+    if (routingResult.intent === 'SCAFFOLD') {
+      console.log('[IntentRouter] Routing to SCAFFOLD flow');
       await handleScaffoldFlow(ctx, effectivePrompt, taskId, modelId || 'sonnet-4.5', webview, attachments || []);
-      console.log('[Step33] Behavior handling complete (scaffold flow)');
-      return; // Exit early - scaffold flow handles everything
+      return;
     }
 
-    // Command intent overrides scaffold flow (e.g., "new start dev server")
-    if (commandOverridesScaffold && analysisWithFlow.flow_kind === 'scaffold') {
-      console.log('[Step35] Command intent overrides scaffold flow:', commandDetection.reasoning);
-      analysis = { ...analysis, behavior: 'QUICK_ACTION', derived_mode: 'MISSION' as Mode, reasoning: `Command override: ${commandDetection.reasoning}` };
-      analysisWithFlow = { ...analysisWithFlow, flow_kind: 'standard' };
+    // Check for active run that needs continuation
+    if (activeRun && routingResult.intent !== 'RUN_COMMAND') {
+      const commandDetection = detectCommandIntent(text);
+      if (!commandDetection.isCommandIntent || commandDetection.confidence < 0.75) {
+        console.log('[IntentRouter] Active run detected, routing to CONTINUE_RUN');
+        await handleContinueRun(ctx, {
+          clarificationAttempts: events.filter(e => e.type === 'clarification_requested').length,
+          lastOpenEditor: vscode.window.activeTextEditor?.document.fileName,
+          activeRun,
+          lastAppliedDiff: ctx.getLastAppliedDiff(events),
+        }, taskId, webview);
+        return;
+      }
     }
 
-    // 6. STEP 33: Handle behavior-specific logic (non-scaffold)
-    // User's explicit mode selection overrides heuristic behavior for PLAN and ANSWER modes.
-    // This ensures the user gets the mode they explicitly chose in the dropdown.
-    const effectiveBehavior = (userSelectedMode === 'PLAN' && analysis.behavior !== 'CLARIFY' && analysis.behavior !== 'CONTINUE_RUN')
-      ? 'PLAN'
-      : (userSelectedMode === 'ANSWER' && analysis.behavior !== 'CLARIFY' && analysis.behavior !== 'CONTINUE_RUN')
-        ? 'ANSWER'
-        : analysis.behavior;
-    console.log(`[Step33] Executing behavior: ${effectiveBehavior} (analysis: ${analysis.behavior}, userSelected: ${userSelectedMode})`);
+    // Map intent to effective behavior, respecting user's mode override
+    let effectiveBehavior: string = routingResult.intent;
+    if (userSelectedMode === 'PLAN' && effectiveBehavior !== 'CLARIFY') {
+      effectiveBehavior = 'PLAN';
+    } else if (userSelectedMode === 'ANSWER' && effectiveBehavior !== 'CLARIFY') {
+      effectiveBehavior = 'ANSWER';
+    }
+    console.log(`[IntentRouter] Executing behavior: ${effectiveBehavior} (routed: ${routingResult.intent}, userSelected: ${userSelectedMode})`);
 
     switch (effectiveBehavior) {
       case 'ANSWER':
-        console.log('>>> BEHAVIOR: ANSWER <<<');
+        console.log('>>> INTENT: ANSWER <<<');
         await handleAnswerMode(ctx, effectivePrompt, taskId, modelId || 'sonnet-4.5', webview);
         break;
 
       case 'PLAN':
-        console.log('>>> BEHAVIOR: PLAN <<<');
-        // Note: Scaffold flow is now handled BEFORE the behavior switch
-        // If we reach here, it's a standard PLAN flow
-        console.log('[Step35] Standard PLAN flow');
+        console.log('>>> INTENT: PLAN <<<');
         await handlePlanMode(ctx, effectivePrompt, taskId, modelId || 'sonnet-4.5', webview);
         break;
 
       case 'QUICK_ACTION':
-        console.log('>>> BEHAVIOR: QUICK_ACTION <<<');
-        await handleQuickAction(ctx, analysis, promptForIntent, effectivePrompt, taskId, modelId, webview);
+        console.log('>>> INTENT: QUICK_ACTION <<<');
+        await handleQuickAction(ctx, routingResult, text, effectivePrompt, taskId, modelId, webview);
+        break;
+
+      case 'RUN_COMMAND':
+        console.log('>>> INTENT: RUN_COMMAND <<<');
+        await handleQuickAction(ctx, routingResult, text, effectivePrompt, taskId, modelId, webview);
         break;
 
       case 'CLARIFY':
-        console.log('>>> BEHAVIOR: CLARIFY <<<');
-        await handleClarify(ctx, analysis, taskId, webview);
-        break;
-
-      case 'CONTINUE_RUN':
-        console.log('>>> BEHAVIOR: CONTINUE_RUN <<<');
-        await handleContinueRun(ctx, analysisContext, taskId, webview);
+        console.log('>>> INTENT: CLARIFY <<<');
+        await handleClarify(ctx, routingResult, taskId, webview);
         break;
 
       default:
-        console.error(`[Step33] Unknown behavior: ${analysis.behavior}`);
-        // Fallback to MISSION mode
-        const fallbackPlan = generateTemplatePlan(text, 'MISSION');
-        await ctx.emitEvent({
-          event_id: ctx.generateId(),
-          task_id: taskId,
-          timestamp: new Date().toISOString(),
-          type: 'plan_created',
-          mode: 'MISSION',
-          stage: ctx.currentStage,
-          payload: fallbackPlan as unknown as Record<string, unknown>,
-          evidence_ids: [],
-          parent_event_id: null,
-        });
-        await ctx.sendEventsToWebview(webview, taskId);
+        console.log(`[IntentRouter] Unhandled intent: ${effectiveBehavior}, falling back to PLAN`);
+        await handlePlanMode(ctx, effectivePrompt, taskId, modelId || 'sonnet-4.5', webview);
     }
 
-    console.log('[Step33] Behavior handling complete');
+    console.log('[IntentRouter] Routing complete');
 
   } catch (error) {
     console.error('Error handling submitPrompt:', error);
@@ -462,7 +383,7 @@ export async function handleSubmitPrompt(
  */
 async function handleQuickAction(
   ctx: IProvider,
-  analysis: any,
+  routingResult: IntentRoutingResult,
   promptForIntent: string,
   effectivePrompt: string,
   taskId: string,
@@ -585,8 +506,7 @@ async function handleQuickAction(
     console.log('[QUICK_ACTION] Using MissionExecutor edit pipeline (no plan UI)');
 
     try {
-      const referencedFiles = analysis.referenced_files || [];
-      const fileHint = referencedFiles.length > 0 ? referencedFiles.join(', ') : 'target files';
+      const fileHint = 'target files';
       const stepDescription = `Edit ${fileHint} to resolve: ${effectivePrompt}`;
 
       const quickPlan: StructuredPlan = {
@@ -594,7 +514,7 @@ async function handleQuickAction(
         assumptions: ['Single focused change', 'Minimal scope', 'Fast execution'],
         success_criteria: ['Issue resolved', 'No unintended changes'],
         scope_contract: {
-          max_files: referencedFiles.length > 0 ? referencedFiles.length : 3,
+          max_files: 5,
           max_lines: 200,
           allowed_tools: ['read', 'write']
         },
@@ -644,11 +564,10 @@ async function handleQuickAction(
  */
 async function handleClarify(
   ctx: IProvider,
-  analysis: any,
+  routingResult: IntentRoutingResult,
   taskId: string,
   webview: vscode.Webview,
 ): Promise<void> {
-  // Emit clarification_requested event
   await ctx.emitEvent({
     event_id: ctx.generateId(),
     task_id: taskId,
@@ -657,9 +576,9 @@ async function handleClarify(
     mode: ctx.currentMode,
     stage: ctx.currentStage,
     payload: {
-      question: analysis.clarification?.question || 'Could you provide more details?',
-      options: analysis.clarification?.options || [],
-      context_source: analysis.context_source,
+      question: 'Could you provide more details about what you\'d like me to do?',
+      options: [],
+      context_source: routingResult.source,
     },
     evidence_ids: [],
     parent_event_id: null,

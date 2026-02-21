@@ -1393,31 +1393,34 @@ export class MissionExecutor {
   // =====================================================================
 
   /**
-   * Execute edit step using AgenticLoop with staged writes.
-   *
-   * Flow:
-   * 1. Create StagedEditBuffer + StagedToolProvider (no disk writes)
-   * 2. Build system prompt with step context
-   * 3. Run AgenticLoop (tools write to buffer, reads overlay staged content)
-   * 4. On loop stop → emit loop_paused with staged files summary
-   * 5. Wait for user action: Continue / Approve Partial / Discard
-   * 6. On Approve: checkpoint → apply staged files to disk → emit diff_applied
+   * Execute edit step using AgenticLoop — dispatches to the correct write mode.
    */
   private async executeEditStepWithLoop(
     step: StructuredPlan['steps'][0],
   ): Promise<StepExecutionResult> {
-    const llmClient = this.llmClient!;
-    const toolProvider = this.toolProvider!;
-    const stepId = step.step_id;
+    const isDirectWrite = this.executionState?.plan?.scope_contract?.direct_write === true;
+    if (isDirectWrite) {
+      return this.executeEditStepDirect(step);
+    }
+    return this.executeEditStepStaged(step);
+  }
 
-    // Check for existing session (Continue scenario)
+  // =====================================================================
+  // Shared: Session + Loop Setup
+  // =====================================================================
+
+  private setupEditSession(stepId: string): {
+    session: LoopSession;
+    buffer: StagedEditBuffer;
+    history: ConversationHistory;
+    isResume: boolean;
+  } {
     let session = this.activeLoopSessions.get(stepId);
     let buffer = this.activeStagedBuffers.get(stepId);
     let history = this.activeConversationHistories.get(stepId);
     const isResume = !!session;
 
     if (!session) {
-      // Fresh loop — create new session with generous limits
       session = createLoopSession({
         session_id: randomUUID(),
         task_id: this.taskId,
@@ -1430,99 +1433,263 @@ export class MissionExecutor {
     if (!buffer) {
       buffer = new StagedEditBuffer();
     } else if (isResume && session.staged_snapshot) {
-      // Restore staged buffer from snapshot on Continue
       buffer = StagedEditBuffer.fromSnapshot(session.staged_snapshot);
     }
 
     if (!history) {
       history = new ConversationHistory({ maxTokens: 100_000, minMessages: 4 });
     } else if (isResume && session.conversation_snapshot) {
-      // Restore conversation from snapshot on Continue
       history = ConversationHistory.fromJSON({
         messages: session.conversation_snapshot.messages as any[],
       });
     }
 
-    // Store for Continue
     this.activeLoopSessions.set(stepId, session);
     this.activeStagedBuffers.set(stepId, buffer);
     this.activeConversationHistories.set(stepId, history);
 
-    // Wrap the real tool provider with staged interception
-    const stagedProvider = new StagedToolProvider(toolProvider, buffer);
+    return { session, buffer, history, isResume };
+  }
 
-    // Build system prompt
-    const systemPrompt = this.buildLoopSystemPrompt(step, isResume);
-
-    // Add user message for this step (only on fresh start, not resume)
+  private addInitialMessage(
+    history: ConversationHistory,
+    step: StructuredPlan['steps'][0],
+    isResume: boolean,
+    writeMode: 'direct' | 'staged',
+  ): void {
     if (!isResume) {
+      const writeModeDesc = writeMode === 'direct'
+        ? 'File changes are applied directly to disk. You can run build/test commands to verify your fixes immediately.'
+        : 'Write and edit operations will be staged for review before being applied to disk.';
       history.addUserMessage(
         `Execute the following step:\n\n${step.description}\n\n` +
-        `Step ID: ${stepId}\n` +
+        `Step ID: ${step.step_id}\n` +
         `Workspace root: ${this.workspaceRoot}\n\n` +
         'Use the available tools to read files, understand the codebase, ' +
-        'and make the necessary changes. Write and edit operations will be staged ' +
-        'for review before being applied to disk.'
+        `and make the necessary changes. ${writeModeDesc}`
       );
     } else {
-      // On auto-continue, add a message telling the LLM to keep going
       history.addUserMessage(
-        'Continue working on the task. Review the changes you\'ve already staged ' +
+        'Continue working on the task. Review the changes you\'ve already made ' +
         'and make any additional edits needed to complete the step.'
       );
     }
+  }
 
-    // Create and run the AgenticLoop
-    // Token budget is cumulative (input + output summed across ALL iterations).
-    // With Sonnet 4's 200K context window, each call sends ~12-15K input tokens,
-    // so 50 iterations can easily reach 600K+ cumulative. Set to 800K to avoid
-    // premature budget exhaustion while still providing a safety ceiling.
+  private async runLoop(
+    session: LoopSession,
+    history: ConversationHistory,
+    step: StructuredPlan['steps'][0],
+    provider: ToolExecutionProvider,
+    isResume: boolean,
+  ): Promise<AgenticLoopResult> {
+    const llmClient = this.llmClient!;
+    const systemPrompt = this.buildLoopSystemPrompt(step, isResume);
+    const stepId = step.step_id;
+
     const loop = new AgenticLoop(this.eventBus, this.taskId, this.mode, {
       maxIterations: session.max_iterations_per_run,
       maxTotalTokens: 800_000,
     });
 
+    return loop.run({
+      llmClient,
+      toolProvider: provider,
+      history,
+      systemPrompt,
+      model: this.llmConfig.model,
+      maxTokens: this.llmConfig.maxTokens || 4096,
+      onStreamDelta: this.onStreamDelta
+        ? (delta: string, iteration: number) => this.onStreamDelta!(delta, stepId, iteration)
+        : undefined,
+      tokenCounter: this.tokenCounter ?? undefined,
+    });
+  }
+
+  private mapStopReason(stopReason: string): LoopPauseReason {
+    if (stopReason === 'end_turn') return 'end_turn';
+    if (stopReason === 'max_iterations') return 'max_iterations';
+    if (stopReason === 'max_tokens') return 'max_tokens';
+    return 'error';
+  }
+
+  private async emitDirectWriteDiffApplied(
+    stepId: string,
+    trackedFiles: Map<string, { additions: number; deletions: number }>,
+  ): Promise<void> {
+    if (trackedFiles.size === 0) return;
+    const filesChanged = Array.from(trackedFiles.entries()).map(([fp, stats]) => ({
+      path: fp, additions: stats.additions, deletions: stats.deletions,
+    }));
+    await this.emitEvent({
+      event_id: randomUUID(),
+      task_id: this.taskId,
+      timestamp: new Date().toISOString(),
+      type: 'diff_applied',
+      mode: this.mode,
+      stage: 'edit',
+      payload: {
+        diff_id: randomUUID(),
+        step_id: stepId,
+        files_changed: filesChanged,
+        total_additions: filesChanged.reduce((s, f) => s + f.additions, 0),
+        total_deletions: filesChanged.reduce((s, f) => s + f.deletions, 0),
+        direct_write: true,
+      },
+      evidence_ids: [],
+      parent_event_id: null,
+    });
+  }
+
+  private async emitLoopPaused(
+    session: LoopSession,
+    summary: any[],
+    reason: string,
+    finalText?: string,
+  ): Promise<StepExecutionResult> {
+    const payload = buildLoopPausedPayload(session, summary);
+    (payload as Record<string, unknown>).reason = reason;
+    if (finalText) (payload as Record<string, unknown>).final_text = finalText;
+
+    await this.emitEvent({
+      event_id: randomUUID(),
+      task_id: this.taskId,
+      timestamp: new Date().toISOString(),
+      type: 'loop_paused',
+      mode: this.mode,
+      stage: 'edit',
+      payload,
+      evidence_ids: [],
+      parent_event_id: null,
+    });
+
+    return {
+      success: false,
+      stage: 'edit',
+      shouldPause: true,
+      pauseReason: `loop_paused:${reason}`,
+    };
+  }
+
+  // =====================================================================
+  // Direct Write Mode — writes go to disk, agent can verify with build
+  // =====================================================================
+
+  private async executeEditStepDirect(
+    step: StructuredPlan['steps'][0],
+  ): Promise<StepExecutionResult> {
+    const toolProvider = this.toolProvider!;
+    const stepId = step.step_id;
+    const { session: initialSession, buffer, history, isResume } = this.setupEditSession(stepId);
+    let session = initialSession;
+
+    console.log(`[MissionExecutor] direct_write mode — file changes go directly to disk`);
+
+    const trackedFiles: Map<string, { additions: number; deletions: number }> = new Map();
+    const directProvider: ToolExecutionProvider = {
+      async executeTool(name: string, input: Record<string, unknown>) {
+        const result = await toolProvider.executeTool(name, input);
+        if (result.success && (name === 'write_file' || name === 'edit_file')) {
+          const filePath = input.path as string;
+          if (filePath) {
+            const existing = trackedFiles.get(filePath) || { additions: 0, deletions: 0 };
+            const content = (input.content || input.new_text || '') as string;
+            existing.additions += content.split('\n').length;
+            if (name === 'edit_file' && input.old_text) {
+              existing.deletions += (input.old_text as string).split('\n').length;
+            }
+            trackedFiles.set(filePath, existing);
+          }
+        }
+        return result;
+      },
+    };
+
+    this.addInitialMessage(history, step, isResume, 'direct');
+
     let loopResult: AgenticLoopResult;
     try {
-      loopResult = await loop.run({
-        llmClient,
-        toolProvider: stagedProvider,
-        history,
-        systemPrompt,
-        model: this.llmConfig.model,
-        maxTokens: this.llmConfig.maxTokens || 4096,
-        // A6: Forward streaming deltas to extension → webview
-        onStreamDelta: this.onStreamDelta
-          ? (delta: string, iteration: number) => this.onStreamDelta!(delta, stepId, iteration)
-          : undefined,
-        tokenCounter: this.tokenCounter ?? undefined,
-      });
+      loopResult = await this.runLoop(session, history, step, directProvider, isResume);
     } catch (err) {
       const errMsg = err instanceof Error ? err.message : String(err);
       console.error('[MissionExecutor] AgenticLoop error:', errMsg);
-
-      // Clean up session state
       this.cleanupLoopState(stepId);
-
-      return {
-        success: false,
-        stage: 'edit',
-        shouldPause: true,
-        pauseReason: 'edit_step_error',
-        error: errMsg,
-      };
+      return { success: false, stage: 'edit', shouldPause: true, pauseReason: 'edit_step_error', error: errMsg };
     }
 
-    // Map AgenticLoop stopReason to LoopPauseReason
-    const pauseReason: LoopPauseReason = loopResult.stopReason === 'end_turn'
-      ? 'end_turn'
-      : loopResult.stopReason === 'max_iterations'
-        ? 'max_iterations'
-        : loopResult.stopReason === 'max_tokens'
-          ? 'max_tokens'
-          : 'error';
+    const pauseReason = this.mapStopReason(loopResult.stopReason);
+    session = updateSessionAfterRun(session, {
+      iterations: loopResult.iterations,
+      totalTokens: loopResult.totalTokens,
+      stopReason: pauseReason,
+      finalText: loopResult.finalText,
+      toolCallsCount: loopResult.toolCalls.length,
+      stagedSnapshot: null,
+      conversationSnapshot: history.toJSON(),
+      errorMessage: loopResult.error,
+    });
+    this.activeLoopSessions.set(stepId, session);
 
-    // Update session with results (including error message if present)
+    console.log(`[MissionExecutor] AgenticLoop completed: ${loopResult.iterations} iterations, ` +
+      `${loopResult.toolCalls.length} tool calls, stop_reason=${loopResult.stopReason}, ` +
+      `direct_write_files=${trackedFiles.size}, ` +
+      `total_iterations=${session.iteration_count}/${session.max_total_iterations}` +
+      (loopResult.error ? `, error=${loopResult.error}` : ''));
+
+    // Completion: emit diff_applied and clean up
+    if (loopResult.stopReason === 'end_turn') {
+      await this.emitDirectWriteDiffApplied(stepId, trackedFiles);
+      this.cleanupLoopState(stepId);
+      return { success: true, stage: 'edit' };
+    }
+
+    // Auto-continue on soft limits
+    if (loopResult.stopReason === 'max_iterations' || loopResult.stopReason === 'max_tokens') {
+      const hitHardCeiling = isIterationBudgetExhausted(session) || isTokenBudgetExhausted(session);
+      if (hitHardCeiling) {
+        if (trackedFiles.size > 0) {
+          await this.emitDirectWriteDiffApplied(stepId, trackedFiles);
+          this.cleanupLoopState(stepId);
+          return { success: true, stage: 'edit' };
+        }
+        return this.emitLoopPaused(session, [], 'hard_limit');
+      }
+      session = incrementContinue(session);
+      this.activeLoopSessions.set(stepId, session);
+      return this.executeEditStepDirect(step);
+    }
+
+    // Error: pause
+    return this.emitLoopPaused(session, [], pauseReason);
+  }
+
+  // =====================================================================
+  // Staged Write Mode — writes go to in-memory buffer, applied on approve
+  // =====================================================================
+
+  private async executeEditStepStaged(
+    step: StructuredPlan['steps'][0],
+  ): Promise<StepExecutionResult> {
+    const toolProvider = this.toolProvider!;
+    const stepId = step.step_id;
+    const { session: initialSession, buffer, history, isResume } = this.setupEditSession(stepId);
+    let session = initialSession;
+
+    const stagedProvider = new StagedToolProvider(toolProvider, buffer);
+
+    this.addInitialMessage(history, step, isResume, 'staged');
+
+    let loopResult: AgenticLoopResult;
+    try {
+      loopResult = await this.runLoop(session, history, step, stagedProvider, isResume);
+    } catch (err) {
+      const errMsg = err instanceof Error ? err.message : String(err);
+      console.error('[MissionExecutor] AgenticLoop error:', errMsg);
+      this.cleanupLoopState(stepId);
+      return { success: false, stage: 'edit', shouldPause: true, pauseReason: 'edit_step_error', error: errMsg };
+    }
+
+    const pauseReason = this.mapStopReason(loopResult.stopReason);
     session = updateSessionAfterRun(session, {
       iterations: loopResult.iterations,
       totalTokens: loopResult.totalTokens,
@@ -1537,112 +1704,47 @@ export class MissionExecutor {
 
     console.log(`[MissionExecutor] AgenticLoop completed: ${loopResult.iterations} iterations, ` +
       `${loopResult.toolCalls.length} tool calls, stop_reason=${loopResult.stopReason}, ` +
-      `staged_files=${buffer.size}, total_iterations=${session.iteration_count}/${session.max_total_iterations}` +
+      `staged_files=${buffer.size}, ` +
+      `total_iterations=${session.iteration_count}/${session.max_total_iterations}` +
       (loopResult.error ? `, error=${loopResult.error}` : ''));
 
-    // If the loop ended with end_turn and has staged changes, auto-apply to disk
+    // Completion with changes: auto-apply staged edits
     if (loopResult.stopReason === 'end_turn' && buffer.size > 0) {
       return this.applyStagedEdits(step, session, buffer);
     }
 
-    // If the loop ended with end_turn but no changes on an edit step:
-    // Retry once with a nudge, then pause for user decision
+    // No changes: nudge once, then pause
     if (loopResult.stopReason === 'end_turn' && buffer.size === 0) {
-      // Check if we already retried (avoid infinite nudge loop)
       const alreadyNudged = session.continue_count > 0;
 
       if (!alreadyNudged) {
         console.log('[MissionExecutor] AgenticLoop ended with no staged changes — nudging to implement');
-
-        // Add a nudge message and re-run the loop once
         history.addUserMessage(
           'You have not made any file changes yet. This is an implementation step — ' +
           'you MUST use edit_file or write_file to make the required code changes. ' +
           'Please implement the changes described in the step now.'
         );
-
-        // Increment continue count so we don't nudge again
         session = incrementContinue(session);
         this.activeLoopSessions.set(stepId, session);
-
-        // Re-run the loop
-        return this.executeEditStepWithLoop(step);
+        return this.executeEditStepStaged(step);
       }
 
-      // Already nudged and still no changes — pause for user decision
       console.log('[MissionExecutor] AgenticLoop still produced no changes after nudge — pausing');
-
-      const loopPausedPayload = buildLoopPausedPayload(session, []);
-      (loopPausedPayload as Record<string, unknown>).reason = 'no_changes_made';
-      (loopPausedPayload as Record<string, unknown>).final_text = loopResult.finalText;
-
-      await this.emitEvent({
-        event_id: randomUUID(),
-        task_id: this.taskId,
-        timestamp: new Date().toISOString(),
-        type: 'loop_paused',
-        mode: this.mode,
-        stage: 'edit',
-        payload: loopPausedPayload,
-        evidence_ids: [],
-        parent_event_id: null,
-      });
-
-      return {
-        success: false,
-        stage: 'edit',
-        shouldPause: true,
-        pauseReason: 'loop_paused:no_changes_made',
-      };
+      return this.emitLoopPaused(session, [], 'no_changes_made', loopResult.finalText);
     }
 
-    // ===== AUTO-CONTINUE ON max_iterations OR max_tokens =====
-    // Like Cursor/Claude Code: silently continue the loop as long as
-    // we haven't hit the hard safety ceilings. The agent should run
-    // until natural completion (end_turn) or a genuine error.
+    // Auto-continue on soft limits
     if (loopResult.stopReason === 'max_iterations' || loopResult.stopReason === 'max_tokens') {
-      const totalTokensUsed = session.total_tokens.input + session.total_tokens.output;
       const hitHardCeiling = isIterationBudgetExhausted(session) || isTokenBudgetExhausted(session);
-
       if (hitHardCeiling) {
-        // Hard safety ceiling reached — NOW pause for user
-        const ceilingReason = isIterationBudgetExhausted(session)
-          ? `iteration ceiling (${session.iteration_count}/${session.max_total_iterations})`
-          : `token ceiling (${Math.round(totalTokensUsed / 1000)}K/${Math.round(session.max_total_tokens / 1000)}K)`;
-        console.log(`[MissionExecutor] Hard ${ceilingReason} reached — pausing`);
-
-        // If we have staged changes and hit the ceiling, auto-apply them
-        // (the agent was clearly working and producing output)
         if (buffer.size > 0) {
           console.log(`[MissionExecutor] Hard limit reached with ${buffer.size} staged files — auto-applying`);
           return this.applyStagedEdits(step, session, buffer);
         }
-
-        const stagedSummary = buffer.toSummary();
-        const loopPausedPayload = buildLoopPausedPayload(session, stagedSummary);
-        (loopPausedPayload as Record<string, unknown>).reason = 'hard_limit';
-
-        await this.emitEvent({
-          event_id: randomUUID(),
-          task_id: this.taskId,
-          timestamp: new Date().toISOString(),
-          type: 'loop_paused',
-          mode: this.mode,
-          stage: 'edit',
-          payload: loopPausedPayload,
-          evidence_ids: [],
-          parent_event_id: null,
-        });
-
-        return {
-          success: false,
-          stage: 'edit',
-          shouldPause: true,
-          pauseReason: 'loop_paused:hard_limit',
-        };
+        return this.emitLoopPaused(session, buffer.toSummary(), 'hard_limit');
       }
 
-      // Still have budget — auto-continue silently
+      const totalTokensUsed = session.total_tokens.input + session.total_tokens.output;
       const reason = loopResult.stopReason === 'max_iterations' ? 'max_iterations' : 'max_tokens';
       console.log(`[MissionExecutor] Auto-continuing after ${reason} ` +
         `(iterations: ${session.iteration_count}/${session.max_total_iterations}, ` +
@@ -1650,35 +1752,11 @@ export class MissionExecutor {
 
       session = incrementContinue(session);
       this.activeLoopSessions.set(stepId, session);
-
-      // Re-run the loop (picks up existing session/buffer/history)
-      // Each new AgenticLoop run starts with fresh per-run token counting
-      return this.executeEditStepWithLoop(step);
+      return this.executeEditStepStaged(step);
     }
 
-    // Only 'error' reaches here — emit loop_paused for user action
-    const stagedSummary = buffer.toSummary();
-    const loopPausedPayload = buildLoopPausedPayload(session, stagedSummary);
-
-    await this.emitEvent({
-      event_id: randomUUID(),
-      task_id: this.taskId,
-      timestamp: new Date().toISOString(),
-      type: 'loop_paused',
-      mode: this.mode,
-      stage: 'edit',
-      payload: loopPausedPayload,
-      evidence_ids: [],
-      parent_event_id: null,
-    });
-
-    // Return shouldPause so the executor stops and waits for user action
-    return {
-      success: false,
-      stage: 'edit',
-      shouldPause: true,
-      pauseReason: `loop_paused:${pauseReason}`,
-    };
+    // Error: pause
+    return this.emitLoopPaused(session, buffer.toSummary(), pauseReason);
   }
 
   /**

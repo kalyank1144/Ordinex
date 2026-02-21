@@ -245,23 +245,64 @@ export class ScaffoldCard extends HTMLElement {
       });
     });
 
-    // Bind pack selection actions
-    const packOptions = this.shadowRoot.querySelectorAll('[data-action="select_pack"]');
-    packOptions.forEach((opt: any) => {
-      opt.addEventListener('click', () => {
-        const packId = opt.getAttribute('data-pack-id');
+    // Bind vibe quick-button actions (Style Intent UI)
+    const vibeBtns = this.shadowRoot.querySelectorAll('[data-action="set_style_intent"]');
+    vibeBtns.forEach((btn: any) => {
+      btn.addEventListener('click', () => {
+        vibeBtns.forEach((b: any) => b.classList.remove('active'));
+        btn.classList.add('active');
+        const mode = btn.getAttribute('data-mode');
+        const value = btn.getAttribute('data-value');
         this.dispatchEvent(new CustomEvent('scaffold-action', {
           detail: {
-            action: 'select_style',
+            action: 'set_style_intent',
             scaffoldId: this._event?.payload?.scaffold_id,
             eventId: this._event?.event_id,
-            selectedPackId: packId
+            styleInput: { mode, value }
           },
           bubbles: true,
           composed: true
         }));
       });
     });
+
+    // Bind NL style input (submit on Enter)
+    const nlInput = this.shadowRoot.querySelector('.style-intent-nl-input') as HTMLInputElement | null;
+    if (nlInput) {
+      nlInput.addEventListener('keydown', (e: KeyboardEvent) => {
+        if (e.key === 'Enter' && nlInput.value.trim()) {
+          this.dispatchEvent(new CustomEvent('scaffold-action', {
+            detail: {
+              action: 'set_style_intent',
+              scaffoldId: this._event?.payload?.scaffold_id,
+              eventId: this._event?.event_id,
+              styleInput: { mode: 'nl', value: nlInput.value.trim() }
+            },
+            bubbles: true,
+            composed: true
+          }));
+        }
+      });
+    }
+
+    // Bind hex color input (submit on Enter or valid 7-char hex)
+    const hexInput = this.shadowRoot.querySelector('.style-intent-hex-input') as HTMLInputElement | null;
+    if (hexInput) {
+      hexInput.addEventListener('keydown', (e: KeyboardEvent) => {
+        if (e.key === 'Enter' && /^#[0-9a-fA-F]{6}$/.test(hexInput.value)) {
+          this.dispatchEvent(new CustomEvent('scaffold-action', {
+            detail: {
+              action: 'set_style_intent',
+              scaffoldId: this._event?.payload?.scaffold_id,
+              eventId: this._event?.event_id,
+              styleInput: { mode: 'hex', value: hexInput.value }
+            },
+            bubbles: true,
+            composed: true
+          }));
+        }
+      });
+    }
 
     // Bind cancel picker (back button)
     const cancelPickerBtn = this.shadowRoot.querySelector('[data-action="cancel_picker"]') as HTMLButtonElement | null;
@@ -292,6 +333,10 @@ if (!customElements.get('scaffold-card')) {
  * handled by ScaffoldProgressCard and ScaffoldCompleteCard respectively.
  */
 export function isScaffoldEvent(eventType: string): boolean {
+  // NOTE: Build-phase events (scaffold_apply_started, scaffold_applied,
+  // scaffold_apply_completed, scaffold_progress, scaffold_doctor_card,
+  // design_pack_applied, feature_*, scaffold_verify_*, scaffold_autofix_*,
+  // scaffold_checkpoint_created) are handled by ScaffoldProgressCard — not here.
   return [
     'scaffold_started',
     'scaffold_preflight_started',
@@ -300,8 +345,6 @@ export function isScaffoldEvent(eventType: string): boolean {
     'scaffold_proposal_created',
     'scaffold_decision_requested',
     'scaffold_decision_resolved',
-    'scaffold_apply_started',
-    'scaffold_applied',
     'scaffold_blocked',
     'scaffold_completed',
     'scaffold_cancelled',
@@ -313,9 +356,7 @@ export function isScaffoldEvent(eventType: string): boolean {
     'scaffold_preflight_resolution_selected',
     'scaffold_quality_gates_passed',
     'scaffold_quality_gates_failed',
-    'scaffold_checkpoint_created',
     'scaffold_checkpoint_restored',
-    'scaffold_apply_completed',
   ].includes(eventType);
 }
 

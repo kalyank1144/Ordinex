@@ -135,17 +135,20 @@ export async function extractFeatureRequirements(
 
 /**
  * Check if a prompt describes a specific feature (not just "create an app").
- * If the prompt is too generic, feature extraction is skipped.
+ * Returns true by default — only returns false for explicitly generic prompts
+ * that contain no meaningful feature intent beyond "create a <framework> app".
  */
 export function hasSpecificFeature(userPrompt: string): boolean {
   const prompt = userPrompt.toLowerCase().trim();
 
-  // Generic patterns that don't warrant feature extraction
+  if (!prompt || prompt.length < 3) return false;
+
   const genericPatterns = [
-    /^(create|build|make|start)\s+(a\s+)?(new\s+)?(react|next\.?js|vite|expo|web|mobile)\s*(app|application|project|site)?$/i,
+    /^(create|build|make|start|generate|scaffold|init|initialize)\s+(a\s+)?(new\s+)?(react|next\.?js|nextjs|vite|expo|web|mobile|frontend|fullstack)?\s*(app|application|project|site|website)?$/i,
     /^(create|build|make|start)\s+(a\s+)?(new\s+)?app$/i,
     /^(create|build|make|start)\s+(a\s+)?(new\s+)?project$/i,
     /^(scaffold|init|initialize)\s+(a\s+)?(new\s+)?(app|project)$/i,
+    /^(hello|hi|hey|test|testing)$/i,
   ];
 
   for (const pattern of genericPatterns) {
@@ -154,18 +157,8 @@ export function hasSpecificFeature(userPrompt: string): boolean {
     }
   }
 
-  // If prompt contains a feature-describing word, it's specific enough
-  const featureWords = [
-    'todo', 'task', 'blog', 'post', 'ecommerce', 'shop', 'store', 'cart',
-    'dashboard', 'analytics', 'chat', 'message', 'portfolio', 'gallery',
-    'weather', 'recipe', 'fitness', 'tracker', 'calendar', 'booking',
-    'social', 'feed', 'notes', 'editor', 'kanban', 'board', 'quiz',
-    'survey', 'form', 'landing', 'auth', 'login', 'signup',
-    'inventory', 'crm', 'invoice', 'timer', 'pomodoro', 'music',
-    'video', 'podcast', 'news', 'wiki', 'documentation',
-  ];
-
-  return featureWords.some(word => prompt.includes(word));
+  // Any non-generic prompt is assumed to have feature intent
+  return true;
 }
 
 // ============================================================================

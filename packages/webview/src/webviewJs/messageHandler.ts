@@ -183,20 +183,30 @@ export function getMessageHandlerJs(): string {
               console.log('[EVENTS] \u2551  \ud83d\udce8 EVENTS UPDATE FROM BACKEND        \u2551');
               console.log('[EVENTS] \u255a\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u255d');
 
-              // Backend sent updated events - replace our state
+              // Backend sent updated events — merge with existing to preserve cross-task continuity
               if (message.events) {
                 console.log('[EVENTS] Received', message.events.length, 'events');
                 console.log('[EVENTS] Previous events count:', state.events.length);
 
                 // Log last 3 events for debugging
-                const lastThree = message.events.slice(-3);
+                var lastThree = message.events.slice(-3);
                 console.log('[EVENTS] Last 3 events:');
-                lastThree.forEach((e, idx) => {
-                  console.log(\`[EVENTS]   \${idx + 1}. \${e.type}\`, e.payload?.mission_id ? \`(mission: \${e.payload.mission_id.substring(0, 8)}...)\` : '');
+                lastThree.forEach(function(e, idx) {
+                  var missionInfo = (e.payload && e.payload.mission_id) ? '(mission: ' + e.payload.mission_id.substring(0, 8) + '...)' : '';
+                  console.log('[EVENTS]   ' + (idx + 1) + '. ' + e.type, missionInfo);
                 });
 
-                state.events = message.events;
-                console.log('[EVENTS] \u2713 Events state updated');
+                // Smart merge: keep events from tasks NOT in the incoming batch,
+                // then append incoming events. This preserves scaffold timeline
+                // when a follow-up prompt creates a new task_id.
+                var incomingTaskIds = {};
+                message.events.forEach(function(e) { if (e.task_id) incomingTaskIds[e.task_id] = true; });
+                var preserved = state.events.filter(function(e) { return e.task_id && !incomingTaskIds[e.task_id]; });
+                if (preserved.length > 0) {
+                  console.log('[EVENTS] Preserving', preserved.length, 'events from previous tasks');
+                }
+                state.events = preserved.concat(message.events);
+                console.log('[EVENTS] \u2713 Events state updated (merged:', state.events.length, 'total)');
 
                 // CRITICAL: Update Mission Control Bar BEFORE clearing optimistic state
                 // This ensures the UI reflects the running state from actual events

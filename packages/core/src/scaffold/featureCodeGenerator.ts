@@ -72,12 +72,13 @@ export async function generateFeatureCode(
   llmClient: FeatureLLMClient,
   model?: string,
   projectContext?: ProjectContext,
+  hasSrcDir?: boolean,
 ): Promise<FeatureGenerationResult | null> {
-  const systemPrompt = buildGenerationSystemPrompt(recipeId, designPack, projectContext);
+  const systemPrompt = buildGenerationSystemPrompt(recipeId, designPack, projectContext, hasSrcDir);
 
   // Attempt 1: Full requirements with standard token budget
   const attempt1 = await callGenerationLLM(
-    llmClient, systemPrompt, requirements, recipeId, model, GENERATION_MAX_TOKENS, 1,
+    llmClient, systemPrompt, requirements, recipeId, model, GENERATION_MAX_TOKENS, 1, hasSrcDir,
   );
   if (attempt1.result) return attempt1.result;
 
@@ -85,7 +86,7 @@ export async function generateFeatureCode(
   if (attempt1.truncated) {
     console.log(`${LOG_PREFIX} Output truncated at ${GENERATION_MAX_TOKENS} tokens, retrying with ${GENERATION_RETRY_MAX_TOKENS}...`);
     const attempt2 = await callGenerationLLM(
-      llmClient, systemPrompt, requirements, recipeId, model, GENERATION_RETRY_MAX_TOKENS, 2,
+      llmClient, systemPrompt, requirements, recipeId, model, GENERATION_RETRY_MAX_TOKENS, 2, hasSrcDir,
     );
     if (attempt2.result) return attempt2.result;
 
@@ -96,7 +97,7 @@ export async function generateFeatureCode(
       console.log(`${LOG_PREFIX} Reduced from ${requirements.features.length} to ${reducedRequirements.features.length} features, ${requirements.pages.length} to ${reducedRequirements.pages.length} pages`);
 
       const attempt3 = await callGenerationLLM(
-        llmClient, systemPrompt, reducedRequirements, recipeId, model, GENERATION_RETRY_MAX_TOKENS, 3,
+        llmClient, systemPrompt, reducedRequirements, recipeId, model, GENERATION_RETRY_MAX_TOKENS, 3, hasSrcDir,
       );
       if (attempt3.result) return attempt3.result;
     }
@@ -118,9 +119,10 @@ async function callGenerationLLM(
   model: string | undefined,
   maxTokens: number,
   attemptNumber: number,
+  hasSrcDir?: boolean,
 ): Promise<{ result: FeatureGenerationResult | null; truncated: boolean }> {
   try {
-    const userMessage = buildGenerationUserMessage(requirements, recipeId);
+    const userMessage = buildGenerationUserMessage(requirements, recipeId, hasSrcDir);
 
     const response = await llmClient.createMessage({
       model: model || GENERATION_MODEL,
@@ -189,8 +191,8 @@ function reduceFeatureScope(requirements: FeatureRequirements): FeatureRequireme
 // SYSTEM PROMPT CONSTRUCTION
 // ============================================================================
 
-function buildGenerationSystemPrompt(recipeId: RecipeId, designPack: DesignPack | null, projectContext?: ProjectContext): string {
-  const recipeConstraints = getRecipeConstraints(recipeId);
+function buildGenerationSystemPrompt(recipeId: RecipeId, designPack: DesignPack | null, projectContext?: ProjectContext, hasSrcDir?: boolean): string {
+  const recipeConstraints = getRecipeConstraints(recipeId, hasSrcDir);
   const designTokens = designPack ? getDesignTokenString(designPack) : 'Use default Tailwind colors';
 
   // Build project context section from real project files
@@ -242,7 +244,7 @@ FILE CONVENTIONS: ${recipeConstraints.fileConvention}
 ${projectContextSection}
 CONSTRAINTS:
 - Use TypeScript strict mode with proper type annotations
-- Use Tailwind CSS for ALL styling (utility classes only, no custom CSS)
+- Use Tailwind CSS + shadcn/ui for ALL styling
 - Follow ${recipeConstraints.fileConvention} file conventions
 - Components must be functional React components with hooks
 - Use React hooks for state management (useState, useReducer — no external state library)
@@ -253,15 +255,44 @@ ${rscRules}
 DESIGN TOKENS:
 ${designTokens}
 
+SHADCN/UI COMPONENTS (CRITICAL — USE THESE INSTEAD OF RAW HTML):
+The project has shadcn/ui installed with these components available at @/components/ui/*:
+- Button: import { Button } from "@/components/ui/button"
+- Card, CardHeader, CardTitle, CardDescription, CardContent, CardFooter: import { Card, CardHeader, CardTitle, CardDescription, CardContent, CardFooter } from "@/components/ui/card"
+- Input: import { Input } from "@/components/ui/input"
+- Label: import { Label } from "@/components/ui/label"
+- Badge: import { Badge } from "@/components/ui/badge"
+- Checkbox: import { Checkbox } from "@/components/ui/checkbox"
+- Select, SelectTrigger, SelectValue, SelectContent, SelectItem: from "@/components/ui/select"
+- Textarea: import { Textarea } from "@/components/ui/textarea"
+- Dialog, DialogTrigger, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter: from "@/components/ui/dialog"
+- Table, TableHeader, TableRow, TableHead, TableBody, TableCell: from "@/components/ui/table"
+- Tabs, TabsList, TabsTrigger, TabsContent: from "@/components/ui/tabs"
+- Separator: import { Separator } from "@/components/ui/separator"
+- Skeleton: import { Skeleton } from "@/components/ui/skeleton"
+- Tooltip, TooltipTrigger, TooltipContent, TooltipProvider: from "@/components/ui/tooltip"
+- ScrollArea: import { ScrollArea } from "@/components/ui/scroll-area"
+
+MANDATORY: Use <Button>, <Input>, <Card>, <Badge>, <Checkbox>, <Select>, <Tabs>, <Dialog>, <Table> etc. from shadcn/ui.
+NEVER use raw <input>, <button>, <select>, <table> HTML elements. Always import from @/components/ui/*.
+Also import the cn() utility: import { cn } from "@/lib/utils"
+
+CRITICAL CSS RULES:
+- DO NOT generate or modify globals.css, layout.tsx, or lib/utils.ts — these are managed by the overlay system
+- DO NOT include @tailwind directives or @import "tailwindcss" in any generated file
+- Tailwind utility classes (bg-primary, text-foreground, border-border, etc.) work the same regardless of Tailwind version
+
 VISUAL QUALITY RULES:
 - COMPLETELY replace default template content in the home page — NO default logos, SVGs, hero sections, or Next.js/Vite boilerplate
-- Use max-w-4xl mx-auto p-6 for page layout with proper heading and structured sections
+- Page layout: wrap in a container div with className="container mx-auto py-8 px-4 max-w-5xl"
 - Typography hierarchy: use text-3xl font-bold font-heading for h1, text-xl font-semibold for h2, text-base for body
-- All form inputs MUST have visible labels (use <label> elements)
-- List items should use card-based layout (border border-border rounded-lg p-4)
-- Include empty states with helpful messages (e.g., "No tasks yet. Add one above!")
-- Use responsive layout: flex flex-col gap-4 for mobile, md:flex-row for desktop where appropriate
+- Wrap forms and lists in <Card> with <CardHeader> and <CardContent>
+- List items should use individual <Card> components with hover effects
+- Include empty states with muted-foreground text and subtle icons
+- Use responsive layout: flex flex-col gap-4 for mobile, md:flex-row for desktop
 - Add spacing between sections: space-y-6 or gap-6
+- Use <Badge variant="secondary"> for tags, priorities, categories
+- Use <Separator> between sections
 
 OUTPUT FORMAT:
 Respond with ONLY valid JSON matching this schema (no markdown, no explanation):
@@ -285,10 +316,16 @@ Respond with ONLY valid JSON matching this schema (no markdown, no explanation):
   "summary": "Brief description of what was generated"
 }
 
-EXAMPLE COMPONENT (shows correct Tailwind + design token usage):
+EXAMPLE COMPONENT (shows correct shadcn/ui + Tailwind usage):
 \`\`\`tsx
 'use client';
 import { useState } from 'react';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Checkbox } from '@/components/ui/checkbox';
+import { Badge } from '@/components/ui/badge';
+import { cn } from '@/lib/utils';
 
 interface Task { id: string; title: string; done: boolean; }
 
@@ -302,34 +339,51 @@ export function TaskList() {
     setInput('');
   };
 
+  const toggleTask = (id: string) => {
+    setTasks(prev => prev.map(t => t.id === id ? { ...t, done: !t.done } : t));
+  };
+
   return (
-    <div className="max-w-2xl mx-auto p-6">
+    <div className="container mx-auto py-8 px-4 max-w-3xl">
       <h1 className="text-3xl font-bold font-heading mb-6">Tasks</h1>
-      <div className="flex gap-2 mb-6">
-        <input
-          value={input}
-          onChange={(e) => setInput(e.target.value)}
-          placeholder="Add a task..."
-          className="flex-1 border border-border bg-background rounded-md px-3 py-2 focus:outline-none focus:ring-2 focus:ring-primary"
-        />
-        <button
-          onClick={addTask}
-          className="bg-primary text-primary-foreground rounded-md px-4 py-2 hover:opacity-90 transition-opacity"
-        >
-          Add
-        </button>
+      <Card className="mb-6">
+        <CardContent className="pt-6">
+          <div className="flex gap-2">
+            <Input
+              value={input}
+              onChange={(e) => setInput(e.target.value)}
+              placeholder="Add a task..."
+              onKeyDown={(e) => e.key === 'Enter' && addTask()}
+              className="flex-1"
+            />
+            <Button onClick={addTask}>Add Task</Button>
+          </div>
+        </CardContent>
+      </Card>
+      <div className="flex items-center gap-2 mb-4">
+        <Badge variant="secondary">{tasks.length} total</Badge>
+        <Badge variant="outline">{tasks.filter(t => t.done).length} done</Badge>
       </div>
       {tasks.length === 0 ? (
-        <p className="text-muted-foreground text-center py-8">No tasks yet. Add one above!</p>
+        <Card>
+          <CardContent className="py-12 text-center">
+            <p className="text-muted-foreground">No tasks yet. Add one above!</p>
+          </CardContent>
+        </Card>
       ) : (
-        <ul className="space-y-3">
+        <div className="space-y-2">
           {tasks.map(task => (
-            <li key={task.id} className="flex items-center gap-3 border border-border rounded-lg p-4 bg-background shadow-sm">
-              <input type="checkbox" checked={task.done} onChange={() => {}} className="w-4 h-4 accent-primary" />
-              <span className={task.done ? 'line-through text-muted-foreground' : 'text-foreground'}>{task.title}</span>
-            </li>
+            <Card key={task.id} className="transition-colors hover:bg-muted/50">
+              <CardContent className="flex items-center gap-3 py-3">
+                <Checkbox checked={task.done} onCheckedChange={() => toggleTask(task.id)} />
+                <span className={cn('flex-1', task.done && 'line-through text-muted-foreground')}>
+                  {task.title}
+                </span>
+                {task.done && <Badge variant="outline" className="text-xs">Done</Badge>}
+              </CardContent>
+            </Card>
           ))}
-        </ul>
+        </div>
       )}
     </div>
   );
@@ -340,11 +394,14 @@ IMPORTANT:
 - File content must be valid TypeScript/TSX
 - Use double quotes for JSON strings, escape internal quotes
 - Include all necessary imports in each file
-- For modified_files, provide the COMPLETE new file content (not a diff)`;
+- For modified_files, provide the COMPLETE new file content (not a diff)
+- Do NOT generate or modify layout.tsx — the layout with sidebar/header is already set up
+- Do NOT generate or modify globals.css — the design system CSS is already configured
+- Do NOT generate lib/utils.ts — the cn() helper is already set up`;
 }
 
-function buildGenerationUserMessage(requirements: FeatureRequirements, recipeId: RecipeId): string {
-  const recipeConstraints = getRecipeConstraints(recipeId);
+function buildGenerationUserMessage(requirements: FeatureRequirements, recipeId: RecipeId, hasSrcDir?: boolean): string {
+  const recipeConstraints = getRecipeConstraints(recipeId, hasSrcDir);
 
   return `Generate feature code for a "${requirements.app_type}" app.
 
@@ -368,12 +425,20 @@ GENERATE:
 3. UI components for each listed component
 4. Modified home page (${recipeConstraints.homePagePath}) that imports and renders the main component
 
-VISUAL QUALITY:
-- Every form input MUST have a visible <label> with proper htmlFor/id pairing
-- List items should be card-based (border, rounded corners, padding, shadow)
-- Include empty state messaging when no items exist
-- Use consistent spacing and alignment throughout
+VISUAL QUALITY (CRITICAL — this determines if the app looks professional):
+- MUST use shadcn/ui components: <Button>, <Input>, <Card>, <Badge>, <Checkbox>, <Select>, <Dialog>, <Table>, <Tabs> etc.
+- NEVER use raw HTML <input>, <button>, <select>, <table> — always use shadcn/ui equivalents
+- Import from @/components/ui/* and import cn from @/lib/utils
+- Wrap forms in <Card> with <CardHeader>/<CardContent>
+- Use <Badge> for status, priority, categories
+- List items should use individual <Card> components
+- Include empty state messaging with an icon and muted text when no items exist
 - The home page MUST be fully replaced — no default template content remaining
+- Apply the DESIGN STYLE PATTERNS from the system prompt to ALL components (cards, buttons, inputs, headers)
+- Add hover effects, transitions, and micro-interactions (transition-all, hover:shadow-lg, etc.)
+- Use generous spacing: containers with py-8 px-6, sections with space-y-6, items with gap-4
+- Create a polished header/title area with proper hierarchy (text-3xl font-bold + text-muted-foreground subtitle)
+- The app should look like a production-ready product, not a developer prototype
 
 Keep it simple — use in-memory state with useState/useReducer. No external APIs or databases.`;
 }
@@ -391,17 +456,19 @@ interface RecipeConstraints {
   hooksDir: string;
 }
 
-function getRecipeConstraints(recipeId: RecipeId): RecipeConstraints {
+function getRecipeConstraints(recipeId: RecipeId, hasSrcDir?: boolean): RecipeConstraints {
   switch (recipeId) {
-    case 'nextjs_app_router':
+    case 'nextjs_app_router': {
+      const prefix = hasSrcDir ? 'src/' : '';
       return {
         framework: 'Next.js 14 App Router',
-        fileConvention: 'app/ directory for routes, src/components/ for components, src/types/ for types, src/hooks/ for hooks',
-        homePagePath: 'app/page.tsx',
-        componentDir: 'src/components',
-        typesDir: 'src/types',
-        hooksDir: 'src/hooks',
+        fileConvention: `${prefix}app/ directory for routes, ${prefix}components/ for components, ${prefix}types/ for types, ${prefix}hooks/ for hooks`,
+        homePagePath: `${prefix}app/page.tsx`,
+        componentDir: `${prefix}components`,
+        typesDir: `${prefix}types`,
+        hooksDir: `${prefix}hooks`,
       };
+    }
     case 'vite_react':
       return {
         framework: 'Vite + React SPA',
@@ -436,12 +503,165 @@ function getRecipeConstraints(recipeId: RecipeId): RecipeConstraints {
 // DESIGN TOKEN INJECTION
 // ============================================================================
 
+function getVibeStyleGuide(vibe: string): string {
+  switch (vibe) {
+    case 'glass':
+      return `
+DESIGN STYLE: GLASSMORPHISM
+Apply frosted glass aesthetic throughout the entire app:
+
+CARD PATTERNS (use for ALL cards, panels, sections):
+- className="bg-white/60 backdrop-blur-xl border border-white/30 shadow-lg rounded-xl"
+- For hover: add "hover:bg-white/70 hover:shadow-xl transition-all duration-300"
+- For dark sections: "bg-black/20 backdrop-blur-xl border border-white/10"
+
+INPUT PATTERNS:
+- className="bg-white/50 backdrop-blur-sm border border-white/30 rounded-lg focus:bg-white/70 focus:border-primary/50 transition-all"
+
+HEADER/NAVBAR:
+- className="bg-white/60 backdrop-blur-xl border-b border-white/30 sticky top-0 z-50"
+
+SIDEBAR:
+- className="bg-white/30 backdrop-blur-2xl border-r border-white/20"
+
+BUTTON PATTERNS:
+- Primary: className="bg-primary/90 backdrop-blur-sm text-primary-foreground rounded-lg px-6 py-2.5 hover:bg-primary shadow-lg hover:shadow-xl transition-all"
+- Ghost: className="bg-white/20 backdrop-blur-sm border border-white/30 hover:bg-white/40 rounded-lg transition-all"
+
+LAYOUT PRINCIPLES:
+- Add subtle gradient background to the page body (already configured in globals.css)
+- Use generous padding (p-6, p-8) and rounded-xl corners
+- Add shadow-lg to elevated elements
+- Use border-white/20 or border-white/30 for borders (not border-border for glass effect)
+- Use text-foreground/80 for secondary text
+- Space sections with gap-6 or space-y-6`;
+
+    case 'neo':
+      return `
+DESIGN STYLE: NEON/CYBERPUNK
+Apply dark futuristic aesthetic with cyan glow effects:
+
+CARD PATTERNS:
+- className="bg-card border border-cyan-500/20 rounded-sm shadow-[0_0_15px_rgba(34,211,238,0.1)]"
+- For hover: add "hover:border-cyan-500/40 hover:shadow-[0_0_25px_rgba(34,211,238,0.2)] transition-all"
+
+INPUT PATTERNS:
+- className="bg-background border border-cyan-500/20 rounded-sm focus:border-cyan-400 focus:shadow-[0_0_10px_rgba(34,211,238,0.3)] transition-all"
+
+BUTTON PATTERNS:
+- Primary: className="bg-cyan-500 text-black font-bold rounded-sm px-6 py-2.5 hover:bg-cyan-400 shadow-[0_0_20px_rgba(34,211,238,0.4)] transition-all"
+- Ghost: className="border border-cyan-500/30 text-cyan-400 rounded-sm hover:bg-cyan-500/10 transition-all"
+
+LAYOUT PRINCIPLES:
+- Use sharp corners (rounded-sm or rounded-none)
+- Add cyan glow effects to interactive elements
+- Use monospace font for data/numbers: className="font-mono"
+- Dark backgrounds with subtle radial gradients (already configured)
+- Use border-cyan-500/20 for borders`;
+
+    case 'vibrant':
+      return `
+DESIGN STYLE: VIBRANT & PLAYFUL
+Apply colorful, energetic aesthetic with purple accents:
+
+CARD PATTERNS:
+- className="bg-card border border-border rounded-2xl shadow-md hover:shadow-lg transition-all"
+- For featured: add "ring-2 ring-primary/20"
+
+BUTTON PATTERNS:
+- Primary: className="bg-primary text-primary-foreground rounded-full px-6 py-2.5 hover:bg-primary/90 shadow-md hover:shadow-lg hover:-translate-y-0.5 transition-all"
+
+LAYOUT PRINCIPLES:
+- Use generous rounded corners (rounded-2xl, rounded-full for buttons)
+- Add subtle hover animations (translate, scale)
+- Use gradient accents: className="bg-gradient-to-r from-primary to-accent"
+- Bold typography with playful spacing`;
+
+    case 'warm':
+      return `
+DESIGN STYLE: WARM & APPROACHABLE
+Apply cozy, amber-toned aesthetic:
+
+CARD PATTERNS:
+- className="bg-card border border-border rounded-xl shadow-sm hover:shadow-md transition-all"
+
+BUTTON PATTERNS:
+- Primary: className="bg-primary text-primary-foreground rounded-xl px-6 py-2.5 hover:bg-primary/90 transition-all"
+
+LAYOUT PRINCIPLES:
+- Soft rounded corners (rounded-xl)
+- Warm amber tones for accents
+- Comfortable spacing and generous padding
+- Use bg-muted for subtle section backgrounds`;
+
+    case 'enterprise':
+      return `
+DESIGN STYLE: ENTERPRISE PROFESSIONAL
+Apply clean, structured corporate aesthetic:
+
+CARD PATTERNS:
+- className="bg-card border border-border rounded-lg shadow-sm"
+
+BUTTON PATTERNS:
+- Primary: className="bg-primary text-primary-foreground rounded-md px-5 py-2 hover:bg-primary/90 font-medium transition-colors"
+
+LAYOUT PRINCIPLES:
+- Precise alignment and consistent spacing
+- Structured data presentation with tables
+- Professional blue tones
+- Dense but readable layouts`;
+
+    case 'dark':
+      return `
+DESIGN STYLE: DARK MODERN (Linear-inspired)
+Apply sleek, minimal dark aesthetic:
+
+CARD PATTERNS:
+- className="bg-card border border-border rounded-lg hover:border-muted-foreground/30 transition-colors"
+
+BUTTON PATTERNS:
+- Primary: className="bg-primary text-primary-foreground rounded-md px-5 py-2 hover:bg-primary/90 transition-colors"
+
+LAYOUT PRINCIPLES:
+- Minimal borders (border-border)
+- Subtle hover state changes
+- Zinc/neutral color palette
+- Clean typography with good contrast`;
+
+    case 'gradient':
+      return `
+DESIGN STYLE: GRADIENT & COLORFUL
+Apply vibrant gradient aesthetic:
+
+CARD PATTERNS:
+- className="bg-white/80 backdrop-blur-sm border border-white/20 rounded-xl shadow-lg"
+
+BUTTON PATTERNS:
+- Primary: className="bg-gradient-to-r from-primary to-accent text-primary-foreground rounded-lg px-6 py-2.5 hover:opacity-90 shadow-lg transition-all"
+
+TEXT PATTERNS:
+- Hero text: className="bg-gradient-to-r from-primary to-accent bg-clip-text text-transparent"
+
+LAYOUT PRINCIPLES:
+- Gradient backgrounds and accent elements
+- Semi-transparent card surfaces
+- Bold, colorful interactive elements`;
+
+    default:
+      return `
+DESIGN STYLE: MINIMAL CLEAN
+Use clean, content-first aesthetic with semantic Tailwind classes.`;
+  }
+}
+
 function getDesignTokenString(designPack: DesignPack): string {
+  const vibeGuide = getVibeStyleGuide(designPack.vibe);
+
   return `Design pack: "${designPack.name}" (${designPack.vibe} vibe).
 The tailwind.config.ts has been extended with design pack colors mapped to CSS variables.
-Use these SEMANTIC Tailwind classes (NOT arbitrary value syntax):
+${vibeGuide}
 
-COLORS:
+SEMANTIC COLOR CLASSES (always available):
 - Primary (CTAs, buttons): bg-primary text-primary-foreground
 - Secondary (secondary actions): bg-secondary text-secondary-foreground
 - Accent (highlights, links): bg-accent text-accent-foreground
@@ -449,19 +669,11 @@ COLORS:
 - Background/Foreground: bg-background text-foreground
 - Borders: border-border
 
-FONTS:
-- Headings: font-heading
-- Body text: font-body
-
-COMPONENT PATTERNS:
-- Button: bg-primary text-primary-foreground rounded-md px-4 py-2 hover:opacity-90 transition-opacity
-- Secondary Button: bg-secondary text-secondary-foreground rounded-md px-4 py-2 hover:opacity-90
-- Input: border border-border bg-background rounded-md px-3 py-2 focus:outline-none focus:ring-2 focus:ring-primary
-- Card: border border-border rounded-lg shadow p-6 bg-background
-- Badge: bg-muted text-muted-foreground text-xs rounded-full px-2 py-0.5
-
-CRITICAL: Do NOT use arbitrary value syntax like text-[var(--primary)], bg-[var(--background)], or border-[var(--border)].
-Always use the semantic class names above (bg-primary, text-foreground, border-border, etc.).`;
+CRITICAL RULES:
+- Do NOT use arbitrary value syntax like text-[var(--primary)] or bg-[var(--background)]
+- Use the semantic class names (bg-primary, text-foreground, border-border, etc.) and the design-specific patterns above
+- Apply the design style consistently across ALL components — every card, button, input, header should follow the patterns above
+- The app should feel cohesive and visually polished, not like a default template`;
 }
 
 // ============================================================================

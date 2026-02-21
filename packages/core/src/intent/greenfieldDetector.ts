@@ -37,10 +37,16 @@ export interface IntentSignal {
  * CRITICAL: Patterns must handle verb conjugations (creating, building, etc.)
  */
 const STRONG_PATTERNS: Array<{ pattern: RegExp; description: string }> = [
-  // Explicit creation verbs (including -ing forms) followed by project/app nouns
+  // Explicit creation verbs (all conjugations: create/created/creating/creates)
+  // followed by project/app nouns
   {
-    pattern: /\b(creat(e|ing)|build(ing)?|mak(e|ing)|start(ing)?|scaffold(ing)?|setup|sett?ing\s+up|spinn?ing\s+up|initializ(e|ing)|init)\b.*\b(app|application|project|site|website|dashboard|webapp|web\s+app)\b/i,
+    pattern: /\b(creat(?:e|ed|es|ing)|build(?:s|ing)?|built|mak(?:e|es|ing)|made|start(?:s|ed|ing)?|scaffold(?:s|ed|ing)?|setup|sett?ing\s+up|spinn?ing\s+up|initializ(?:e|ed|es|ing)|init)\b.*\b(app|application|project|site|website|dashboard|webapp|web\s+app)\b/i,
     description: 'creation verb + project noun',
+  },
+  // "I want/need to [verb] a [noun]" — very common phrasing
+  {
+    pattern: /\b(want|need|like|going)\s+to\s+(create|build|make|start|scaffold|setup|initialize)\b.*\b(app|application|project|site|website|dashboard|webapp|web\s+app)\b/i,
+    description: 'want/need to + creation verb + noun',
   },
   // Reversed: project noun followed by creation verb
   {
@@ -62,9 +68,9 @@ const STRONG_PATTERNS: Array<{ pattern: RegExp; description: string }> = [
     pattern: /\b(new|fresh|start)\b.*\b(react|vue|angular|next|nextjs|next\.js|vite|expo|express)\b.*\b(app|project|application)?\b/i,
     description: 'new + framework',
   },
-  // Specific app type patterns
+  // Specific app type patterns (all verb conjugations)
   {
-    pattern: /\b(new|create|build|make)\b.*\b(fitness|todo|workout|tracker|ecommerce|e-commerce|blog|chat|social|mobile|web)\b.*\b(app|application|project)?\b/i,
+    pattern: /\b(new|creat(?:e|ed|es|ing)|build(?:s|ing)?|built|mak(?:e|es|ing)|made)\b.*\b(fitness|todo|to-do|workout|tracker|ecommerce|e-commerce|blog|chat|social|mobile|web)\b.*\b(app|application|project)?\b/i,
     description: 'creation verb + app type',
   },
 ];
@@ -170,9 +176,16 @@ export function detectGreenfieldIntent(text: string): IntentSignal {
   let weakSignalCount = 0;
   const weakMatches: string[] = [];
 
-  // Check verbs
+  // Check verbs — handle conjugation properly for e-final verbs
+  // "create" → created/creating/creates (stem "creat" + ed/ing, or "create" + s)
   for (const verb of WEAK_SIGNAL_KEYWORDS.verbs) {
-    const verbPattern = new RegExp(`\\b${verb}(ing|e|ed|s)?\\b`, 'i');
+    let verbPattern: RegExp;
+    if (verb.endsWith('e')) {
+      const stem = verb.slice(0, -1);
+      verbPattern = new RegExp(`\\b${stem}(?:e|ed|es|ing)\\b`, 'i');
+    } else {
+      verbPattern = new RegExp(`\\b${verb}(?:ing|e|ed|s)?\\b`, 'i');
+    }
     if (verbPattern.test(normalized)) {
       weakSignalCount++;
       weakMatches.push(verb);
@@ -216,9 +229,13 @@ export function detectGreenfieldIntent(text: string): IntentSignal {
   );
   // Only creation-specific verbs can satisfy the verb gate (not "run", "start", etc.)
   const CREATION_VERBS = ['create', 'build', 'make', 'scaffold', 'setup', 'init', 'initialize', 'spin', 'bootstrap'];
-  const hasCreationVerb = CREATION_VERBS.some(v =>
-    new RegExp(`\\b${v}(ing|e|ed|s)?\\b`, 'i').test(normalized)
-  );
+  const hasCreationVerb = CREATION_VERBS.some(v => {
+    if (v.endsWith('e')) {
+      const stem = v.slice(0, -1);
+      return new RegExp(`\\b${stem}(?:e|ed|es|ing)\\b`, 'i').test(normalized);
+    }
+    return new RegExp(`\\b${v}(?:ing|e|ed|s)?\\b`, 'i').test(normalized);
+  });
 
   if (weakSignalCount >= 3 && (hasNewness || hasCreationVerb)) {
     return {

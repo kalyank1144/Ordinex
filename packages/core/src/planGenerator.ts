@@ -35,6 +35,9 @@ export interface StructuredPlan {
     max_files: number;
     max_lines: number;
     allowed_tools: string[];
+    /** When true, file writes go directly to disk instead of staging buffer.
+     *  Required for fix flows where the agent runs build commands to verify. */
+    direct_write?: boolean;
   };
   steps: Array<{
     step_id: string;

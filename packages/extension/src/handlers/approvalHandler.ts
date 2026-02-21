@@ -22,6 +22,7 @@ import {
   selectRecipe,
   runPreflightChecksWithEvents,
   extractAppNameFromPrompt,
+  createScaffoldSession,
 } from 'core';
 import * as path from 'path';
 import * as vscode from 'vscode';
@@ -399,7 +400,16 @@ export async function handleResolveDecisionPoint(
           await ctx.activeScaffoldCoordinator.handleStyleSelect(scaffoldContext.selected_pack_id);
           console.log('[handleResolveDecisionPoint] Style selected, back to decision state');
           await ctx.sendEventsToWebview(webview, task_id);
-          // Do NOT clear currentTaskId - flow continues in awaiting_decision state
+          return;
+        }
+
+        // Style Intent: Handle set_style_intent from the new Style Intent UI
+        if (action === 'set_style_intent' && scaffoldContext?.style_input) {
+          const styleInput = scaffoldContext.style_input as { mode: string; value: string };
+          console.log(`[handleResolveDecisionPoint] Style intent set: mode=${styleInput.mode}, value="${styleInput.value}"`);
+          if ((ctx.activeScaffoldCoordinator as any).setStyleInput) {
+            (ctx.activeScaffoldCoordinator as any).setStyleInput(styleInput);
+          }
           return;
         }
 
@@ -422,6 +432,13 @@ export async function handleResolveDecisionPoint(
         // Call the coordinator to handle the action (finalizing only)
         const updatedState = await ctx.activeScaffoldCoordinator.handleUserAction(scaffoldAction);
         console.log('[handleResolveDecisionPoint] Scaffold action handled:', updatedState.completionStatus);
+
+        // Capture blueprint and style data BEFORE clearing the coordinator
+        const savedBlueprint = (ctx.activeScaffoldCoordinator as any).getBlueprint?.();
+        const savedStyleResolution = (ctx.activeScaffoldCoordinator as any).getState?.()?.styleResolution;
+        const savedStyleInput = (ctx.activeScaffoldCoordinator as any).getStyleInput?.()
+          || savedStyleResolution?.input
+          || undefined;
 
         // Clear the coordinator reference
         ctx.activeScaffoldCoordinator = null;
@@ -672,6 +689,14 @@ export async function handleResolveDecisionPoint(
                 `[handleResolveDecisionPoint] User prompt for feature generation: "${scaffoldUserPrompt}" (found event: ${!!scaffoldIntentEvt})`,
               );
 
+              // Use blueprint/style data saved before coordinator was cleared
+              console.log(
+                `[handleResolveDecisionPoint] Blueprint: ${savedBlueprint ? `app_type=${savedBlueprint.app_type}, pages=${savedBlueprint.pages?.length}` : 'undefined'}`,
+              );
+              console.log(
+                `[handleResolveDecisionPoint] Style input: ${savedStyleInput ? `mode=${savedStyleInput.mode}, value=${savedStyleInput.value}` : 'undefined'}`,
+              );
+
               const postScaffoldCtx = {
                 taskId: task_id,
                 scaffoldId: scaffoldIdForPost,
@@ -683,13 +708,27 @@ export async function handleResolveDecisionPoint(
                 mode: ctx.currentMode,
                 userPrompt: scaffoldUserPrompt,
                 llmClient: featureLLMClient,
+                blueprint: savedBlueprint || undefined,
+                styleInput: savedStyleInput,
               };
 
-              // Subscribe to post-scaffold events for UI updates + capture project path
+              // Subscribe to post-scaffold events for UI updates + capture project path + build session
               postScaffoldEventBus.subscribe(async (event) => {
                 if ((event as any).type === 'scaffold_final_complete' && (event as any).payload?.project_path) {
-                  ctx.scaffoldProjectPath = (event as any).payload.project_path as string;
-                  console.log(`[handleResolveDecisionPoint] Captured scaffoldProjectPath from event: ${ctx.scaffoldProjectPath}`);
+                  const payload = (event as any).payload;
+                  ctx.scaffoldProjectPath = payload.project_path as string;
+
+                  ctx.scaffoldSession = createScaffoldSession({
+                    projectPath: payload.project_path,
+                    appName: scaffoldAppName,
+                    recipeId: recipeSelection.recipe_id as any,
+                    designPackId: designPackIdForPost,
+                    blueprint: payload.blueprint_summary || savedBlueprint,
+                    doctorStatus: payload.doctor_status,
+                    doctorCard: payload.doctor_card,
+                    projectSummary: payload.project_summary,
+                  });
+                  console.log(`[handleResolveDecisionPoint] ScaffoldSession created for: ${scaffoldAppName}`);
                 }
                 await ctx.sendEventsToWebview(webview, task_id);
               });

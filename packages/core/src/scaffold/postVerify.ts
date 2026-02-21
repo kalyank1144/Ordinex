@@ -25,7 +25,10 @@
 
 import * as fs from 'fs';
 import * as path from 'path';
-import { execSync } from 'child_process';
+import { exec } from 'child_process';
+import { promisify } from 'util';
+
+const execAsync = promisify(exec);
 import { EventEmitter } from 'events';
 import type { Event, Mode } from '../types';
 
@@ -170,7 +173,7 @@ export async function runPostVerification(
   steps.push(installResult);
 
   // Step 3: lint (if script exists) — warn on failure
-  const lintResult = runLintStep(
+  const lintResult = await runLintStep(
     targetDir,
     packageManager,
     config.lintTimeoutMs ?? DEFAULT_LINT_TIMEOUT
@@ -179,7 +182,7 @@ export async function runPostVerification(
 
   // Step 4: typecheck (if TypeScript)
   const isTS = recipe.hasTypeScript ?? detectTypeScript(targetDir);
-  const typecheckResult = runTypecheckStep(
+  const typecheckResult = await runTypecheckStep(
     targetDir,
     packageManager,
     isTS,
@@ -189,7 +192,7 @@ export async function runPostVerification(
 
   // Step 5: build (if script exists and policy allows)
   const allowBuild = config.allowBuild !== false;
-  const buildResult = runBuildStep(
+  const buildResult = await runBuildStep(
     targetDir,
     packageManager,
     allowBuild,
@@ -353,10 +356,9 @@ export async function runInstallStep(
     }
 
     try {
-      execSync(installCmd, {
+      await execAsync(installCmd, {
         cwd: targetDir,
         timeout: timeoutMs,
-        stdio: 'pipe',
         env: { ...process.env, CI: 'true' },
       });
 
@@ -393,11 +395,11 @@ export async function runInstallStep(
 /**
  * Step 3: Run lint if script exists. Lint failures are WARN, not fail.
  */
-export function runLintStep(
+export async function runLintStep(
   targetDir: string,
   packageManager: 'npm' | 'pnpm' | 'yarn',
   timeoutMs: number
-): VerifyStepResult {
+): Promise<VerifyStepResult> {
   const start = Date.now();
 
   if (!hasScript(targetDir, 'lint')) {
@@ -413,10 +415,9 @@ export function runLintStep(
   const cmd = runScriptCmd(packageManager, 'lint');
 
   try {
-    execSync(cmd, {
+    await execAsync(cmd, {
       cwd: targetDir,
       timeout: timeoutMs,
-      stdio: 'pipe',
     });
 
     return {
@@ -432,7 +433,6 @@ export function runLintStep(
       err.stderr?.toString() || err.stdout?.toString() || err.message || String(err)
     );
 
-    // Lint failures are WARN, not hard fail
     return {
       id: 'lint',
       label: 'Lint',
@@ -448,12 +448,12 @@ export function runLintStep(
 /**
  * Step 4: Run typecheck if TypeScript project
  */
-export function runTypecheckStep(
+export async function runTypecheckStep(
   targetDir: string,
   packageManager: 'npm' | 'pnpm' | 'yarn',
   isTypeScript: boolean,
   timeoutMs: number
-): VerifyStepResult {
+): Promise<VerifyStepResult> {
   const start = Date.now();
 
   if (!isTypeScript) {
@@ -466,7 +466,6 @@ export function runTypecheckStep(
     };
   }
 
-  // Check for tsc availability via typecheck script or direct tsc
   const hasTypecheckScript = hasScript(targetDir, 'typecheck');
   const hasTscScript = hasScript(targetDir, 'tsc');
 
@@ -476,15 +475,13 @@ export function runTypecheckStep(
   } else if (hasTscScript) {
     cmd = runScriptCmd(packageManager, 'tsc');
   } else {
-    // Try npx tsc --noEmit
     cmd = 'npx tsc --noEmit';
   }
 
   try {
-    execSync(cmd, {
+    await execAsync(cmd, {
       cwd: targetDir,
       timeout: timeoutMs,
-      stdio: 'pipe',
     });
 
     return {
@@ -515,12 +512,12 @@ export function runTypecheckStep(
 /**
  * Step 5: Run build if script exists and policy allows
  */
-export function runBuildStep(
+export async function runBuildStep(
   targetDir: string,
   packageManager: 'npm' | 'pnpm' | 'yarn',
   allowBuild: boolean,
   timeoutMs: number
-): VerifyStepResult {
+): Promise<VerifyStepResult> {
   const start = Date.now();
 
   if (!allowBuild) {
@@ -546,10 +543,9 @@ export function runBuildStep(
   const cmd = runScriptCmd(packageManager, 'build');
 
   try {
-    execSync(cmd, {
+    await execAsync(cmd, {
       cwd: targetDir,
       timeout: timeoutMs,
-      stdio: 'pipe',
     });
 
     return {

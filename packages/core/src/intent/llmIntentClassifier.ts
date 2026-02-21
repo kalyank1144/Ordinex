@@ -190,7 +190,7 @@ async function callLlmForClassification(
       'anthropic-version': '2023-06-01',
     },
     body: JSON.stringify({
-      model: llmConfig.model || 'claude-haiku-4-5-20251001', // Use Haiku 4.5 for speed
+      model: llmConfig.model,
       max_tokens: 256, // Small budget for classification
       system: systemPrompt,
       messages: [

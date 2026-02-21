@@ -61,7 +61,7 @@ export interface FontTokens {
 /**
  * Complete token set for a design pack
  */
-export interface DesignTokens {
+export interface DesignPackTokens {
   colors: ColorTokens;
   fonts: FontTokens;
   radius: RadiusSize;
@@ -90,7 +90,7 @@ export interface DesignPack {
   /** Visual vibe category */
   vibe: DesignVibe;
   /** Design tokens */
-  tokens: DesignTokens;
+  tokens: DesignPackTokens;
   /** Preview metadata */
   preview: DesignPackPreview;
 }
@@ -601,7 +601,7 @@ export function isValidDesignPackId(id: string): id is DesignPackId {
  * @param tokens - Design tokens
  * @returns CSS variable declarations string
  */
-export function generateCssVariables(tokens: DesignTokens): string {
+export function generateCssVariables(tokens: DesignPackTokens): string {
   const { colors, fonts, radius, density, shadow } = tokens;
   
   const radiusMap: Record<RadiusSize, string> = {

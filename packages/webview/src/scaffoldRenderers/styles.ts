@@ -6,77 +6,73 @@ function scaffoldCardStyles(): string {
     <style>
       :host { display: block; }
       .scaffold-card {
-        padding: 16px;
         border-radius: 8px;
-        margin: 12px 0;
+        margin: 8px 0;
         background: var(--vscode-editor-background);
         border: 1px solid var(--vscode-panel-border);
+        overflow: hidden;
       }
-      .scaffold-card.starting { border-left: 4px solid #3794ff; }
-      .scaffold-card.proposal { border-left: 4px solid #b180d7; }
-      .scaffold-card.ready { border-left: 4px solid #89d185; }
-      .scaffold-card.cancelled { border-left: 4px solid #cca700; }
-      .scaffold-card.approved { border-left: 4px solid #89d185; }
-      .scaffold-card.applying { border-left: 4px solid #3794ff; }
-      .scaffold-card.applied { border-left: 4px solid #89d185; }
 
       .header {
         display: flex;
         align-items: center;
         gap: 8px;
-        margin-bottom: 12px;
+        padding: 12px 16px;
+        border-bottom: 1px solid var(--vscode-panel-border);
       }
-      .icon { font-size: 20px; line-height: 1; }
+      .icon { font-size: 16px; line-height: 1; }
       .header h3 {
         margin: 0;
-        font-size: 14px;
+        font-size: 13px;
         font-weight: 600;
         flex: 1;
         color: var(--vscode-foreground);
       }
       .badge {
         padding: 2px 8px;
-        border-radius: 12px;
-        font-size: 11px;
-        font-weight: 500;
+        border-radius: 10px;
+        font-size: 10px;
+        font-weight: 600;
         text-transform: uppercase;
+        letter-spacing: 0.3px;
       }
-      .badge.starting { background: #3794ff; color: white; }
-      .badge.proposal { background: #b180d7; color: white; }
-      .badge.ready { background: #89d185; color: #1e1e1e; }
-      .badge.cancelled { background: #cca700; color: #1e1e1e; }
-      .badge.applying { background: #3794ff; color: white; }
+      .badge.starting { background: var(--vscode-charts-blue, #3794ff); color: white; }
+      .badge.proposal { background: var(--vscode-charts-purple, #b180d7); color: white; }
+      .badge.ready { background: var(--vscode-charts-green, #89d185); color: #1e1e1e; }
+      .badge.cancelled { background: var(--vscode-charts-yellow, #cca700); color: #1e1e1e; }
+      .badge.applying { background: var(--vscode-charts-blue, #3794ff); color: white; }
 
-      .prompt-section, .summary-section { margin-bottom: 16px; }
+      .prompt-section, .summary-section { padding: 12px 16px; }
       .prompt-label {
-        font-size: 11px;
+        font-size: 10px;
+        font-weight: 600;
         text-transform: uppercase;
+        letter-spacing: 0.5px;
         color: var(--vscode-descriptionForeground);
         margin-bottom: 4px;
       }
       .prompt-text {
         color: var(--vscode-foreground);
-        font-style: italic;
-        padding: 8px 12px;
-        background: var(--vscode-textBlockQuote-background, #2a2a2a);
-        border-left: 3px solid #3794ff;
-        border-radius: 0 4px 4px 0;
+        font-size: 13px;
+        line-height: 1.5;
       }
       .summary-text {
         color: var(--vscode-foreground);
+        font-size: 13px;
         line-height: 1.5;
       }
 
       .proposal-grid {
         display: grid;
         grid-template-columns: repeat(2, 1fr);
-        gap: 12px;
-        margin-bottom: 16px;
+        gap: 8px;
+        padding: 12px 16px;
+        border-top: 1px solid var(--vscode-panel-border);
       }
       .detail-item {
         background: var(--vscode-input-background);
         padding: 8px 12px;
-        border-radius: 4px;
+        border-radius: 6px;
       }
       .detail-label {
         font-size: 11px;
@@ -116,28 +112,31 @@ function scaffoldCardStyles(): string {
         margin-top: 12px;
       }
       .completion-section.ready {
-        background: rgba(137, 209, 133, 0.1);
-        border: 1px solid #89d185;
+        background: rgba(137, 209, 133, 0.08);
+        margin: 0 16px 12px;
+        border-radius: 6px;
       }
       .completion-section.cancelled {
-        background: rgba(204, 167, 0, 0.1);
-        border: 1px solid #cca700;
+        background: rgba(204, 167, 0, 0.08);
+        margin: 0 16px 12px;
+        border-radius: 6px;
       }
       .completion-section.terminal-running {
-        background: rgba(55, 148, 255, 0.1);
-        border: 1px solid #3794ff;
+        background: rgba(55, 148, 255, 0.08);
+        margin: 0 16px 12px;
+        border-radius: 6px;
       }
-      .completion-icon { font-size: 16px; }
-      .completion-text { color: var(--vscode-foreground); }
+      .completion-icon { font-size: 14px; }
+      .completion-text { color: var(--vscode-foreground); font-size: 12px; }
 
       .terminal-notice {
         display: flex;
         align-items: center;
         gap: 8px;
         padding: 10px 12px;
-        margin-top: 12px;
-        background: rgba(55, 148, 255, 0.08);
-        border: 1px dashed rgba(55, 148, 255, 0.4);
+        margin: 0 16px 12px;
+        background: rgba(55, 148, 255, 0.06);
+        border: 1px dashed rgba(55, 148, 255, 0.3);
         border-radius: 6px;
         font-size: 12px;
       }
@@ -153,32 +152,31 @@ function scaffoldCardStyles(): string {
         font-size: 11px;
         color: var(--vscode-descriptionForeground);
         font-style: italic;
-        padding: 8px;
-        background: rgba(255, 255, 255, 0.02);
-        border-radius: 4px;
-        margin-bottom: 12px;
+        padding: 8px 16px;
       }
 
       .timestamp {
-        font-size: 11px;
+        font-size: 10px;
         color: var(--vscode-descriptionForeground);
         text-align: right;
+        padding: 6px 16px 10px;
       }
 
       .actions {
         display: flex;
         gap: 8px;
-        margin-top: 12px;
+        padding: 12px 16px;
+        border-top: 1px solid var(--vscode-panel-border);
         flex-wrap: wrap;
       }
       button {
-        padding: 6px 12px;
-        border-radius: 4px;
-        font-size: 13px;
-        font-weight: 500;
+        padding: 6px 14px;
+        border-radius: 6px;
+        font-size: 12px;
+        font-weight: 600;
         cursor: pointer;
         border: none;
-        transition: all 0.2s;
+        transition: all 0.15s ease;
       }
       .btn-primary {
         background: var(--vscode-button-background);
@@ -197,11 +195,9 @@ function scaffoldCardStyles(): string {
 
       /* Design Pack Preview */
       .design-pack-preview {
-        margin: 16px 0;
-        padding: 12px;
-        background: var(--vscode-input-background);
-        border-radius: 8px;
-        border: 1px solid var(--vscode-panel-border);
+        margin: 0;
+        padding: 12px 16px;
+        border-top: 1px solid var(--vscode-panel-border);
       }
       .preview-header {
         display: flex;
@@ -397,91 +393,16 @@ function scaffoldCardStyles(): string {
         color: #e879f9;
       }
 
-      /* Design Pack Picker */
-      .scaffold-card.style-picker {
-        border-left: 4px solid #a855f7;
-      }
+      /* Style Picker Card */
       .badge.style-pick {
-        background: #a855f7;
+        background: var(--vscode-charts-purple, #a855f7);
         color: white;
       }
       .picker-instruction {
-        font-size: 13px;
-        color: var(--vscode-descriptionForeground);
-        margin-bottom: 16px;
-        line-height: 1.5;
-      }
-      .pack-grid {
-        display: grid;
-        grid-template-columns: repeat(2, 1fr);
-        gap: 12px;
-        margin-bottom: 16px;
-      }
-      .pack-option {
-        display: flex;
-        align-items: center;
-        gap: 10px;
-        padding: 10px;
-        background: var(--vscode-input-background);
-        border: 2px solid transparent;
-        border-radius: 8px;
-        cursor: pointer;
-        transition: all 0.2s;
-        position: relative;
-      }
-      .pack-option:hover {
-        border-color: var(--vscode-focusBorder);
-        background: var(--vscode-list-hoverBackground);
-      }
-      .pack-option.selected {
-        border-color: #a855f7;
-        background: rgba(168, 85, 247, 0.1);
-      }
-      .pack-preview {
-        width: 48px;
-        height: 36px;
-        border-radius: 6px;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        flex-shrink: 0;
-        box-shadow: 0 2px 6px rgba(0, 0, 0, 0.2);
-      }
-      .pack-letter {
-        font-size: 18px;
-        font-weight: 700;
-        color: white;
-        text-shadow: 0 1px 2px rgba(0, 0, 0, 0.3);
-      }
-      .pack-info {
-        flex: 1;
-        min-width: 0;
-      }
-      .pack-title {
         font-size: 12px;
-        font-weight: 600;
-        color: var(--vscode-foreground);
-        margin-bottom: 2px;
-      }
-      .pack-vibe {
-        font-size: 10px;
         color: var(--vscode-descriptionForeground);
-        text-transform: uppercase;
-      }
-      .check-mark {
-        position: absolute;
-        top: 6px;
-        right: 6px;
-        width: 18px;
-        height: 18px;
-        background: #a855f7;
-        border-radius: 50%;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        font-size: 11px;
-        color: white;
-        font-weight: bold;
+        padding: 12px 16px;
+        line-height: 1.5;
       }
       .picker-actions {
         display: flex;
@@ -490,17 +411,14 @@ function scaffoldCardStyles(): string {
       }
 
       /* Style Selected Confirmation */
-      .scaffold-card.style-selected {
-        border-left: 4px solid #22c55e;
-      }
       .selection-confirm {
         display: flex;
         align-items: center;
         gap: 10px;
-        padding: 12px;
-        background: rgba(34, 197, 94, 0.1);
-        border: 1px solid #22c55e;
+        padding: 12px 16px;
+        background: rgba(34, 197, 94, 0.08);
         border-radius: 6px;
+        margin: 8px 16px;
       }
       .selection-icon {
         font-size: 20px;
@@ -682,54 +600,240 @@ function scaffoldCardStyles(): string {
         margin-top: 8px;
       }
 
-      /* Visual Preview */
-      .visual-preview-full {
-        margin-bottom: 12px;
+      /* Style Intent Section */
+      .style-intent-section {
+        margin: 0;
+        padding: 12px 16px;
+        border-top: 1px solid var(--vscode-panel-border);
       }
-
-      .pack-meta {
-        display: flex;
-        align-items: center;
-        gap: 12px;
-        margin-top: 10px;
-        padding: 8px 0;
+      .style-intent-header {
+        margin-bottom: 8px;
       }
-
-      .pack-name-badge {
-        display: inline-block;
-        padding: 4px 12px;
-        background: var(--vscode-badge-background);
-        color: var(--vscode-badge-foreground);
-        border-radius: 12px;
-        font-size: 12px;
-        font-weight: 600;
-      }
-
-      .tokens-hint {
+      .style-intent-label {
         font-size: 11px;
+        font-weight: 600;
+        text-transform: uppercase;
         color: var(--vscode-descriptionForeground);
-        font-family: var(--vscode-editor-font-family), monospace;
+        letter-spacing: 0.5px;
       }
-
-      .influence-badge {
+      .style-intent-input-group {
+        margin-bottom: 8px;
+      }
+      .style-intent-nl-input {
+        width: 100%;
+        padding: 7px 10px;
+        font-size: 12px;
+        background: var(--vscode-input-background);
+        color: var(--vscode-input-foreground);
+        border: 1px solid var(--vscode-input-border, var(--vscode-panel-border));
+        border-radius: 6px;
+        outline: none;
+        box-sizing: border-box;
+        transition: border-color 0.2s;
+      }
+      .style-intent-nl-input:focus {
+        border-color: var(--vscode-focusBorder);
+      }
+      .style-intent-nl-input::placeholder {
+        color: var(--vscode-input-placeholderForeground);
+      }
+      .style-intent-vibes {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 6px;
+        margin-bottom: 8px;
+      }
+      .vibe-btn {
+        padding: 4px 12px;
+        font-size: 11px;
+        font-weight: 500;
+        border: 1px solid var(--vscode-panel-border);
+        border-radius: 14px;
+        background: var(--vscode-input-background);
+        color: var(--vscode-foreground);
+        cursor: pointer;
+        transition: all 0.2s;
+      }
+      .vibe-btn:hover {
+        background: var(--vscode-list-hoverBackground);
+        border-color: var(--vscode-focusBorder);
+      }
+      .vibe-btn.active {
+        background: rgba(139, 92, 246, 0.2);
+        border-color: #8b5cf6;
+        color: #a78bfa;
+      }
+      .style-intent-hex-group {
         display: flex;
         align-items: center;
         gap: 8px;
-        padding: 8px 12px;
-        background: linear-gradient(90deg, rgba(139, 92, 246, 0.15) 0%, rgba(59, 130, 246, 0.08) 100%);
-        border-radius: 6px;
-        margin-bottom: 12px;
-        border: 1px solid rgba(139, 92, 246, 0.3);
       }
-
-      .influence-icon {
-        font-size: 16px;
-      }
-
-      .influence-text {
+      .hex-label {
         font-size: 11px;
+        color: var(--vscode-descriptionForeground);
+        white-space: nowrap;
+      }
+      .style-intent-hex-input {
+        width: 90px;
+        padding: 4px 8px;
+        font-size: 12px;
+        font-family: var(--vscode-editor-font-family), monospace;
+        background: var(--vscode-input-background);
+        color: var(--vscode-input-foreground);
+        border: 1px solid var(--vscode-input-border, var(--vscode-panel-border));
+        border-radius: 4px;
+        outline: none;
+        transition: border-color 0.2s;
+      }
+      .style-intent-hex-input:focus {
+        border-color: var(--vscode-focusBorder);
+      }
+
+      /* Blueprint Section */
+      .blueprint-section {
+        border-top: 1px solid var(--vscode-panel-border);
+      }
+      .blueprint-header {
+        padding: 10px 16px;
+        border-bottom: 1px solid var(--vscode-panel-border);
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+      }
+      .blueprint-header-left {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+      }
+      .blueprint-header-left .bp-icon { font-size: 14px; }
+      .blueprint-header-left .bp-title {
+        font-weight: 600;
+        font-size: 12px;
         color: var(--vscode-foreground);
-        font-style: italic;
+      }
+      .bp-type-badge {
+        font-size: 10px;
+        padding: 2px 8px;
+        border-radius: 10px;
+        background: var(--vscode-badge-background);
+        color: var(--vscode-badge-foreground);
+      }
+      .bp-confidence {
+        display: flex;
+        align-items: center;
+        gap: 4px;
+        font-size: 10px;
+        color: var(--vscode-descriptionForeground);
+      }
+      .bp-confidence-dot {
+        width: 6px;
+        height: 6px;
+        border-radius: 50%;
+      }
+      .bp-pages-section {
+        padding: 10px 16px;
+      }
+      .bp-section-label {
+        font-size: 10px;
+        font-weight: 600;
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+        color: var(--vscode-descriptionForeground);
+        margin-bottom: 8px;
+      }
+      .bp-pages-list {
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+      }
+      .bp-page-item {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 6px 10px;
+        background: var(--vscode-input-background);
+        border-radius: 6px;
+      }
+      .bp-page-icon { font-size: 12px; }
+      .bp-page-info { flex: 1; min-width: 0; }
+      .bp-page-name {
+        font-size: 11px;
+        font-weight: 600;
+        color: var(--vscode-foreground);
+      }
+      .bp-page-meta {
+        font-size: 9px;
+        color: var(--vscode-descriptionForeground);
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+      .bp-more-pages {
+        text-align: center;
+        font-size: 10px;
+        color: var(--vscode-descriptionForeground);
+        padding: 4px;
+      }
+      .bp-models-section {
+        padding: 8px 16px;
+        border-top: 1px solid var(--vscode-panel-border);
+      }
+      .bp-models-list {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 4px;
+      }
+      .bp-model-tag {
+        font-size: 10px;
+        padding: 2px 8px;
+        border-radius: 4px;
+        background: var(--vscode-badge-background);
+        color: var(--vscode-badge-foreground);
+        font-family: var(--vscode-editor-font-family, monospace);
+      }
+      .bp-footer {
+        padding: 6px 16px;
+        border-top: 1px solid var(--vscode-panel-border);
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        font-size: 10px;
+        color: var(--vscode-descriptionForeground);
+      }
+
+      /* Doctor Card */
+      .doctor-card .header { border-bottom: 1px solid var(--vscode-panel-border); }
+      .doctor-checks {
+        padding: 8px 16px;
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+      }
+      .doctor-check-item {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 6px 10px;
+        border-radius: 6px;
+        background: var(--vscode-input-background);
+      }
+      .doctor-check-icon { font-size: 12px; }
+      .doctor-check-label {
+        flex: 1;
+        font-size: 11px;
+        font-weight: 500;
+        color: var(--vscode-foreground);
+      }
+      .doctor-check-status {
+        font-size: 10px;
+        font-weight: 600;
+      }
+      .doctor-actions {
+        padding: 8px 16px;
+        border-top: 1px solid var(--vscode-panel-border);
+        display: flex;
+        flex-wrap: wrap;
+        gap: 6px;
       }
     </style>
   `;

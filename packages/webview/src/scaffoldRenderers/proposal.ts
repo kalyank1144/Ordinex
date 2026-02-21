@@ -13,119 +13,8 @@ type ScaffoldEvent = {
   payload?: Record<string, any>;
 };
 
-function renderInfluenceBadge(tokensSummary: any): string {
-  const confidence = Math.round((tokensSummary.confidence || 0) * 100);
-  const moods = tokensSummary.moods?.slice(0, 2)?.join(', ') || '';
-
-  return `
-    <div class="influence-badge">
-      <span class="influence-icon">\u2728</span>
-      <span class="influence-text">
-        Influenced by references (${confidence}% confidence)
-        ${moods ? ` \u00b7 ${escapeHtml(moods)}` : ''}
-      </span>
-    </div>
-  `;
-}
-
-function renderVisualPreview(tokens: any, packName: string, compact: boolean = false): string {
-  const c = tokens.colors;
-  const fonts = tokens.fonts;
-  const radius = tokens.radius || '8px';
-
-  if (compact) {
-    return `
-      <div class="visual-preview-mini" style="
-        background: linear-gradient(135deg, ${c.background} 0%, ${c.muted} 50%, ${c.primary}15 100%);
-        border: 1px solid ${c.border};
-        border-radius: 6px;
-        overflow: hidden;
-        position: relative;
-        height: 50px;
-      ">
-        <div style="padding: 6px; position: relative; z-index: 2;">
-          <div style="font-family: '${fonts.heading}', sans-serif; font-size: 9px; font-weight: 700; color: ${c.foreground}; margin-bottom: 3px;">Preview</div>
-          <div style="display: inline-block; padding: 2px 6px; background: ${c.primary}; color: ${c.primary_fg || '#fff'}; border-radius: 3px; font-size: 7px; font-weight: 600;">Button</div>
-        </div>
-        <div style="position: absolute; top: 0; right: 0; width: 50%; height: 100%; overflow: hidden; z-index: 1;">
-          <div style="position: absolute; width: 20px; height: 20px; border-radius: 50%; background: ${c.primary}; opacity: 0.2; top: 2px; right: 4px;"></div>
-          <div style="position: absolute; width: 14px; height: 14px; border-radius: 50%; background: ${c.accent}; opacity: 0.2; top: 18px; right: 16px;"></div>
-        </div>
-      </div>
-    `;
-  }
-
-  return `
-    <div class="visual-preview-full" style="
-      background: ${c.background};
-      border: 1px solid ${c.border};
-      border-radius: ${radius};
-      overflow: hidden;
-      box-shadow: 0 4px 12px rgba(0,0,0,0.1);
-    ">
-      <!-- Hero Section -->
-      <div style="
-        position: relative;
-        padding: 16px;
-        background: linear-gradient(135deg, ${c.background} 0%, ${c.muted} 100%);
-        overflow: hidden;
-      ">
-        <div style="position: relative; z-index: 2;">
-          <div style="font-family: '${fonts.heading}', sans-serif; font-size: 14px; font-weight: 700; color: ${c.foreground}; margin-bottom: 4px; letter-spacing: -0.02em;">
-            Build Something Great
-          </div>
-          <div style="font-family: '${fonts.body}', sans-serif; font-size: 10px; color: ${c.secondary || c.foreground}80; margin-bottom: 8px;">
-            Modern, fast, and beautiful applications.
-          </div>
-          <button style="
-            display: inline-block;
-            padding: 5px 14px;
-            background: ${c.primary};
-            color: ${c.primary_fg || '#ffffff'};
-            border: none;
-            border-radius: calc(${radius} / 2);
-            font-family: '${fonts.body}', sans-serif;
-            font-size: 10px;
-            font-weight: 600;
-            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
-          ">Get Started</button>
-        </div>
-        <!-- Decorative shapes -->
-        <div style="position: absolute; top: 0; right: 0; width: 50%; height: 100%; overflow: hidden; z-index: 1;">
-          <div style="position: absolute; width: 50px; height: 50px; border-radius: 50%; background: ${c.primary}; opacity: 0.12; top: -8px; right: 8px;"></div>
-          <div style="position: absolute; width: 32px; height: 32px; border-radius: 50%; background: ${c.accent}; opacity: 0.12; top: 24px; right: 42px;"></div>
-          <div style="position: absolute; width: 24px; height: 24px; border-radius: 50%; background: ${c.secondary}; opacity: 0.12; bottom: 8px; right: 16px;"></div>
-        </div>
-      </div>
-
-      <!-- Components Row -->
-      <div style="padding: 10px 16px; border-top: 1px solid ${c.border}; background: ${c.background};">
-        <div style="font-family: '${fonts.body}', sans-serif; font-size: 9px; font-weight: 600; text-transform: uppercase; color: ${c.secondary || c.foreground}80; margin-bottom: 6px; letter-spacing: 0.5px;">
-          Components
-        </div>
-        <div style="display: flex; gap: 8px; align-items: center; flex-wrap: wrap;">
-          <button style="padding: 3px 8px; background: ${c.primary}; color: ${c.primary_fg || '#fff'}; border: none; border-radius: calc(${radius} / 2); font-size: 9px; font-weight: 600;">Primary</button>
-          <button style="padding: 3px 8px; background: ${c.muted}; color: ${c.foreground}; border: 1px solid ${c.border}; border-radius: calc(${radius} / 2); font-size: 9px;">Secondary</button>
-          <input type="text" placeholder="Input" style="padding: 3px 8px; border: 1px solid ${c.border}; border-radius: calc(${radius} / 2); background: ${c.background}; color: ${c.foreground}; font-size: 9px; width: 60px;">
-          <div style="padding: 5px 8px; border: 1px solid ${c.border}; border-radius: ${radius}; background: ${c.background}; box-shadow: 0 1px 3px rgba(0,0,0,0.08);">
-            <div style="font-size: 9px; font-weight: 600; color: ${c.foreground};">Card</div>
-            <div style="font-size: 8px; color: ${c.secondary || c.foreground}80;">Preview</div>
-          </div>
-        </div>
-      </div>
-
-      <!-- Typography Row -->
-      <div style="padding: 8px 16px; border-top: 1px solid ${c.border}; background: ${c.muted};">
-        <div style="display: flex; gap: 12px; align-items: baseline;">
-          <span style="font-family: '${fonts.heading}', sans-serif; font-size: 14px; font-weight: 700; color: ${c.foreground};">H1</span>
-          <span style="font-family: '${fonts.heading}', sans-serif; font-size: 12px; font-weight: 600; color: ${c.foreground};">H2</span>
-          <span style="font-family: '${fonts.body}', sans-serif; font-size: 10px; color: ${c.foreground};">Body</span>
-          <span style="font-family: 'SF Mono', Consolas, monospace; font-size: 9px; color: ${c.secondary || c.foreground}80; background: ${c.background}; padding: 2px 4px; border-radius: 3px;">mono</span>
-        </div>
-      </div>
-    </div>
-  `;
-}
+// Legacy renderVisualPreview and renderInfluenceBadge removed per SCAFFOLD_IMPROVEMENT_PLAN.md
+// Static design previews are replaced by the App Blueprint Card + Style Intent UI.
 
 function renderReferenceSection(referenceContext: any, styleSourceMode: string): string {
   const images = referenceContext?.images || [];
@@ -213,8 +102,6 @@ function renderProposal(event: ScaffoldEvent, payload: Record<string, any>): str
   const summary = payload.summary || 'Project scaffold proposal';
   const recipe = payload.recipe || 'TBD';
   const designPack = payload.design_pack || payload.design_pack_name || 'TBD';
-  const designPackId = payload.design_pack_id || '';
-  const tokensSummary = payload.design_tokens_summary || '';
   const filesCount = payload.files_count || 0;
   const dirsCount = payload.directories_count || 0;
 
@@ -224,7 +111,7 @@ function renderProposal(event: ScaffoldEvent, payload: Record<string, any>): str
     ((referenceContext.images || []).length > 0 || (referenceContext.urls || []).length > 0);
 
   const isTBD = (val: string | number) => !val || val === 'TBD' || val === 0;
-  const hasDesignPack = !isTBD(designPack) && designPackId;
+  const hasDesignPack = !isTBD(designPack);
 
   return `
     <div class="scaffold-card proposal">
@@ -239,28 +126,6 @@ function renderProposal(event: ScaffoldEvent, payload: Record<string, any>): str
       </div>
 
       ${hasReferences ? renderReferenceSection(referenceContext, styleSourceMode) : ''}
-
-      ${hasDesignPack ? `
-        <div class="design-pack-preview">
-          <div class="preview-header">
-            <span class="preview-label">Design Style</span>
-            <button class="change-style-btn" data-action="change_style">
-              \u{1F3A8} Change Style
-            </button>
-          </div>
-          <div class="preview-content">
-            <div class="preview-image-container">
-              <div class="preview-placeholder" data-pack-id="${escapeHtml(designPackId)}">
-                <span class="pack-initial">${escapeHtml(designPack.charAt(0).toUpperCase())}</span>
-              </div>
-            </div>
-            <div class="preview-details">
-              <div class="pack-name">${escapeHtml(String(designPack))}</div>
-              ${tokensSummary ? `<div class="tokens-summary">${escapeHtml(tokensSummary)}</div>` : ''}
-            </div>
-          </div>
-        </div>
-      ` : ''}
 
       <div class="proposal-grid">
         <div class="detail-item">
@@ -298,7 +163,7 @@ function renderProposalWithActions(event: ScaffoldEvent, payload: Record<string,
   const designPack = payload.design_pack || payload.design_pack_name || 'TBD';
   const designPackId = payload.design_pack_id || '';
   const tokensSummary = payload.design_tokens_summary || '';
-  const filesCount = payload.files_count || 0;
+  const filesCount = payload.scope_files || payload.files_count || 0;
   const dirsCount = payload.directories_count || 0;
 
   const referenceContext = payload.reference_context || null;
@@ -309,21 +174,24 @@ function renderProposalWithActions(event: ScaffoldEvent, payload: Record<string,
   const referenceTokensSummary = payload.reference_tokens_summary || null;
   const styleOverrides = payload.style_overrides || null;
 
+  // Scaffold Improvement Plan: Blueprint data
+  const blueprint = payload.blueprint || null;
+  const blueprintConfidence = payload.blueprint_confidence || 0;
+  const hasBlueprint = blueprint && blueprint.pages && blueprint.pages.length > 0;
+
   const isTBD = (val: string | number) => !val || val === 'TBD' || val === 0;
   const hasDesignPack = !isTBD(designPack) && designPackId;
 
+  const scaffoldId = payload.scaffold_id || '';
   const options = payload.options || [];
   const proceedOption = options.find((o: any) => o.action === 'proceed') || { label: 'Proceed', disabled: false };
   const cancelOption = options.find((o: any) => o.action === 'cancel') || { label: 'Cancel', disabled: false };
-  const changeStyleOption = options.find((o: any) => o.action === 'change_style');
-
-  const packTokens = getDesignPackTokens(designPackId, styleOverrides);
 
   return `
     <div class="scaffold-card proposal">
       <div class="header">
-        <span class="icon">\u{1F4CB}</span>
-        <h3>Scaffold Proposal</h3>
+        <span class="icon">${hasBlueprint ? '\u{1F9E9}' : '\u{1F4CB}'}</span>
+        <h3>${hasBlueprint ? 'App Blueprint' : 'Scaffold Proposal'}</h3>
         <span class="badge proposal">Ready to Create</span>
       </div>
       <div class="summary-section">
@@ -333,43 +201,35 @@ function renderProposalWithActions(event: ScaffoldEvent, payload: Record<string,
 
       ${hasReferences ? renderReferenceSection(referenceContext, styleSourceMode) : ''}
 
-      ${hasDesignPack ? `
-        <div class="design-pack-preview">
-          <div class="preview-header">
-            <span class="preview-label">Design Preview</span>
-            ${changeStyleOption && !changeStyleOption.disabled ? `
-              <button class="change-style-btn" data-action="change_style">
-                \u{1F3A8} ${escapeHtml(changeStyleOption.label || 'Change Style')}
-              </button>
-            ` : ''}
-          </div>
-          ${referenceTokensSummary && referenceTokensSummary.confidence >= 0.5 ? renderInfluenceBadge(referenceTokensSummary) : ''}
-          ${renderVisualPreview(packTokens, designPack, false)}
-          <div class="pack-meta">
-            <span class="pack-name-badge">${escapeHtml(String(designPack))}</span>
-            ${tokensSummary ? `<span class="tokens-hint">${escapeHtml(tokensSummary)}</span>` : ''}
-          </div>
-        </div>
-      ` : ''}
+      ${hasBlueprint ? renderBlueprintSection(blueprint, blueprintConfidence) : ''}
+
+      ${renderStyleIntentSection(scaffoldId)}
 
       <div class="proposal-grid">
         <div class="detail-item">
           <div class="detail-label">Recipe</div>
           <div class="detail-value ${isTBD(recipe) ? 'tbd' : ''}">${escapeHtml(String(recipe))}</div>
         </div>
-        ${!hasDesignPack ? `
+        ${hasBlueprint ? `
           <div class="detail-item">
-            <div class="detail-label">Design Pack</div>
-            <div class="detail-value tbd">TBD</div>
+            <div class="detail-label">Pages</div>
+            <div class="detail-value">${blueprint.pages.length}</div>
           </div>
-        ` : ''}
+          <div class="detail-item">
+            <div class="detail-label">Components</div>
+            <div class="detail-value">${payload.scope_components || new Set(blueprint.pages.flatMap((p: any) => p.key_components || [])).size}</div>
+          </div>
+        ` : `
+          ${!hasDesignPack ? `
+            <div class="detail-item">
+              <div class="detail-label">Design Pack</div>
+              <div class="detail-value tbd">TBD</div>
+            </div>
+          ` : ''}
+        `}
         <div class="detail-item">
           <div class="detail-label">Files to Create</div>
-          <div class="detail-value ${filesCount === 0 ? 'tbd' : ''}">${filesCount > 0 ? filesCount : 'TBD'}</div>
-        </div>
-        <div class="detail-item">
-          <div class="detail-label">Directories</div>
-          <div class="detail-value ${dirsCount === 0 ? 'tbd' : ''}">${dirsCount > 0 ? dirsCount : 'TBD'}</div>
+          <div class="detail-value ${filesCount === 0 ? 'tbd' : ''}">${filesCount > 0 ? '~' + filesCount : 'TBD'}</div>
         </div>
       </div>
 
@@ -387,49 +247,202 @@ function renderProposalWithActions(event: ScaffoldEvent, payload: Record<string,
   `;
 }
 
+function renderStyleIntentSection(scaffoldId: string): string {
+  return `
+    <div class="style-intent-section">
+      <div class="style-intent-header">
+        <span class="style-intent-label">\u{1F3A8} Style (optional)</span>
+      </div>
+      <div class="style-intent-input-group">
+        <input type="text" class="style-intent-nl-input"
+               id="style-intent-nl-${escapeHtml(scaffoldId)}"
+               placeholder="Describe your style: dark modern, like Linear..."
+               data-scaffold-id="${escapeHtml(scaffoldId)}" />
+      </div>
+      <div class="style-intent-vibes">
+        <button class="vibe-btn" data-action="set_style_intent" data-mode="vibe" data-value="minimal">Clean</button>
+        <button class="vibe-btn" data-action="set_style_intent" data-mode="vibe" data-value="vibrant">Bold</button>
+        <button class="vibe-btn" data-action="set_style_intent" data-mode="vibe" data-value="warm">Warm</button>
+        <button class="vibe-btn" data-action="set_style_intent" data-mode="vibe" data-value="dark_modern">Dark</button>
+        <button class="vibe-btn" data-action="set_style_intent" data-mode="vibe" data-value="glass">Glass</button>
+        <button class="vibe-btn" data-action="set_style_intent" data-mode="vibe" data-value="neo">Neon</button>
+      </div>
+      <div class="style-intent-hex-group">
+        <span class="hex-label">Or primary color:</span>
+        <input type="text" class="style-intent-hex-input"
+               id="style-intent-hex-${escapeHtml(scaffoldId)}"
+               placeholder="#8b5cf6"
+               maxlength="7"
+               data-scaffold-id="${escapeHtml(scaffoldId)}" />
+      </div>
+    </div>
+  `;
+}
+
 function renderStylePicker(event: ScaffoldEvent, payload: Record<string, any>): string {
-  const currentPackId = payload.current_pack_id || '';
   const scaffoldId = payload.scaffold_id || '';
-
-  const packs = [
-    { id: 'minimal-light', name: 'Minimal Light', vibe: 'minimal', description: 'Clean, modern design with plenty of whitespace', gradient: 'linear-gradient(135deg, #f8fafc 0%, #e2e8f0 100%)' },
-    { id: 'minimal-dark', name: 'Minimal Dark', vibe: 'minimal', description: 'Sleek dark theme with cool accents', gradient: 'linear-gradient(135deg, #1e293b 0%, #0f172a 100%)' },
-    { id: 'enterprise-blue', name: 'Enterprise Blue', vibe: 'enterprise', description: 'Professional blue theme for business apps', gradient: 'linear-gradient(135deg, #1e40af 0%, #3b82f6 100%)' },
-    { id: 'vibrant-neon', name: 'Vibrant Neon', vibe: 'vibrant', description: 'Dark theme with electric neon colors', gradient: 'linear-gradient(135deg, #a855f7 0%, #22d3ee 100%)' },
-    { id: 'gradient-ocean', name: 'Gradient Ocean', vibe: 'gradient', description: 'Cool blue to cyan ocean tones', gradient: 'linear-gradient(135deg, #0284c7 0%, #06b6d4 100%)' },
-    { id: 'neo-brutalist', name: 'Neo Brutalist', vibe: 'neo', description: 'Bold black borders with punchy yellow accents', gradient: 'linear-gradient(135deg, #000000 0%, #facc15 100%)' },
-  ];
-
   return `
     <div class="scaffold-card style-picker">
       <div class="header">
         <span class="icon">\u{1F3A8}</span>
-        <h3>Choose Design Style</h3>
-        <span class="badge style-pick">Pick One</span>
+        <h3>Style Your App</h3>
+        <span class="badge style-pick">Optional</span>
       </div>
       <div class="picker-instruction">
-        Select a design pack for your new project. This determines colors, typography, and overall visual style.
+        Describe your style, pick a vibe, or paste a color. Each combination generates a unique palette.
       </div>
-      <div class="pack-grid">
-        ${packs.map(pack => `
-          <div class="pack-option ${currentPackId === pack.id ? 'selected' : ''}"
-               data-action="select_pack"
-               data-pack-id="${escapeHtml(pack.id)}">
-            <div class="pack-preview" style="background: ${pack.gradient};">
-              <span class="pack-letter">${escapeHtml(pack.name.charAt(0))}</span>
-            </div>
-            <div class="pack-info">
-              <div class="pack-title">${escapeHtml(pack.name)}</div>
-              <div class="pack-vibe">${escapeHtml(pack.vibe)}</div>
-            </div>
-            ${currentPackId === pack.id ? '<span class="check-mark">\u2713</span>' : ''}
-          </div>
-        `).join('')}
-      </div>
+      ${renderStyleIntentSection(scaffoldId)}
       <div class="picker-actions">
         <button class="btn-secondary" data-action="cancel_picker">\u2190 Back</button>
       </div>
       <div class="timestamp">${formatTimestamp(event.timestamp || '')}</div>
+    </div>
+  `;
+}
+
+// ==========================================================================
+// BLUEPRINT CARD (Scaffold Improvement Plan)
+// Renders a context-specific app plan instead of static preview
+// ==========================================================================
+
+function renderBlueprintSection(blueprint: any, confidence: number): string {
+  if (!blueprint) return '';
+
+  const pages = blueprint.pages || [];
+  const dataModels = blueprint.data_models || [];
+  const appType = blueprint.app_type || 'web_app';
+  const layoutType = blueprint.layout_type || 'sidebar';
+
+  const confidencePercent = Math.round((confidence || 0) * 100);
+  const confidenceColor = confidencePercent >= 70 ? '#22c55e'
+    : confidencePercent >= 40 ? '#eab308'
+    : '#ef4444';
+
+  const pageIcons: Record<string, string> = {
+    dashboard: '\u{1F4CA}',
+    settings: '\u2699\uFE0F',
+    profile: '\u{1F464}',
+    login: '\u{1F512}',
+    home: '\u{1F3E0}',
+    list: '\u{1F4CB}',
+    detail: '\u{1F50D}',
+    form: '\u{1F4DD}',
+  };
+
+  function guessPageIcon(pageName: string): string {
+    const lower = pageName.toLowerCase();
+    for (const [key, icon] of Object.entries(pageIcons)) {
+      if (lower.includes(key)) return icon;
+    }
+    return '\u{1F4C4}';
+  }
+
+  return `
+    <div class="blueprint-section">
+      <div class="blueprint-header">
+        <div class="blueprint-header-left">
+          <span class="bp-icon">\u{1F9E9}</span>
+          <span class="bp-title">App Blueprint</span>
+          <span class="bp-type-badge">${escapeHtml(appType.replace(/_/g, ' '))}</span>
+        </div>
+        <div class="bp-confidence">
+          <div class="bp-confidence-dot" style="background: ${confidenceColor};"></div>
+          <span>${confidencePercent}% confidence</span>
+        </div>
+      </div>
+
+      ${pages.length > 0 ? `
+        <div class="bp-pages-section">
+          <div class="bp-section-label">Pages (${pages.length})</div>
+          <div class="bp-pages-list">
+            ${pages.slice(0, 6).map((page: any) => `
+              <div class="bp-page-item">
+                <span class="bp-page-icon">${guessPageIcon(page.name || '')}</span>
+                <div class="bp-page-info">
+                  <div class="bp-page-name">${escapeHtml(page.name || 'Page')}</div>
+                  <div class="bp-page-meta">
+                    ${escapeHtml(page.route || '')} \u00b7 ${(page.key_components || []).length} components
+                  </div>
+                </div>
+              </div>
+            `).join('')}
+            ${pages.length > 6 ? `
+              <div class="bp-more-pages">+${pages.length - 6} more pages</div>
+            ` : ''}
+          </div>
+        </div>
+      ` : ''}
+
+      ${dataModels.length > 0 ? `
+        <div class="bp-models-section">
+          <div class="bp-section-label">Data Models (${dataModels.length})</div>
+          <div class="bp-models-list">
+            ${dataModels.slice(0, 8).map((model: any) => `
+              <span class="bp-model-tag">${escapeHtml(typeof model === 'string' ? model : model.name || 'Model')}</span>
+            `).join('')}
+            ${dataModels.length > 8 ? `<span class="bp-more-pages">+${dataModels.length - 8}</span>` : ''}
+          </div>
+        </div>
+      ` : ''}
+
+      <div class="bp-footer">
+        <span>\u{1F4D0} Layout: ${escapeHtml(layoutType)}</span>
+        <span>\u{1F4C4} ~${pages.length * 2 + (new Set(pages.flatMap((p: any) => p.key_components || [])).size) + dataModels.length + 5} files</span>
+      </div>
+    </div>
+  `;
+}
+
+function renderDoctorCard(doctorCard: any): string {
+  if (!doctorCard) return '';
+
+  const checks = doctorCard.checks || [];
+  const overallStatus = doctorCard.overall_status || 'unknown';
+  const actions = doctorCard.actions || [];
+
+  const statusColors: Record<string, string> = {
+    pass: '#22c55e',
+    fail: '#ef4444',
+    warn: '#eab308',
+    unknown: '#94a3b8',
+    not_started: '#94a3b8',
+  };
+
+  const statusIcons: Record<string, string> = {
+    pass: '\u2705',
+    fail: '\u274C',
+    warn: '\u26A0\uFE0F',
+    unknown: '\u2753',
+    not_started: '\u23F8\uFE0F',
+  };
+
+  return `
+    <div class="scaffold-card doctor-card">
+      <div class="header">
+        <span class="icon">\u{1FA7A}</span>
+        <h3>Project Health</h3>
+        <span class="badge" style="background: ${statusColors[overallStatus] || '#94a3b8'}20; color: ${statusColors[overallStatus] || '#94a3b8'};">
+          ${overallStatus === 'pass' ? 'Healthy' : overallStatus === 'fail' ? 'Issues Found' : overallStatus === 'warn' ? 'Warnings' : 'Checking...'}
+        </span>
+      </div>
+      <div class="doctor-checks">
+        ${checks.map((check: any) => `
+          <div class="doctor-check-item">
+            <span class="doctor-check-icon">${statusIcons[check.status] || '\u2753'}</span>
+            <span class="doctor-check-label">${escapeHtml(check.label || check.name || 'Check')}</span>
+            <span class="doctor-check-status" style="color: ${statusColors[check.status] || '#94a3b8'};">${escapeHtml((check.status || 'unknown').toUpperCase())}</span>
+          </div>
+        `).join('')}
+      </div>
+      ${actions.length > 0 ? `
+        <div class="doctor-actions">
+          ${actions.map((action: any) => `
+            <button class="btn-secondary" data-action="${escapeHtml(action.id || action.action || '')}" style="font-size: 10px; padding: 4px 10px;">
+              ${escapeHtml(action.label || action.id || 'Action')}
+            </button>
+          `).join('')}
+        </div>
+      ` : ''}
     </div>
   `;
 }
