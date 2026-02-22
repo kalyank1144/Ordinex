@@ -137,6 +137,11 @@ export async function handleSubmitPrompt(
       reason: 'User selected mode for new task',
       user_initiated: true,
     });
+  } else if (ctx.currentMode !== userSelectedMode) {
+    await ctx.setModeWithEvent(userSelectedMode, ctx.currentTaskId, {
+      reason: 'User switched mode on follow-up turn',
+      user_initiated: true,
+    });
   }
 
   const taskId = ctx.currentTaskId;

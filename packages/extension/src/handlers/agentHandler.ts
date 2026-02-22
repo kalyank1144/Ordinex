@@ -293,27 +293,53 @@ export async function handleAgentMode(
       task_id: taskId,
     });
 
-    // 11. Emit loop_completed event for diagnostics/logging
-    await ctx.emitEvent({
-      event_id: ctx.generateId(),
-      task_id: taskId,
-      timestamp: new Date().toISOString(),
-      type: 'loop_completed',
-      mode: ctx.currentMode,
-      stage: ctx.currentStage,
-      payload: {
-        response: result.finalText,
-        iterations: result.iterations,
-        totalTokens: result.totalTokens,
-        stopReason: result.stopReason,
-        toolCallCount: result.toolCalls.length,
-      },
-      evidence_ids: [],
-      parent_event_id: null,
-    });
+    // 11. Emit loop_completed or failure_detected based on stop reason
+    if (result.stopReason === 'error') {
+      await ctx.emitEvent({
+        event_id: ctx.generateId(),
+        task_id: taskId,
+        timestamp: new Date().toISOString(),
+        type: 'failure_detected',
+        mode: ctx.currentMode,
+        stage: ctx.currentStage,
+        payload: {
+          error: result.error || 'Agent loop failed',
+          iterations: result.iterations,
+          totalTokens: result.totalTokens,
+          stopReason: result.stopReason,
+          toolCallCount: result.toolCalls.length,
+        },
+        evidence_ids: [],
+        parent_event_id: null,
+      });
 
-    await ctx.sendEventsToWebview(webview, taskId);
-    console.log(`[Agent] Complete. ${result.iterations} iterations, ${result.toolCalls.length} tool calls`);
+      await ctx.sendEventsToWebview(webview, taskId);
+      console.error(`[Agent] Failed after ${result.iterations} iterations: ${result.error}`);
+      vscode.window.showErrorMessage(
+        `Agent mode failed: ${result.error || 'Unknown error'}`,
+      );
+    } else {
+      await ctx.emitEvent({
+        event_id: ctx.generateId(),
+        task_id: taskId,
+        timestamp: new Date().toISOString(),
+        type: 'loop_completed',
+        mode: ctx.currentMode,
+        stage: ctx.currentStage,
+        payload: {
+          response: result.finalText,
+          iterations: result.iterations,
+          totalTokens: result.totalTokens,
+          stopReason: result.stopReason,
+          toolCallCount: result.toolCalls.length,
+        },
+        evidence_ids: [],
+        parent_event_id: null,
+      });
+
+      await ctx.sendEventsToWebview(webview, taskId);
+      console.log(`[Agent] Complete. ${result.iterations} iterations, ${result.toolCalls.length} tool calls`);
+    }
 
   } catch (error) {
     console.error('Error in Agent mode:', error);
