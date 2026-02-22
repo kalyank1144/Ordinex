@@ -179,7 +179,7 @@ async function writeJson(filePath: string, data: any): Promise<void> {
  * Derive task state from events (deterministic)
  */
 function deriveTaskStateFromEvents(taskId: string, events: Event[]): any {
-  let mode = events[0]?.mode || 'ANSWER';
+  let mode = events[0]?.mode || 'MISSION';
   let status = 'complete';
   let stage = events[0]?.stage || 'none';
 
@@ -384,7 +384,7 @@ function generateReadme(taskId: string, events: Event[], evidenceCount: number, 
   const finalEvent = events.find(e => e.type === 'final');
 
   // Mode
-  let mode = events[0]?.mode || 'ANSWER';
+  let mode = events[0]?.mode || 'MISSION';
   for (let i = events.length - 1; i >= 0; i--) {
     if (events[i].type === 'mode_set') {
       mode = events[i].payload.mode as any || mode;

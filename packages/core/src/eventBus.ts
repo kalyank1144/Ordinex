@@ -153,13 +153,17 @@ export class EventBus {
 
   /**
    * Publish an event
-   * CRITICAL: Persists to EventStore before notifying subscribers
+   * Persists to EventStore, then notifies subscribers.
+   * If persistence fails (e.g. unknown event type), subscribers are still
+   * notified so that the UI stays in sync with runtime progress.
    */
   async publish(event: Event): Promise<void> {
-    // Persist first (synchronous persistence before fan-out)
-    await this.eventStore.append(event);
+    try {
+      await this.eventStore.append(event);
+    } catch (err) {
+      console.warn(`[EventBus] EventStore.append failed for type="${event.type}" — subscribers will still be notified. Error: ${err instanceof Error ? err.message : String(err)}`);
+    }
 
-    // Then notify all subscribers
     await this.notifySubscribers(event);
   }
 

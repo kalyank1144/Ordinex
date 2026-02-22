@@ -57,8 +57,8 @@ describe('ToolExecutor', () => {
   });
 
   describe('Mode Gating Enforcement', () => {
-    test('read tools are allowed in ANSWER mode but may fail on missing file', async () => {
-      modeManager.setMode('ANSWER');
+    test('read tools are allowed in MISSION mode but may fail on missing file', async () => {
+      modeManager.setMode('MISSION');
 
       const invocation: ToolInvocation = {
         toolName: 'readFile',
@@ -67,13 +67,13 @@ describe('ToolExecutor', () => {
         requiresApproval: false,
       };
 
-      // read_file IS permitted in ANSWER mode (MODE_PERMISSIONS.ANSWER includes 'read_file'),
-      // so the tool proceeds but fails because the file doesn't exist.
+      modeManager.setStage('retrieve');
+      // read_file IS permitted in MISSION mode, so the tool proceeds but fails because the file doesn't exist.
       const result = await toolExecutor.executeTool(invocation);
       expect(result.success).toBe(false);
       expect(result.error).toBeDefined();
 
-      // Verify NO mode_violation was emitted (read is allowed in ANSWER)
+      // Verify NO mode_violation was emitted (read is allowed in MISSION)
       const events = eventStore.getEventsByTaskId(taskId);
       const violations = events.filter(e => e.type === 'mode_violation');
       expect(violations.length).toBe(0);

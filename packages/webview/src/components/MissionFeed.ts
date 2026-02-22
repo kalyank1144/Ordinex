@@ -1433,7 +1433,7 @@ const PROGRESS_TIER_EVENTS = new Set<EventType>([
   'feature_code_generating', 'feature_code_applied', 'feature_code_error',
   'scaffold_verify_started', 'scaffold_verify_step_completed', 'scaffold_verify_completed',
   'scaffold_autofix_started', 'scaffold_autofix_applied', 'scaffold_autofix_failed',
-  'scaffold_progress', 'design_pack_applied',
+  'scaffold_progress', 'scaffold_doctor_card', 'design_pack_applied',
   'command_started', 'command_completed',
   'tool_start', 'tool_end',
   'repair_attempt_started', 'repair_attempt_completed', 'repair_attempted',
@@ -1926,12 +1926,34 @@ export function renderMissionTimeline(events: Event[]): string {
   // I3: Pre-compute pending approvals for inline approval rendering
   const pendingApprovals = getPendingApprovals(events);
 
+  // Scaffold deduplication: when blueprint extraction re-emits proposal/decision
+  // events, only render the LAST event of each type per scaffold_id.
+  const scaffoldDedup = new Set<string>();
+  const scaffoldDedupTypes = ['scaffold_decision_requested', 'scaffold_proposal_created'];
+  for (let j = events.length - 1; j >= 0; j--) {
+    const ev = events[j];
+    if (scaffoldDedupTypes.includes(ev.type)) {
+      const sid = (ev.payload?.scaffold_id as string) || '';
+      const key = `${ev.type}::${sid}`;
+      if (scaffoldDedup.has(key)) {
+        // Mark earlier duplicates by storing their event_id
+        scaffoldDedup.add(`skip::${ev.event_id}`);
+      } else {
+        scaffoldDedup.add(key);
+      }
+    }
+  }
+
   for (let i = 0; i < events.length; i++) {
     const event = events[i];
     
     // Skip rendering stream_delta and stream_complete events entirely
-    // These are for real-time updates only, not timeline display
     if (event.type === 'stream_delta' || event.type === 'stream_complete') {
+      continue;
+    }
+
+    // Skip earlier scaffold events that were superseded by blueprint update
+    if (scaffoldDedup.has(`skip::${event.event_id}`)) {
       continue;
     }
 
@@ -2118,7 +2140,6 @@ function renderExecutePlanButton(taskId: string): string {
  * Render scaffold event using ScaffoldCard custom element
  */
 function renderScaffoldEventCard(event: Event): string {
-  // Use the ScaffoldCard custom element with inline script to set event data
   const eventId = event.event_id || `evt_${Date.now()}`;
   const eventJson = JSON.stringify(event).replace(/"/g, '&quot;');
   

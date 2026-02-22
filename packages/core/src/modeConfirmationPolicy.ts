@@ -12,9 +12,9 @@
  * - High confidence → Confirm only on high-severity mismatches
  * 
  * SEVERITY LEVELS:
- * - High: User chose safe mode but system suggests risky mode (PLAN→MISSION, ANSWER→MISSION)
- * - Medium: Reverse direction (MISSION→PLAN, MISSION→ANSWER)
- * - Low: ANSWER ↔ PLAN
+ * - High: User chose safe mode but system suggests risky mode (PLAN→MISSION)
+ * - Medium: Reverse direction (MISSION→PLAN)
+ * - Low: Other mismatches
  */
 
 import { Mode, ClassificationResultV2 } from './types';
@@ -199,20 +199,14 @@ export class ModeConfirmationPolicy {
     if (userMode === 'PLAN' && suggestedMode === 'MISSION') {
       return 'high';
     }
-    if (userMode === 'ANSWER' && suggestedMode === 'MISSION') {
-      return 'high';
-    }
     
     // Medium severity: reverse direction (less risky)
-    // User wants to execute but system thinks they want to plan/explain
+    // User wants to execute but system thinks they want to plan
     if (userMode === 'MISSION' && suggestedMode === 'PLAN') {
       return 'medium';
     }
-    if (userMode === 'MISSION' && suggestedMode === 'ANSWER') {
-      return 'medium';
-    }
     
-    // Low severity: ANSWER ↔ PLAN (both are read-only, low consequence)
+    // Low severity: PLAN ↔ other (no high/medium matched)
     return 'low';
   }
   

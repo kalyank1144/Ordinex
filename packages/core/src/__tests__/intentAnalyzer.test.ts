@@ -107,7 +107,7 @@ describe('IntentAnalyzer', () => {
       it('should select ANSWER for "what is" questions', () => {
         const result = analyzeIntent('What is dependency injection?');
         expect(result.behavior).toBe('ANSWER');
-        expect(result.derived_mode).toBe('ANSWER');
+        expect(result.derived_mode).toBe('MISSION');
       });
 
       it('should select ANSWER for "how does" questions', () => {
@@ -435,16 +435,16 @@ describe('IntentAnalyzer', () => {
   // =========================================================================
 
   describe('Derived Mode Mapping', () => {
-    it('should derive ANSWER mode for ANSWER behavior', () => {
+    it('should derive MISSION mode for ANSWER behavior', () => {
       const result = analyzeIntent('What is TypeScript?');
       expect(result.behavior).toBe('ANSWER');
-      expect(result.derived_mode).toBe('ANSWER');
+      expect(result.derived_mode).toBe('MISSION');
     });
 
-    it('should derive ANSWER mode for CLARIFY behavior', () => {
+    it('should derive MISSION mode for CLARIFY behavior', () => {
       const result = analyzeIntent('Fix this');
       if (result.behavior === 'CLARIFY') {
-        expect(result.derived_mode).toBe('ANSWER');
+        expect(result.derived_mode).toBe('MISSION');
       }
     });
 

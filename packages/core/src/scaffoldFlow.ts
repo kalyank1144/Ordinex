@@ -46,15 +46,11 @@ import {
 // Step 35.3: Recipe selection
 import { selectRecipe } from './scaffold/recipeSelector';
 import { extractAppName } from './scaffoldPreflight';
-// Step 35.5: Design pack selection
+import { getRecipeDisplayName as configDisplayName, getEstimates } from './scaffold/recipeConfig';
+// Design pack selection — lightweight inline, replaces old 656-line designPackSelector.ts
+import { createHash } from 'crypto';
 import {
-  selectDesignPack,
-  selectDesignPackWithTokens,
-  detectDomainHint,
-  generateSelectionEvidenceWithOverrides,
-  type TokenStyleOverrides,
-} from './scaffold/designPackSelector';
-import {
+  DESIGN_PACKS,
   formatTokensSummary,
   getDefaultPacksForPicker,
   getDesignPackById,
@@ -64,6 +60,9 @@ import {
 // Step 38: Vision imports for token-based design pack selection
 import { buildCompactSummary, buildReferenceContextSummary } from './vision/referenceContextSummary';
 import { DEFAULT_VISION_CONFIG_COMPLETE, type VisionConfigComplete } from './vision/visionConfig';
+// Scaffold Improvement Plan: Blueprint + Style Intent
+import type { AppBlueprint, BlueprintExtractionResult, StyleInput } from './scaffold/blueprintSchema';
+import type { StyleResolutionResult } from './scaffold/styleIntentResolver';
 
 // ============================================================================
 // SCAFFOLD FLOW STATE
@@ -103,6 +102,16 @@ export interface ScaffoldFlowState {
   currentRecipeId?: string;
   /** Whether style picker is active */
   stylePickerActive?: boolean;
+
+  // Scaffold Improvement Plan: Blueprint + Style
+  /** Extracted app blueprint (set by extension after LLM call) */
+  blueprint?: AppBlueprint;
+  /** Blueprint extraction confidence (0-1) */
+  blueprintConfidence?: number;
+  /** Resolved style tokens (set after style intent resolution) */
+  styleResolution?: StyleResolutionResult;
+  /** User's style intent input (set from Style Intent UI) */
+  styleInput?: StyleInput;
 }
 
 /**
@@ -196,14 +205,11 @@ export class ScaffoldFlowCoordinator {
       await this.emitReferenceContextBuilt();
     }
     
-    // Emit scaffold_proposal_created with placeholders
+    // Emit scaffold_proposal_created as a progress indicator.
+    // The decision card is NOT emitted here — it's emitted after blueprint
+    // extraction completes (or is skipped) via emitDecisionCard().
     await this.emitScaffoldProposalCreated();
     
-    // Emit scaffold_decision_requested (NOT decision_point_needed)
-    await this.emitScaffoldDecisionRequested();
-    
-    // Update state to awaiting_decision
-    this.state.status = 'awaiting_decision';
     this.state.lastEventAt = new Date().toISOString();
     
     return this.state;
@@ -327,6 +333,7 @@ export class ScaffoldFlowCoordinator {
     // Re-emit decision requested (back to normal decision state)
     await this.emitScaffoldDecisionRequested();
     
+    this.state.status = 'awaiting_decision';
     this.state.lastEventAt = new Date().toISOString();
     
     return this.state;
@@ -338,7 +345,77 @@ export class ScaffoldFlowCoordinator {
   isStylePickerActive(): boolean {
     return this.state?.stylePickerActive === true;
   }
-  
+
+  /**
+   * Set the extracted blueprint on the flow state.
+   * Called by the extension after LLM extraction completes.
+   * Re-emits proposal with blueprint data so the webview can render
+   * the Blueprint Card instead of the static preview.
+   */
+  async setBlueprint(result: BlueprintExtractionResult): Promise<ScaffoldFlowState> {
+    if (!this.state) throw new Error('No active scaffold flow');
+
+    this.state.blueprint = result.blueprint;
+    this.state.blueprintConfidence = result.confidence;
+
+    this.state.lastEventAt = new Date().toISOString();
+    return this.state;
+  }
+
+  /**
+   * Emit the decision card (scaffold_decision_requested) with current state.
+   * Called by the extension ONCE after blueprint extraction completes or is skipped.
+   * This is the single point where the user sees the actionable card.
+   */
+  async emitDecisionCard(): Promise<void> {
+    if (!this.state) throw new Error('No active scaffold flow');
+
+    // Re-compute proposal payload with any blueprint data that was set
+    await this.emitScaffoldProposalCreated();
+    await this.emitScaffoldDecisionRequested();
+
+    this.state.status = 'awaiting_decision';
+    this.state.lastEventAt = new Date().toISOString();
+  }
+
+  /**
+   * Set the resolved style on the flow state.
+   */
+  setStyleResolution(resolution: StyleResolutionResult): void {
+    if (!this.state) return;
+    this.state.styleResolution = resolution;
+  }
+
+  /**
+   * Set the user's style intent input (from Style Intent UI).
+   */
+  setStyleInput(input: StyleInput): void {
+    if (!this.state) return;
+    this.state.styleInput = input;
+    console.log(`[ScaffoldFlow] Style intent set: mode=${input.mode}, value="${input.value}"`);
+  }
+
+  /**
+   * Get the current style input.
+   */
+  getStyleInput(): StyleInput | undefined {
+    return this.state?.styleInput;
+  }
+
+  /**
+   * Get the current blueprint (for downstream pipeline use).
+   */
+  getBlueprint(): AppBlueprint | undefined {
+    return this.state?.blueprint;
+  }
+
+  /**
+   * Get blueprint confidence tier.
+   */
+  getBlueprintConfidence(): number {
+    return this.state?.blueprintConfidence ?? 0;
+  }
+
   /**
    * Extract app name from user prompt (delegates to standalone function)
    */
@@ -383,36 +460,17 @@ export class ScaffoldFlowCoordinator {
     // Step 35.3: Select recipe based on user prompt
     const recipeSelection = selectRecipe(this.state.userPrompt);
     
-    // Map recipe_id to display name
-    const recipeDisplayNames: Record<string, string> = {
-      'nextjs_app_router': 'Next.js 14 (App Router)',
-      'vite_react': 'Vite + React',
-      'expo': 'Expo (React Native)',
-    };
-    const recipeName = recipeDisplayNames[recipeSelection.recipe_id] || recipeSelection.recipe_id;
+    const recipeName = configDisplayName(recipeSelection.recipe_id);
+    const counts = getEstimates(recipeSelection.recipe_id);
     
-    // Estimate file counts based on recipe
-    const recipeFileCounts: Record<string, { files: number; dirs: number }> = {
-      'nextjs_app_router': { files: 24, dirs: 8 },
-      'vite_react': { files: 18, dirs: 6 },
-      'expo': { files: 22, dirs: 7 },
-    };
-    const counts = recipeFileCounts[recipeSelection.recipe_id] || { files: 20, dirs: 6 };
-    
-    // Step 35.5: Select design pack deterministically
-    const domainHint = detectDomainHint(this.state.userPrompt);
-    const targetDir = this.state.targetDirectory || process.cwd();
+    // Select a design pack for the proposal display.
+    // Actual design tokens are generated by styleIntentResolver in the post-scaffold pipeline.
     const appName = this.extractAppNameFromPrompt(this.state.userPrompt);
-    const designPackSelection = selectDesignPack({
-      workspaceRoot: targetDir,
-      targetDir,
-      appName,
-      recipeId: recipeSelection.recipe_id,
-      domainHint,
-    });
+    const seed = createHash('sha256').update(`${appName}|${recipeSelection.recipe_id}`).digest('hex');
+    const seedInt = parseInt(seed.slice(0, 8), 16);
+    const pack = DESIGN_PACKS[seedInt % DESIGN_PACKS.length];
     
-    // Build summary
-    let summary = `Create a new ${recipeName} project with ${designPackSelection.pack.name} design.`;
+    let summary = `Create a new ${recipeName} project with ${pack.name} design.`;
     
     // Step 37: Augment summary if references are present
     if (this.state.referenceContext) {
@@ -426,10 +484,10 @@ export class ScaffoldFlowCoordinator {
       scaffold_id: this.state.scaffoldId,
       recipe: recipeName,
       recipe_id: recipeSelection.recipe_id,
-      design_pack: designPackSelection.pack.name,
-      design_pack_id: designPackSelection.pack.id,
-      design_pack_name: designPackSelection.pack.name,
-      design_tokens_summary: formatTokensSummary(designPackSelection.pack),
+      design_pack: pack.name,
+      design_pack_id: pack.id,
+      design_pack_name: pack.name,
+      design_tokens_summary: formatTokensSummary(pack),
       files_count: counts.files,
       directories_count: counts.dirs,
       commands_to_run: ['npm install', 'npm run dev'],
@@ -437,6 +495,18 @@ export class ScaffoldFlowCoordinator {
       // Step 37: Include reference context in payload for UI rendering
       reference_context: this.state.referenceContext,
       reference_mode: this.state.styleSourceMode,
+      // Scaffold Improvement Plan: Include blueprint if available
+      blueprint: this.state.blueprint || null,
+      blueprint_confidence: this.state.blueprintConfidence ?? null,
+      scope_pages: this.state.blueprint?.pages?.length ?? 0,
+      scope_components: this.state.blueprint
+        ? new Set(this.state.blueprint.pages.flatMap(p => p.key_components)).size
+        : 0,
+      scope_files: this.state.blueprint
+        ? (this.state.blueprint.pages.length * 2 + 
+           new Set(this.state.blueprint.pages.flatMap(p => p.key_components)).size + 
+           this.state.blueprint.data_models.length + 5)
+        : counts.files,
     };
     
     const event: Event = {
@@ -694,21 +764,8 @@ export class ScaffoldFlowCoordinator {
     // Step 35.3: Select recipe based on user prompt (reuse existing logic)
     const recipeSelection = selectRecipe(this.state.userPrompt);
     
-    // Map recipe_id to display name
-    const recipeDisplayNames: Record<string, string> = {
-      'nextjs_app_router': 'Next.js 14 (App Router)',
-      'vite_react': 'Vite + React',
-      'expo': 'Expo (React Native)',
-    };
-    const recipeName = recipeDisplayNames[recipeSelection.recipe_id] || recipeSelection.recipe_id;
-    
-    // Estimate file counts based on recipe
-    const recipeFileCounts: Record<string, { files: number; dirs: number }> = {
-      'nextjs_app_router': { files: 24, dirs: 8 },
-      'vite_react': { files: 18, dirs: 6 },
-      'expo': { files: 22, dirs: 7 },
-    };
-    const counts = recipeFileCounts[recipeSelection.recipe_id] || { files: 20, dirs: 6 };
+    const recipeName = configDisplayName(recipeSelection.recipe_id);
+    const counts = getEstimates(recipeSelection.recipe_id);
     
     // Build summary with the NEW pack name
     let summary = `Create a new ${recipeName} project with ${pack.name} design.`;

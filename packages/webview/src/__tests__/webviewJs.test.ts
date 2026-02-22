@@ -281,9 +281,8 @@ describe('Webview JS Modules', () => {
       expect(js).toContain("event.type === 'step_completed'");
     });
 
-    it('keeps streaming block injection for loop_completed', () => {
-      // The streaming blocks must still be injected at loop_completed position
-      expect(js).toContain('renderCompletedBlocksAsTimelineItems');
+    it('renders streaming blocks at end of timeline', () => {
+      expect(js).toContain('renderStreamingBlocks');
     });
   });
 

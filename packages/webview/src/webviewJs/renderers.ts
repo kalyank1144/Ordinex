@@ -399,14 +399,14 @@ export function getRenderersJs(): string {
         return html;
       }
 
-      // Render Streaming Answer Card (also used for completed answer) — uses plan-card design
+      // Render Agent streaming card (text narration between tool calls) — uses plan-card design
       function renderStreamingAnswerCard() {
         if (!state.streamingAnswer || !state.streamingAnswer.text) {
           return '';
         }
 
         var isComplete = !!state.streamingAnswer.isComplete;
-        var title = isComplete ? 'Answer' : 'Streaming Answer';
+        var title = isComplete ? 'Agent Response' : 'Agent';
         var timestampHtml = isComplete
           ? '<span class="plan-card-time">\u2713 Complete</span>'
           : '<span class="plan-card-time" style="display:flex;align-items:center;gap:6px;"><span class="plan-streaming-dot"></span>Live</span>';
@@ -414,7 +414,7 @@ export function getRenderersJs(): string {
 
         return '<div class="plan-card">'
           + '<div class="plan-card-header">'
-          + '<span class="plan-card-type"><span class="plan-card-icon" style="background:var(--vscode-charts-blue);">\ud83d\udcac</span>' + title + '</span>'
+          + '<span class="plan-card-type"><span class="plan-card-icon" style="background:var(--vscode-charts-green);">\u26a1</span>' + title + '</span>'
           + timestampHtml
           + '</div>'
           + '<div class="plan-card-body">'
@@ -608,33 +608,53 @@ export function getRenderersJs(): string {
           + errorHtml;
       }
 
-      // ===== LIVE STREAMING: lightweight container for targeted DOM updates =====
-      // During active streaming the blocks need a container so RAF updates can find them.
-      // Visually this is NOT a heavy card — just a subtle header + flowing blocks.
-      function renderLiveStreamingContainer() {
+      // ===== STREAMING BLOCKS: unified renderer for all agent output =====
+      // Renders narration, tool calls, and follow-up separators in a single
+      // continuous container. Shows live indicator only when agent is active.
+      function renderStreamingBlocks() {
         var sm = state.streamingMission;
         if (!sm || !sm.blocks || sm.blocks.length === 0) return '';
 
-        var stepLabel = sm.stepId ? ' (Step: ' + escapeHtml(sm.stepId) + ')' : '';
-        var iterLabel = sm.iteration ? ' Iter ' + sm.iteration : '';
+        var isLive = !sm.isComplete;
+        var statusBadge = isLive
+          ? '<span style="font-size:10px;padding:1px 6px;border-radius:8px;background:var(--vscode-charts-green);color:#fff;margin-left:auto;">\u26a1 Live</span>'
+          : '<span style="font-size:10px;padding:1px 6px;border-radius:8px;background:var(--vscode-widget-border);color:var(--vscode-foreground);margin-left:auto;">\u2713 Done</span>';
 
         var blocksHtml = sm.blocks.map(function(block) {
           if (block.kind === 'narration') {
-            return renderNarrationBlock(block, block.id === sm.activeNarrationId);
+            return renderNarrationBlock(block, isLive && block.id === sm.activeNarrationId);
           } else if (block.kind === 'tool') {
             return renderToolBlock(block);
+          } else if (block.kind === 'separator') {
+            return renderFollowUpSeparator();
+          } else if (block.kind === 'prompt') {
+            return renderPromptBlock(block);
           }
           return '';
         }).join('');
 
         return '<div style="margin:8px 0 4px 0;">'
           + '<div style="display:flex;align-items:center;gap:6px;margin-bottom:6px;padding-bottom:4px;border-bottom:1px solid var(--vscode-widget-border);">'
-          +   '<span style="color:var(--vscode-charts-orange);font-size:14px;">\u2699\ufe0f</span>'
-          +   '<span style="font-size:12px;font-weight:600;color:var(--vscode-foreground);">Editing' + stepLabel + iterLabel + '</span>'
-          +   '<span style="font-size:10px;padding:1px 6px;border-radius:8px;background:var(--vscode-charts-orange);color:#fff;margin-left:auto;">\u26a1 Live</span>'
+          +   '<span style="color:var(--vscode-charts-green);font-size:14px;">\u26a1</span>'
+          +   '<span style="font-size:12px;font-weight:600;color:var(--vscode-foreground);">Agent</span>'
+          +   statusBadge
           + '</div>'
           + '<div class="streaming-blocks-container" style="padding:0 0 0 8px;">'
           +   blocksHtml
+          + '</div>'
+          + '</div>';
+      }
+
+      function renderFollowUpSeparator() {
+        return '<div style="margin:14px 0;height:1px;background:var(--vscode-widget-border);opacity:0.5;"></div>';
+      }
+
+      function renderPromptBlock(block) {
+        var text = block.text || '';
+        return '<div data-block-id="' + block.id + '" style="margin:8px 0 10px 0;display:flex;align-items:flex-start;gap:8px;">'
+          + '<div style="width:22px;height:22px;border-radius:50%;background:var(--vscode-charts-blue);color:#fff;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;flex-shrink:0;">U</div>'
+          + '<div style="font-size:13px;line-height:1.5;color:var(--vscode-foreground);padding:6px 10px;background:var(--vscode-input-background);border-radius:8px;max-width:90%;word-break:break-word;">'
+          + escapeHtml(text)
           + '</div>'
           + '</div>';
       }
@@ -692,7 +712,7 @@ export function getRenderersJs(): string {
         'scaffold_final_complete',
         'plan_large_detected',
         'repeated_failure_detected',
-        'loop_paused', 'loop_completed'
+        'loop_paused', 'loop_completed', 'loop_failed'
       ]);
 
       const PROGRESS_TIER_EVENTS = new Set([
@@ -704,7 +724,7 @@ export function getRenderersJs(): string {
         'feature_code_generating', 'feature_code_applied', 'feature_code_error',
         'scaffold_verify_started', 'scaffold_verify_step_completed', 'scaffold_verify_completed',
         'scaffold_autofix_started', 'scaffold_autofix_applied', 'scaffold_autofix_failed',
-        'scaffold_progress', 'design_pack_applied',
+        'scaffold_progress', 'scaffold_doctor_card', 'design_pack_applied',
         'command_started', 'command_completed',
         'tool_start', 'tool_end',
         'repair_attempt_started', 'repair_attempt_completed', 'repair_attempted',
@@ -830,7 +850,7 @@ export function getRenderersJs(): string {
       // S1/S2: Inline scaffold build/complete card rendering
       const SCAFFOLD_BUILD_EVENTS = new Set([
         'scaffold_apply_started', 'scaffold_applied', 'scaffold_apply_completed',
-        'scaffold_progress', 'design_pack_applied',
+        'scaffold_progress', 'scaffold_doctor_card', 'design_pack_applied',
         'feature_extraction_started', 'feature_extraction_completed',
         'feature_code_generating', 'feature_code_applied', 'feature_code_error',
         'scaffold_verify_started', 'scaffold_verify_step_completed', 'scaffold_verify_completed',
@@ -841,49 +861,113 @@ export function getRenderersJs(): string {
       function isScaffoldBuildEvent(type) { return SCAFFOLD_BUILD_EVENTS.has(type); }
 
       function renderScaffoldProgressInline(events) {
+        console.log('[ScaffoldProgress] renderScaffoldProgressInline called with ' + events.length + ' events');
+        var scaffoldProgressEvents = events.filter(function(e) { return e.type === 'scaffold_progress'; });
+        if (scaffoldProgressEvents.length > 0) {
+          console.log('[ScaffoldProgress] scaffold_progress events:');
+          scaffoldProgressEvents.forEach(function(e) {
+            var p = e.payload || {};
+            console.log('[ScaffoldProgress]   stage=' + (p.stage || 'none') + ' status=' + (p.status || 'none') + ' msg=' + (p.message || '').substring(0, 60));
+          });
+        }
         const stages = [
           { id: 'create', label: 'Creating project files', status: 'pending', detail: '' },
           { id: 'design', label: 'Applying design system', status: 'pending', detail: '' },
+          { id: 'overlay', label: 'Premium shell overlays', status: 'pending', detail: '' },
+          { id: 'shadcn', label: 'Setting up components', status: 'pending', detail: '' },
           { id: 'features', label: 'Generating features', status: 'pending', detail: '' },
+          { id: 'quality_gates', label: 'Quality gates', status: 'pending', detail: '' },
           { id: 'verify', label: 'Verifying project', status: 'pending', detail: '' }
         ];
         function findS(id) { return stages.find(function(s) { return s.id === id; }); }
+        var STATUS_RANK = { pending: 0, active: 1, done: 2, skipped: 2, failed: 2 };
+        function setActive(stage) {
+          if (stage && STATUS_RANK[stage.status] < STATUS_RANK['active']) stage.status = 'active';
+        }
+        function setDone(stage) {
+          if (stage && stage.status !== 'failed') stage.status = 'done';
+        }
         for (var i = 0; i < events.length; i++) {
           var e = events[i], p = e.payload || {};
           switch (e.type) {
-            case 'scaffold_apply_started': findS('create').status = 'active'; break;
+            case 'scaffold_apply_started': setActive(findS('create')); break;
             case 'scaffold_progress':
-              if (p.status === 'creating') findS('create').status = 'active';
-              else if (p.status === 'applying_design') { findS('create').status = 'done'; findS('design').status = 'active'; }
+              // Terminal status events: done/skipped/error with explicit stage
+              if (p.stage && (p.status === 'done' || p.status === 'skipped' || p.status === 'error')) {
+                var targetStage = findS(p.stage);
+                if (targetStage) {
+                  targetStage.status = p.status === 'error' ? 'failed' : p.status;
+                  if (p.detail) targetStage.detail = escapeHtml(String(p.detail));
+                }
+                break;
+              }
+              if (p.status === 'creating' || p.stage === 'init') {
+                setActive(findS('create'));
+              } else if (p.stage === 'overlay') {
+                setDone(findS('create')); setDone(findS('design'));
+                setActive(findS('overlay'));
+              } else if (p.stage === 'shadcn') {
+                setDone(findS('create')); setDone(findS('design'));
+                if (findS('overlay').status === 'pending') setDone(findS('overlay'));
+                setActive(findS('shadcn'));
+              } else if (p.stage === 'autofix') {
+                if (findS('shadcn').status === 'pending') setDone(findS('shadcn'));
+              } else if (p.stage === 'features') {
+                setActive(findS('features'));
+              } else if (p.stage === 'quality_gates') {
+                setDone(findS('features'));
+                if (p.status === 'done') {
+                  findS('quality_gates').status = 'done';
+                  if (p.detail) findS('quality_gates').detail = String(p.detail);
+                } else {
+                  setActive(findS('quality_gates'));
+                }
+              } else if (p.stage === 'quality_gates_done' || p.stage === 'doctor_card') {
+                findS('quality_gates').status = 'done';
+                if (p.doctor_status) {
+                  var ds = p.doctor_status;
+                  findS('quality_gates').detail = 'tsc: ' + ds.tsc + ', build: ' + ds.build;
+                }
+              } else if (p.status === 'applying_design' || p.stage === 'tokens') {
+                setDone(findS('create')); setActive(findS('design'));
+              }
               break;
-            case 'scaffold_applied': case 'scaffold_apply_completed': findS('create').status = 'done'; break;
+            case 'scaffold_applied': case 'scaffold_apply_completed': setDone(findS('create')); break;
             case 'design_pack_applied':
-              findS('design').status = 'done';
+              setDone(findS('design'));
               if (p.design_pack_name) findS('design').detail = escapeHtml(String(p.design_pack_name));
               break;
-            case 'feature_extraction_started': findS('features').status = 'active'; break;
+            case 'feature_extraction_started': setActive(findS('features')); break;
             case 'feature_extraction_completed':
               findS('features').detail = (p.features_count || 0) + ' features';
               break;
-            case 'feature_code_generating': findS('features').status = 'active'; break;
+            case 'feature_code_generating': setActive(findS('features')); break;
             case 'feature_code_applied':
-              findS('features').status = 'done';
+              setDone(findS('features'));
               if (p.files_created || p.files_count) findS('features').detail = (p.files_created || p.files_count) + ' files';
               break;
             case 'feature_code_error':
               findS('features').status = 'failed';
               findS('features').detail = 'Fell back to generic scaffold';
               break;
-            case 'scaffold_verify_started': findS('verify').status = 'active'; break;
+            case 'scaffold_verify_started': setActive(findS('verify')); break;
             case 'scaffold_verify_completed':
               findS('verify').status = (p.outcome === 'pass' || p.outcome === 'partial') ? 'done' : 'failed';
               findS('verify').detail = (p.pass_count || 0) + ' passed, ' + (p.fail_count || 0) + ' failed';
               break;
             case 'scaffold_autofix_started': findS('verify').detail = 'Auto-fixing...'; break;
+            case 'scaffold_doctor_card':
+              findS('quality_gates').status = 'done';
+              if (p.doctor_status) {
+                var dds = p.doctor_status;
+                findS('quality_gates').detail = 'tsc: ' + dds.tsc + ', build: ' + dds.build;
+              }
+              break;
           }
         }
+        console.log('[ScaffoldProgress] Final stage statuses: ' + stages.map(function(s) { return s.id + '=' + s.status; }).join(', '));
         var doneCount = stages.filter(function(s) { return s.status === 'done'; }).length;
-        var pct = Math.round((doneCount / 4) * 100);
+        var pct = Math.round((doneCount / stages.length) * 100);
         var allDone = stages.every(function(s) { return s.status === 'done' || s.status === 'failed' || s.status === 'skipped'; });
         var stageIcons = { pending: '\u25CB', active: '\u23F3', done: '\u2705', failed: '\u274C', skipped: '\u23ED\uFE0F' };
         var stagesHtml = stages.map(function(s) {
@@ -912,43 +996,245 @@ export function getRenderersJs(): string {
         var success = p.status === 'success' || p.success === true;
         var projectPath = p.project_path || '';
         var projectName = projectPath.split('/').pop() || '';
-        // Find verification data
-        var verifyEvt = allEvents ? allEvents.find(function(e) { return e.type === 'scaffold_verify_completed'; }) : null;
-        var verifyHtml = '';
-        if (verifyEvt) {
-          var vp = verifyEvt.payload || {};
-          var outcome = vp.outcome || 'unknown';
-          var icon = outcome === 'pass' ? '\u2705' : outcome === 'partial' ? '\u26A0\uFE0F' : '\u274C';
-          var label = outcome === 'pass' ? 'All ' + (vp.pass_count || 0) + ' checks passed' :
-            (vp.pass_count || 0) + ' passed, ' + (vp.fail_count || 0) + ' failed';
-          var bcolor = outcome === 'pass' ? 'rgba(76,175,80,0.15)' : outcome === 'partial' ? 'rgba(255,152,0,0.15)' : 'rgba(244,67,54,0.15)';
-          verifyHtml = '<span style="display:inline-flex;align-items:center;gap:4px;padding:4px 10px;border-radius:12px;font-size:12px;background:' + bcolor + '">' + icon + ' ' + escapeHtml(label) + '</span>';
+        var bp = p.blueprint_summary || {};
+        var appName = bp.app_name || projectName || 'Your App';
+        var appType = bp.app_type || '';
+        var llmSummary = p.project_summary || null;
+
+        // Summary section (LLM-generated or fallback)
+        var summaryText = '';
+        if (llmSummary && llmSummary.summary) {
+          summaryText = llmSummary.summary;
+        } else if (bp.pages_count || bp.features_count) {
+          summaryText = 'Your ' + escapeHtml(appType || 'app') + ' MVP has been scaffolded with ' +
+            (bp.pages_count || 0) + ' page(s) and ' + (bp.features_count || 0) + ' feature(s).';
         }
-        // Find next steps
+
+        var summaryHtml = summaryText ?
+          '<p style="margin:0 0 12px;font-size:13px;line-height:1.5;color:var(--vscode-foreground)">' + escapeHtml(summaryText) + '</p>' : '';
+
+        // Features built section
+        var featuresBuiltHtml = '';
+        var features = (llmSummary && llmSummary.features_built) || bp.features || [];
+        if (features.length > 0) {
+          var featureItems = features.map(function(f) {
+            var name = typeof f === 'string' ? f : (f.name || String(f));
+            return '<div style="display:flex;align-items:center;gap:8px;padding:5px 0">' +
+              '<span style="color:var(--vscode-testing-iconPassed,#4caf50);font-size:14px">\u2713</span>' +
+              '<span style="font-size:13px">' + escapeHtml(name) + '</span>' +
+            '</div>';
+          }).join('');
+          featuresBuiltHtml = '<div style="margin:10px 0;padding:10px 12px;background:var(--vscode-textBlockQuote-background,rgba(127,127,127,.08));border-radius:8px">' +
+            '<div style="font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:0.5px;color:var(--vscode-descriptionForeground);margin-bottom:6px">What We Built</div>' +
+            featureItems + '</div>';
+        }
+
+        // Pages built
+        var pagesHtml = '';
+        var pages = bp.pages || [];
+        if (pages.length > 0) {
+          var pageItems = pages.map(function(pg) {
+            var name = pg.name || 'Page';
+            var route = pg.route || '';
+            return '<div style="display:flex;align-items:center;gap:8px;padding:4px 0">' +
+              '<span style="font-size:13px">\uD83D\uDCC4</span>' +
+              '<span style="flex:1;font-weight:500;font-size:13px">' + escapeHtml(name) + '</span>' +
+              (route ? '<code style="font-size:11px;color:var(--vscode-descriptionForeground);background:var(--vscode-textCodeBlock-background);padding:1px 6px;border-radius:3px">' + escapeHtml(route) + '</code>' : '') +
+            '</div>';
+          }).join('');
+          pagesHtml = '<div style="margin:8px 0">' +
+            '<div style="font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:0.5px;color:var(--vscode-descriptionForeground);margin-bottom:4px">Pages</div>' +
+            pageItems + '</div>';
+        }
+
+        // Suggested features (from LLM or next_steps_shown)
+        var suggestedHtml = '';
+        var suggestedFeatures = (llmSummary && llmSummary.suggested_features) || [];
         var nextEvt = allEvents ? allEvents.find(function(e) { return e.type === 'next_steps_shown'; }) : null;
-        var actionsHtml = '';
+        var suggestions = [];
         if (nextEvt && nextEvt.payload) {
-          var steps = nextEvt.payload.suggestions || nextEvt.payload.steps || nextEvt.payload.next_steps || [];
-          actionsHtml = steps.map(function(s, i) {
-            var cls = i === 0 ? 'background:var(--vscode-button-background);color:var(--vscode-button-foreground);border:none' : 'background:var(--vscode-button-secondaryBackground);color:var(--vscode-button-secondaryForeground)';
+          suggestions = (nextEvt.payload.suggestions || nextEvt.payload.steps || nextEvt.payload.next_steps || [])
+            .filter(function(s) {
+              var sid = (s.id || s.action || '').toLowerCase();
+              return sid !== 'dev_server' && sid !== 'open_editor' && sid !== 'start_dev';
+            });
+        }
+
+        if (suggestedFeatures.length > 0 || suggestions.length > 0) {
+          var sugItems = '';
+          // LLM suggested features as clickable chips
+          suggestedFeatures.forEach(function(sf) {
+            sugItems += '<button style="padding:5px 12px;border-radius:16px;font-size:12px;cursor:pointer;background:rgba(99,102,241,0.1);color:var(--vscode-foreground);border:1px solid rgba(99,102,241,0.3);white-space:nowrap" ' +
+              'onclick="vscode.postMessage({type:\\'next_step_selected\\',scaffold_id:\\'' + escapeHtml(scaffoldId) + '\\',step_id:\\'suggested_feature\\',kind:\\'plan\\',command:\\'' + escapeHtml('Add ' + sf) + '\\',project_path:\\'' + escapeHtml(projectPath) + '\\'})">' +
+              '+ ' + escapeHtml(sf) + '</button>';
+          });
+          // Existing next step suggestions
+          suggestions.forEach(function(s) {
+            var label = s.label || s.title || s.action || '';
             var cmdStr = typeof s.command === 'string' ? s.command : (s.command && s.command.cmd ? s.command.cmd : '');
             var kindStr = s.kind || '';
-            return '<button style="padding:6px 14px;border-radius:4px;font-size:13px;cursor:pointer;' + cls + '" onclick="vscode.postMessage({type:\\'next_step_selected\\',scaffold_id:\\'' + escapeHtml(scaffoldId) + '\\',step_id:\\'' + escapeHtml(s.id || s.action || '') + '\\',kind:\\'' + escapeHtml(kindStr) + '\\',command:\\'' + escapeHtml(cmdStr) + '\\',project_path:\\'' + escapeHtml(projectPath) + '\\'})">'+  escapeHtml(s.label || s.title || s.action || '') + '</button>';
-          }).join('');
+            sugItems += '<button style="padding:5px 12px;border-radius:16px;font-size:12px;cursor:pointer;background:var(--vscode-textCodeBlock-background);color:var(--vscode-foreground);border:1px solid var(--vscode-panel-border,#444);white-space:nowrap" ' +
+              'onclick="vscode.postMessage({type:\\'next_step_selected\\',scaffold_id:\\'' + escapeHtml(scaffoldId) + '\\',step_id:\\'' + escapeHtml(s.id || s.action || '') + '\\',kind:\\'' + escapeHtml(kindStr) + '\\',command:\\'' + escapeHtml(cmdStr) + '\\',project_path:\\'' + escapeHtml(projectPath) + '\\'})">' +
+              escapeHtml(label) + '</button>';
+          });
+          suggestedHtml = '<div style="margin-top:12px;padding-top:10px;border-top:1px solid var(--vscode-panel-border,#333)">' +
+            '<div style="font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:0.5px;color:var(--vscode-descriptionForeground);margin-bottom:8px">What You Can Add Next</div>' +
+            '<div style="display:flex;flex-wrap:wrap;gap:6px">' + sugItems + '</div>' +
+            '</div>';
         }
-        if (!actionsHtml) {
-          actionsHtml = '<button style="padding:6px 14px;border-radius:4px;font-size:13px;cursor:pointer;background:var(--vscode-button-background);color:var(--vscode-button-foreground);border:none" onclick="vscode.postMessage({type:\\'next_step_selected\\',scaffold_id:\\'' + escapeHtml(scaffoldId) + '\\',step_id:\\'dev_server\\',project_path:\\'' + escapeHtml(projectPath) + '\\'})">Start Dev Server</button>' +
-            '<button style="padding:6px 14px;border-radius:4px;font-size:13px;cursor:pointer;background:var(--vscode-button-secondaryBackground);color:var(--vscode-button-secondaryForeground)" onclick="vscode.postMessage({type:\\'next_step_selected\\',scaffold_id:\\'' + escapeHtml(scaffoldId) + '\\',step_id:\\'open_editor\\',project_path:\\'' + escapeHtml(projectPath) + '\\'})">Open in Editor</button>';
+
+        // Stats badges row
+        var statsHtml = '';
+        var badges = [];
+        if (p.design_pack_applied) badges.push({ icon: '\uD83C\uDFA8', text: escapeHtml(p.design_pack_name || 'Design applied') });
+        if (bp.pages_count) badges.push({ icon: '\uD83D\uDCC4', text: bp.pages_count + ' pages' });
+        if (bp.components_count) badges.push({ icon: '\uD83E\uDDE9', text: bp.components_count + ' components' });
+
+        // Verification badge
+        // Doctor status takes priority over verify outcome
+        var ds = p.doctor_status || {};
+        var hasBuildErrors = ds.tsc === 'fail' || ds.build === 'fail';
+
+        if (hasBuildErrors) {
+          badges.push({ icon: '\u274C', text: 'Build errors found' });
+        } else {
+          var verifyEvt = allEvents ? allEvents.find(function(e) { return e.type === 'scaffold_verify_completed'; }) : null;
+          if (verifyEvt) {
+            var vp = verifyEvt.payload || {};
+            var outcome = vp.outcome || 'unknown';
+            var vIcon = outcome === 'pass' ? '\u2705' : outcome === 'partial' ? '\u26A0\uFE0F' : '\u274C';
+            var vLabel = outcome === 'pass' ? 'All checks passed' :
+              (vp.pass_count || 0) + ' passed, ' + (vp.fail_count || 0) + ' failed';
+            badges.push({ icon: vIcon, text: vLabel });
+          }
         }
-        var designHtml = p.design_pack_applied ? '<span style="display:inline-flex;align-items:center;gap:4px;padding:4px 10px;border-radius:12px;font-size:12px;background:rgba(156,39,176,0.12)">\u{1F3A8} ' + escapeHtml(p.design_pack_name || 'Design applied') + '</span>' : '';
-        return '<div class="scaffold-complete-card" style="background:var(--vscode-editor-background);border:1px solid ' + (success ? 'var(--vscode-testing-iconPassed,#4caf50)' : 'var(--vscode-editorWarning-foreground,#ff9800)') + ';border-radius:8px;padding:16px;margin:8px 0;font-size:13px">' +
-          '<div style="display:flex;align-items:center;gap:10px;margin-bottom:12px">' +
-            '<span style="font-size:24px">' + (success ? '\u2705' : '\u26A0\uFE0F') + '</span>' +
-            '<div style="flex:1"><h3 style="margin:0;font-size:16px;font-weight:600">' + (success ? 'Project Ready' : 'Project Created (with warnings)') + '</h3>' +
-            (projectName ? '<span style="font-size:12px;color:var(--vscode-descriptionForeground);font-family:var(--vscode-editor-font-family,monospace)">' + escapeHtml(projectName) + '</span>' : '') +
-            '</div></div>' +
-          '<div style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:14px">' + verifyHtml + designHtml + '</div>' +
-          '<div style="display:flex;flex-wrap:wrap;gap:8px">' + actionsHtml + '</div>' +
+
+        badges.forEach(function(b) {
+          statsHtml += '<span style="display:inline-flex;align-items:center;gap:4px;padding:4px 10px;border-radius:12px;font-size:12px;background:var(--vscode-badge-background);color:var(--vscode-badge-foreground)">' + b.icon + ' ' + b.text + '</span>';
+        });
+
+        // Access URL
+        var accessUrl = (llmSummary && llmSummary.access_url) || 'http://localhost:3000';
+        var accessHtml = '<div style="margin:10px 0;padding:8px 12px;background:rgba(76,175,80,0.08);border-radius:6px;font-size:12px;color:var(--vscode-descriptionForeground)">' +
+          '\uD83C\uDF10 Your app will be available at <code style="background:var(--vscode-textCodeBlock-background);padding:1px 6px;border-radius:3px">' + escapeHtml(accessUrl) + '</code> after starting the dev server' +
+          '</div>';
+
+        // Action buttons
+        var devServerBtn = '<button style="padding:8px 20px;border-radius:6px;font-size:13px;font-weight:600;cursor:pointer;background:var(--vscode-button-background);color:var(--vscode-button-foreground);border:none;display:inline-flex;align-items:center;gap:6px" ' +
+          'onclick="vscode.postMessage({type:\\'next_step_selected\\',scaffold_id:\\'' + escapeHtml(scaffoldId) + '\\',step_id:\\'dev_server\\',project_path:\\'' + escapeHtml(projectPath) + '\\'})">' +
+          '\u25B6 Start Dev Server</button>';
+
+        var openEditorBtn = '<button style="padding:8px 16px;border-radius:6px;font-size:13px;cursor:pointer;background:var(--vscode-button-secondaryBackground);color:var(--vscode-button-secondaryForeground);border:none" ' +
+          'onclick="vscode.postMessage({type:\\'next_step_selected\\',scaffold_id:\\'' + escapeHtml(scaffoldId) + '\\',step_id:\\'open_editor\\',project_path:\\'' + escapeHtml(projectPath) + '\\'})">' +
+          'Open in Editor</button>';
+
+        // Type badge
+        var typeBadge = appType ? '<span style="display:inline-flex;align-items:center;padding:3px 8px;border-radius:4px;font-size:11px;background:rgba(33,150,243,0.12);color:var(--vscode-foreground);text-transform:capitalize">' + escapeHtml(appType.replace(/_/g, ' ')) + '</span>' : '';
+
+        var borderColor = hasBuildErrors ? 'var(--vscode-editorWarning-foreground,#ff9800)' : success ? 'var(--vscode-testing-iconPassed,#4caf50)' : 'var(--vscode-editorWarning-foreground,#ff9800)';
+        var headerIcon = hasBuildErrors ? '\u26A0\uFE0F' : success ? '\uD83D\uDE80' : '\u26A0\uFE0F';
+        var headerTitle = hasBuildErrors ? 'Project Created \u2014 needs fixes' : 'Project Summary';
+
+        var warningBanner = hasBuildErrors ? '<div style="display:flex;align-items:center;gap:6px;padding:8px 12px;margin:10px 0;border-radius:6px;font-size:12px;background:rgba(255,152,0,0.1);color:var(--vscode-editorWarning-foreground,#ff9800);border:1px solid rgba(255,152,0,0.2)">\u26A0\uFE0F Build errors were detected. Fix them before starting development.</div>' : '';
+
+        // Fix actions vs normal actions
+        var fixBtn = '<button style="padding:8px 20px;border-radius:6px;font-size:13px;font-weight:600;cursor:pointer;background:var(--vscode-button-background);color:var(--vscode-button-foreground);border:none;display:inline-flex;align-items:center;gap:6px" ' +
+          'onclick="vscode.postMessage({type:\\'doctor_action\\',action:\\'fix_automatically\\',project_path:\\'' + escapeHtml(projectPath) + '\\',task_id:\\'\\'})">' +
+          '\uD83D\uDD27 Fix automatically</button>';
+        var openLogsBtn = '<button style="padding:8px 16px;border-radius:6px;font-size:13px;cursor:pointer;background:var(--vscode-button-secondaryBackground);color:var(--vscode-button-secondaryForeground);border:none" ' +
+          'onclick="vscode.postMessage({type:\\'doctor_action\\',action:\\'open_logs\\',task_id:\\'\\'})">' +
+          'Open logs</button>';
+
+        var actionsRow = hasBuildErrors
+          ? '<div style="display:flex;flex-wrap:wrap;gap:8px;margin-top:12px">' + fixBtn + openLogsBtn + '</div>'
+          : '<div style="display:flex;flex-wrap:wrap;gap:8px;margin-top:12px">' + devServerBtn + openEditorBtn + '</div>';
+
+        // Collect diff_applied events for "Changes Made" section
+        var changesHtml = buildInlineChangesSection(allEvents);
+
+        return '<div class="scaffold-complete-card" style="background:var(--vscode-editor-background);border:1px solid ' + borderColor + ';border-radius:10px;padding:16px 18px;margin:8px 0;font-size:13px">' +
+          '<div style="display:flex;align-items:center;gap:10px;margin-bottom:8px">' +
+            '<span style="font-size:28px">' + headerIcon + '</span>' +
+            '<div style="flex:1">' +
+              '<h3 style="margin:0;font-size:17px;font-weight:700">' + headerTitle + '</h3>' +
+              '<div style="display:flex;align-items:center;gap:6px;margin-top:2px">' +
+                '<span style="font-size:13px;font-weight:500;color:var(--vscode-foreground)">' + escapeHtml(appName) + '</span>' +
+                typeBadge +
+              '</div>' +
+            '</div>' +
+          '</div>' +
+          summaryHtml +
+          '<div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:8px">' + statsHtml + '</div>' +
+          featuresBuiltHtml +
+          pagesHtml +
+          warningBanner +
+          changesHtml +
+          (hasBuildErrors ? '' : accessHtml) +
+          actionsRow +
+          (hasBuildErrors ? '' : suggestedHtml) +
+        '</div>';
+      }
+
+      function buildInlineChangesSection(allEvents) {
+        if (!allEvents) return '';
+        var diffEvents = allEvents.filter(function(e) { return e.type === 'diff_applied'; });
+        if (diffEvents.length === 0) return '';
+
+        var allFiles = [];
+        var totalAdd = 0;
+        var totalDel = 0;
+        var latestDiffId = '';
+        for (var di = 0; di < diffEvents.length; di++) {
+          var dp = diffEvents[di].payload || {};
+          var files = dp.files_changed || [];
+          latestDiffId = dp.diff_id || diffEvents[di].event_id || '';
+          for (var fi = 0; fi < files.length; fi++) {
+            var f = files[fi];
+            var fPath = typeof f === 'string' ? f : (f.path || '');
+            var fAdd = f.additions || 0;
+            var fDel = f.deletions || 0;
+            allFiles.push({ path: fPath, additions: fAdd, deletions: fDel });
+            totalAdd += fAdd;
+            totalDel += fDel;
+          }
+        }
+        if (allFiles.length === 0) return '';
+
+        var statsText = allFiles.length + ' file' + (allFiles.length !== 1 ? 's' : '') + ' changed';
+        var statsExtra = '';
+        if (totalAdd > 0) statsExtra += '<span style="color:var(--vscode-testing-iconPassed,#4caf50);font-size:12px;margin-left:4px">+' + totalAdd + '</span>';
+        if (totalDel > 0) statsExtra += '<span style="color:var(--vscode-testing-iconFailed,#f44336);font-size:12px;margin-left:4px">-' + totalDel + '</span>';
+
+        var fileRows = '';
+        for (var ri = 0; ri < allFiles.length; ri++) {
+          var rf = allFiles[ri];
+          var basename = rf.path.split('/').pop() || rf.path;
+          var ext = basename.indexOf('.') >= 0 ? basename.split('.').pop().toUpperCase() : '';
+          var rStats = '';
+          if (rf.additions > 0) rStats += '<span style="color:var(--vscode-testing-iconPassed,#4caf50);font-size:11px">+' + rf.additions + '</span>';
+          if (rf.deletions > 0) rStats += '<span style="color:var(--vscode-testing-iconFailed,#f44336);font-size:11px;margin-left:4px">-' + rf.deletions + '</span>';
+
+          fileRows += '<div style="display:flex;align-items:center;gap:6px;padding:3px 12px;font-size:12px;cursor:pointer" onclick="handleDiffFileClick(\\'' + escapeJsString(rf.path) + '\\')" title="' + escapeHtml(rf.path) + '">' +
+            (ext ? '<span style="font-size:10px;font-weight:600;color:var(--vscode-descriptionForeground);min-width:24px">' + escapeHtml(ext) + '</span>' : '') +
+            '<span style="flex:1;color:var(--vscode-foreground)">' + escapeHtml(basename) + '</span>' +
+            rStats +
+          '</div>';
+        }
+
+        var undoBtn = latestDiffId
+          ? '<button style="font-size:11px;padding:3px 10px;border-radius:4px;border:1px solid var(--vscode-panel-border,#555);background:var(--vscode-button-secondaryBackground,transparent);color:var(--vscode-button-secondaryForeground,var(--vscode-foreground));cursor:pointer" onclick="handleUndoAction(\\'' + escapeJsString(latestDiffId) + '\\')">Undo \u21A9</button>'
+          : '';
+        var reviewBtn = latestDiffId
+          ? '<button style="font-size:11px;padding:3px 10px;border-radius:4px;border:1px solid var(--vscode-panel-border,#555);background:var(--vscode-button-secondaryBackground,transparent);color:var(--vscode-button-secondaryForeground,var(--vscode-foreground));cursor:pointer" onclick="handleDiffReview(\\'' + escapeJsString(latestDiffId) + '\\')">Review \u2197</button>'
+          : '';
+
+        return '<div style="margin:10px 0;border:1px solid var(--vscode-panel-border,#333);border-radius:6px;overflow:hidden">' +
+          '<div style="display:flex;align-items:center;gap:6px;padding:8px 12px;background:var(--vscode-textBlockQuote-background,rgba(127,127,127,.08));border-bottom:1px solid var(--vscode-panel-border,#333)">' +
+            '<span style="font-size:14px">\uD83D\uDCDD</span>' +
+            '<span style="flex:1;font-size:13px;font-weight:600">' + statsText + ' ' + statsExtra + '</span>' +
+            '<span style="display:flex;gap:4px">' + undoBtn + reviewBtn + '</span>' +
+          '</div>' +
+          '<div style="padding:4px 0">' + fileRows + '</div>' +
         '</div>';
       }
 
@@ -956,7 +1242,10 @@ export function getRenderersJs(): string {
         if (progressEvents.length === 0) return '';
         // S1: Scaffold build events → ScaffoldProgressCard
         if (progressEvents.some(function(e) { return isScaffoldBuildEvent(e.type); })) {
-          var scaffoldEvents = progressEvents.filter(function(e) { return isScaffoldBuildEvent(e.type); });
+          // Collect ALL scaffold build events from the entire event list
+          // so that buffer splits (e.g. from mode_changed) don't lose stages
+          var allScaffoldEvents = (state.events || []).filter(function(e) { return isScaffoldBuildEvent(e.type); });
+          var scaffoldEvents = allScaffoldEvents.length > 0 ? allScaffoldEvents : progressEvents.filter(function(e) { return isScaffoldBuildEvent(e.type); });
           var otherEvents = progressEvents.filter(function(e) { return !isScaffoldBuildEvent(e.type); });
           var html = renderScaffoldProgressInline(scaffoldEvents);
           // If there are non-scaffold events mixed in, render them as a separate group
@@ -1195,10 +1484,37 @@ export function getRenderersJs(): string {
         let progressGroupIndex = 0;
         var deferredDiffApplied = null; // render at end, after streaming blocks
 
+        // Scaffold deduplication: only show latest event per type+scaffold_id
+        var scaffoldSkipIds = {};
+        var scaffoldDedupTypes = { 'scaffold_decision_requested': 1, 'scaffold_proposal_created': 1 };
+        for (var di = events.length - 1; di >= 0; di--) {
+          var de = events[di];
+          if (scaffoldDedupTypes[de.type]) {
+            var dkey = de.type + '::' + (de.payload && de.payload.scaffold_id || '');
+            if (scaffoldSkipIds[dkey]) {
+              scaffoldSkipIds['skip::' + de.event_id] = true;
+            } else {
+              scaffoldSkipIds[dkey] = true;
+            }
+          }
+        }
+
+        var scaffoldProgressRendered = false;
         // Flush accumulated progress events as a collapsible group
         function flushProgressBuffer() {
           if (progressBuffer.length > 0) {
-            items.push(renderProgressGroup(progressBuffer, progressGroupIndex++));
+            var hasScaffold = progressBuffer.some(function(e) { return isScaffoldBuildEvent(e.type); });
+            if (hasScaffold && scaffoldProgressRendered) {
+              // Already rendered a scaffold progress card from the full event list;
+              // only render non-scaffold events from this buffer
+              var nonScaffold = progressBuffer.filter(function(e) { return !isScaffoldBuildEvent(e.type); });
+              if (nonScaffold.length > 0) {
+                items.push(renderProgressGroup(nonScaffold, progressGroupIndex++));
+              }
+            } else {
+              if (hasScaffold) scaffoldProgressRendered = true;
+              items.push(renderProgressGroup(progressBuffer, progressGroupIndex++));
+            }
             progressBuffer = [];
           }
         }
@@ -1206,6 +1522,11 @@ export function getRenderersJs(): string {
         for (const event of events) {
           // Always skip stream events
           if (event.type === 'stream_delta' || event.type === 'stream_complete') {
+            continue;
+          }
+
+          // Skip earlier scaffold events superseded by blueprint update
+          if (scaffoldSkipIds['skip::' + event.event_id]) {
             continue;
           }
 
@@ -1384,27 +1705,8 @@ export function getRenderersJs(): string {
             // total === 0 or no data: fall through to generic card
           }
 
-          // Inject completed streaming blocks ABOVE loop_paused/loop_completed cards.
-          // Blocks flow as individual timeline items (narration = bubble, tool = row).
-          if (event.type === 'loop_paused' || event.type === 'loop_completed') {
-            // Historical completed blocks from previous iterations
-            if (state._completedMissionBlocks && state._completedMissionBlocks.length > 0) {
-              for (var cbi = 0; cbi < state._completedMissionBlocks.length; cbi++) {
-                var histItems = renderCompletedBlocksAsTimelineItems(state._completedMissionBlocks[cbi]);
-                for (var hi = 0; hi < histItems.length; hi++) {
-                  items.push(histItems[hi]);
-                }
-              }
-              state._completedMissionBlocks = [];
-            }
-            // Current completed streaming session
-            if (state.streamingMission && state.streamingMission.isComplete && state.streamingMission.blocks.length > 0) {
-              var curItems = renderCompletedBlocksAsTimelineItems(state.streamingMission);
-              for (var cui = 0; cui < curItems.length; cui++) {
-                items.push(curItems[cui]);
-              }
-            }
-          }
+          // loop_completed/loop_paused/loop_failed: no special rendering needed.
+          // Streaming blocks are always rendered at the end of the timeline.
 
           // Hide loop_completed card — the diff_applied card is the clean end marker
           if (event.type === 'loop_completed') {
@@ -1482,15 +1784,15 @@ export function getRenderersJs(): string {
             <div class="plan-card-wrapper">\${renderStreamingPlanCard()}</div>
           \`);
         }
-        // Only render active (non-complete) streaming blocks at the end.
-        // Completed blocks are rendered inline above loop_paused/loop_completed cards.
-        if (state.streamingMission && !state.streamingMission.isComplete && state.streamingMission.blocks && state.streamingMission.blocks.length > 0) {
-          items.push('<div class="mission-live-container">' + renderLiveStreamingContainer() + '</div>');
+        // Streaming blocks: always render at the end of the timeline.
+        if (state.streamingMission && state.streamingMission.blocks && state.streamingMission.blocks.length > 0) {
+          items.push('<div class="mission-live-container">' + renderStreamingBlocks() + '</div>');
         }
 
         // Render deferred diff_applied card at the very END — after narration/streaming blocks.
-        // This ensures the Codex-style file changes summary always appears below the agent's work.
-        if (deferredDiffApplied) {
+        // Skip if scaffold_final_complete exists — changes are shown inside the summary card.
+        var hasScaffoldComplete = events.some(function(e) { return e.type === 'scaffold_final_complete'; });
+        if (deferredDiffApplied && !hasScaffoldComplete) {
           var daPayload = deferredDiffApplied.payload || {};
           var daFiles = daPayload.files_changed || [];
           var daTotalAdd = daPayload.total_additions || 0;
@@ -2072,6 +2374,11 @@ export function getRenderersJs(): string {
         // SCAFFOLD EVENTS: Use ScaffoldCard web component (PRIORITY CHECK)
         // Events still handled by ScaffoldCard web component (pre-build UI flow)
         // S1/S2 events are handled above (progress groups + scaffold_final_complete/next_steps_shown)
+        // NOTE: Build-phase events (scaffold_apply_started, scaffold_applied,
+        // scaffold_apply_completed, scaffold_progress, scaffold_doctor_card,
+        // design_pack_applied, feature_*, scaffold_verify_*, scaffold_autofix_*,
+        // scaffold_checkpoint_created) are handled by ScaffoldProgressCard in
+        // progress groups — do NOT list them here or they render twice.
         const scaffoldEventTypes = [
           'scaffold_started',
           'scaffold_preflight_started',
@@ -2080,8 +2387,6 @@ export function getRenderersJs(): string {
           'scaffold_proposal_created',
           'scaffold_decision_requested',
           'scaffold_decision_resolved',
-          'scaffold_apply_started',
-          'scaffold_applied',
           'scaffold_style_selection_requested',
           'scaffold_style_selected',
           'scaffold_blocked',
@@ -2093,19 +2398,13 @@ export function getRenderersJs(): string {
           'scaffold_preflight_resolution_selected',
           'scaffold_quality_gates_passed',
           'scaffold_quality_gates_failed',
-          'scaffold_checkpoint_created',
           'scaffold_checkpoint_restored',
-          'scaffold_apply_completed',
         ];
         
         if (scaffoldEventTypes.includes(event.type)) {
-          // Use the ScaffoldCard custom element (already defined globally in ScaffoldCard.ts)
           const eventId = event.event_id || 'evt_' + Date.now();
           const cardId = 'scaffold-' + escapeHtml(eventId);
           const eventJson = encodeURIComponent(JSON.stringify(event));
-
-          // Attach event JSON as a data attribute to avoid inline scripts in HTML.
-          // Use double quotes for the attribute value to avoid template literal issues
           return '<scaffold-card id="' + cardId + '" data-event="' + eventJson + '"></scaffold-card>';
         }
         
@@ -2196,6 +2495,20 @@ export function getRenderersJs(): string {
         if (event.type === 'loop_paused') {
           return renderLoopPausedInline(event);
         }
+        // AgenticLoop: loop_failed card
+        if (event.type === 'loop_failed') {
+          const p = event.payload || {};
+          const errorMsg = p.error || p.reason || 'Unknown error';
+          return \`
+            <div class="event-card" style="border-left:3px solid #f87171;padding:10px 12px;">
+              <div style="display:flex;align-items:center;gap:6px;margin-bottom:6px;">
+                <span style="font-size:16px;">\u26a0</span>
+                <span style="font-weight:600;color:#f87171;">Agent Loop Failed</span>
+              </div>
+              <div style="color:var(--vscode-descriptionForeground);font-size:12px;">\${escapeHtml(errorMsg)}</div>
+            </div>
+          \`;
+        }
         // AgenticLoop: loop_completed card
         if (event.type === 'loop_completed') {
           const p = event.payload || {};
@@ -2221,7 +2534,7 @@ export function getRenderersJs(): string {
           const recommendedAction = p.recommended_action || '';
           const options = (p.options) || [];
           const lastCheckpointId = p.last_checkpoint_id || null;
-          const mode = p.mode || 'ANSWER';
+          const mode = p.mode || 'MISSION';
           const stage = p.stage || 'none';
           const eventCount = p.event_count || 0;
           const timeSinceMs = p.time_since_interruption_ms || 0;
@@ -2565,7 +2878,7 @@ export function getRenderersJs(): string {
               
               if (tool === 'llm_answer') {
                 const humanModel = model ? humanizeModelName(model) : '';
-                return \`Answering (\${humanModel || 'LLM'})\${hasContext ? ' · Project-aware' : ''}\`;
+                return \`Agent responding (\${humanModel || 'LLM'})\${hasContext ? ' · Project-aware' : ''}\`;
               }
               
               const target = e.payload.target;
@@ -2582,7 +2895,7 @@ export function getRenderersJs(): string {
               const success = e.payload.success !== false;
               
               if (tool === 'llm_answer') {
-                return \`Answer \${success ? 'completed' : 'failed'}\${duration ? ' (' + Math.round(duration / 1000) + 's)' : ''}\`;
+                return \`Response \${success ? 'completed' : 'failed'}\${duration ? ' (' + Math.round(duration / 1000) + 's)' : ''}\`;
               }
               
               return \`\${tool}\${duration ? ' (' + duration + 'ms)' : ''}\`;
@@ -2674,7 +2987,7 @@ export function getRenderersJs(): string {
                 const todoCount = e.payload.todo_count;
                 return \`\${filesScanned} files scanned, \${anchorFiles} anchor files\${stack !== 'unknown' ? ' | Stack: ' + stack : ''}\${todoCount ? ' | TODOs: ' + todoCount : ''}\`;
               }
-              // ANSWER mode context
+              // Agent context
               const filesCount = (e.payload.files_included || []).length;
               const totalLines = e.payload.total_lines || 0;
               const stack = (e.payload.inferred_stack || []).join(', ');

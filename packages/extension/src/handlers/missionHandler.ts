@@ -283,7 +283,7 @@ export async function handleExecutePlan(
     let llmClient = null;
     let toolProvider = null;
     try {
-      llmClient = new AnthropicLLMClient(apiKey);
+      llmClient = new AnthropicLLMClient(apiKey, modelId);
       toolProvider = new VSCodeToolProvider(workspaceRoot);
       toolProvider.setWebview(webview);
     } catch (err) {
@@ -371,8 +371,29 @@ export async function handleExecutePlan(
     missionExecutor.executePlan(plan, {
       missionId,
       emitMissionStarted
-    }).catch(error => {
+    }).catch(async (error) => {
       console.error('[handleExecutePlan] Mission execution error:', error);
+
+      ctx.isMissionExecuting = false;
+      ctx.currentExecutingMissionId = null;
+      vscode.commands.executeCommand('setContext', 'ordinex.isRunning', false);
+
+      await ctx.emitEvent({
+        event_id: ctx.generateId(),
+        task_id: taskId,
+        timestamp: new Date().toISOString(),
+        type: 'failure_detected',
+        mode: ctx.currentMode,
+        stage: ctx.currentStage,
+        payload: {
+          kind: 'mission_execution_failed',
+          error: error instanceof Error ? error.message : String(error),
+        },
+        evidence_ids: [],
+        parent_event_id: null,
+      });
+
+      await ctx.sendEventsToWebview(webview, taskId);
       vscode.window.showErrorMessage(`Mission execution failed: ${error}`);
     });
 

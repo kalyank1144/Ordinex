@@ -1,0 +1,12 @@
+{
+  "web": {
+    "nextMajor": 15,
+    "shadcn": "2.1.0",
+    "tailwind": "4.0.0",
+    "typescript": "5.7.0"
+  },
+  "mobile": {
+    "expoSdk": 52,
+    "reactNative": "0.76.0"
+  }
+}

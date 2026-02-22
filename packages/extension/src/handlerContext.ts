@@ -24,6 +24,7 @@ import type {
   ScaffoldFlowCoordinator,
   ActiveTaskMetadata,
   ConversationHistory,
+  ScaffoldSession,
 } from 'core';
 import type { FileReadResult, ToolExecutionPolicy, PreflightChecksInput, PreflightOrchestratorCtx, VerifyRecipeInfo, VerifyConfig, VerifyEventCtx, EditorContext } from 'core';
 import type { TokenCounter } from 'core/src/tokenCounter';
@@ -53,6 +54,7 @@ export interface IProvider {
   // ─── Workspace ───
   selectedWorkspaceRoot: string | null;
   scaffoldProjectPath: string | null;
+  scaffoldSession: ScaffoldSession | null;
 
   // ─── Pending State ───
   pendingPreflightResult: any;

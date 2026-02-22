@@ -5,11 +5,10 @@
  *  - handleScaffoldFlow (recipe selection, scaffold apply)
  *  - handlePreflightResolution (apply preflight resolution + retry)
  *  - handlePreflightProceed (post-resolution verification, error handling)
- *  - triggerPostScaffoldVerification (verify recipe & scaffold, emit events)
- *  - handleVerificationRetry (retry failed verification)
- *  - handleVerificationRestore (restore from checkpoint, retry)
- *  - handleVerificationContinue (continue after verification, clean up)
  *  - handleNextStepSelected (post-scaffold cleanup, error recovery routing)
+ *
+ * Post-scaffold orchestration (overlays, shadcn, quality gates) is handled
+ * entirely by core/postScaffoldOrchestrator via the enhanced pipeline.
  *
  * All functions take `ctx: IProvider` as first parameter instead of using `this`.
  */
@@ -17,9 +16,6 @@
 import type { IProvider } from '../handlerContext';
 import type {
   Event,
-  VerifyRecipeInfo,
-  VerifyConfig,
-  VerifyEventCtx,
   ProcessStatusEvent,
   ProcessOutputEvent,
 } from 'core';
@@ -33,15 +29,20 @@ import {
   runPreflightChecksWithEvents,
   emitPreflightResolutionSelected,
   applyResolutions,
-  runPostVerificationWithEvents,
   getProcessManager,
   generateProcessId,
   detectProcessType,
   extractAppNameFromPrompt,
+  getRecipeDisplayName,
+  getCreateCommand,
+  getKeyFiles,
+  getDevCommand,
+  createScaffoldSession,
 } from 'core';
 
 // Cross-handler imports
 import { handleSubmitPrompt } from './submitPromptHandler';
+import { AnthropicLLMClient } from '../anthropicLLMClient';
 
 // ---------------------------------------------------------------------------
 // handleScaffoldFlow
@@ -115,7 +116,56 @@ export async function handleScaffoldFlow(
       hasReferenceContext: !!state.referenceContext,
     });
 
-    // Send events to webview
+    // Send events to webview (shows progress indicator)
+    await ctx.sendEventsToWebview(webview, taskId);
+
+    // --- Blueprint Extraction then Decision Card ---
+    // Extract a structured AppBlueprint via LLM, then emit the single
+    // decision card. If extraction fails or no API key, the decision card
+    // is emitted without blueprint data — there is no "old fallback card".
+    try {
+      const apiKey = await ctx._context.secrets.get('ordinex.apiKey');
+      if (apiKey) {
+        const coreModule = await import('core');
+        const { buildExtractionPrompt, parseBlueprintFromLLMResponse } = coreModule;
+
+        if (typeof buildExtractionPrompt === 'function' && typeof parseBlueprintFromLLMResponse === 'function') {
+          console.log(`${LOG_PREFIX} Extracting app blueprint via LLM...`);
+          const extractionPrompt = buildExtractionPrompt(userPrompt);
+
+          const llmClient = new AnthropicLLMClient(apiKey);
+          const llmResponse = await llmClient.createMessage({
+            model: modelId || 'claude-sonnet-4-20250514',
+            max_tokens: 4096,
+            system: 'You are an expert full-stack app architect. You design comprehensive, production-quality app blueprints. Return ONLY valid JSON, no explanation or markdown.',
+            messages: [{ role: 'user', content: extractionPrompt }],
+          });
+
+          const responseText = llmResponse?.content
+            ?.filter((b: any) => b.type === 'text')
+            ?.map((b: any) => b.text)
+            ?.join('') || '';
+
+          if (responseText) {
+            const extractionResult = parseBlueprintFromLLMResponse(responseText, userPrompt);
+            console.log(`${LOG_PREFIX} Blueprint extracted:`, {
+              app_type: extractionResult.blueprint.app_type,
+              pages: extractionResult.blueprint.pages.length,
+              confidence: extractionResult.confidence,
+            });
+
+            await (coordinator as any).setBlueprint(extractionResult);
+          }
+        }
+      } else {
+        console.log(`${LOG_PREFIX} No API key — blueprint extraction skipped`);
+      }
+    } catch (blueprintErr) {
+      console.warn(`${LOG_PREFIX} Blueprint extraction failed (non-fatal):`, blueprintErr);
+    }
+
+    // Emit the ONE decision card (with or without blueprint data)
+    await (coordinator as any).emitDecisionCard();
     await ctx.sendEventsToWebview(webview, taskId);
 
     console.log(`${LOG_PREFIX} === SCAFFOLD FLOW INITIALIZED ===`);
@@ -313,18 +363,7 @@ export async function handlePreflightProceed(
     const recipeSelection = selectRecipe(scaffoldPrompt);
     console.log(`${LOG_PREFIX} Recipe selected: ${recipeSelection.recipe_id}`);
 
-    // Build non-interactive create command
-    const recipeNames: Record<string, string> = {
-      'nextjs_app_router': 'Next.js',
-      'vite_react': 'Vite + React',
-      'expo': 'Expo',
-    };
-
-    const createCmd = recipeSelection.recipe_id === 'nextjs_app_router'
-      ? `npx --yes create-next-app@latest ${appName} --typescript --tailwind --eslint --app --src-dir --use-npm --import-alias "@/*"`
-      : recipeSelection.recipe_id === 'vite_react'
-      ? `npm create vite@latest ${appName} -- --template react-ts`
-      : `npx --yes create-expo-app ${appName} --template blank-typescript`;
+    const createCmd = getCreateCommand(recipeSelection.recipe_id, appName);
 
     await ctx.emitEvent({
       event_id: ctx.generateId(),
@@ -361,6 +400,8 @@ export async function handlePreflightProceed(
       parent_event_id: null,
     });
 
+    // Use a stable scaffold_id shared with the post-scaffold orchestrator
+    const scaffoldIdForApply = message.scaffoldId || `scaffold_${ctx.generateId()}`;
     await ctx.emitEvent({
       event_id: ctx.generateId(),
       task_id: taskId,
@@ -369,6 +410,7 @@ export async function handlePreflightProceed(
       mode: ctx.currentMode,
       stage: ctx.currentStage,
       payload: {
+        scaffold_id: scaffoldIdForApply,
         recipe_id: recipeSelection.recipe_id,
         command: createCmd,
         target_directory: targetDir,
@@ -377,17 +419,16 @@ export async function handlePreflightProceed(
       parent_event_id: null,
     });
 
-    await ctx.sendEventsToWebview(webview, taskId);
-
-    // V9: User clicked "Proceed" — escalate to MISSION for file creation (user-initiated)
     await ctx.setModeWithEvent('MISSION', taskId, {
       reason: 'Scaffold approved by user — escalating to MISSION for file creation',
       user_initiated: true,
     });
 
+    await ctx.sendEventsToWebview(webview, taskId);
+
     // Run scaffold in terminal
     const terminal = vscode.window.createTerminal({
-      name: `Scaffold: ${recipeNames[recipeSelection.recipe_id] || 'Project'}`,
+      name: `Scaffold: ${getRecipeDisplayName(recipeSelection.recipe_id)}`,
       cwd: targetDir,
     });
     terminal.show(true);
@@ -444,16 +485,17 @@ export async function handlePreflightProceed(
     await ctx.sendEventsToWebview(webview, taskId);
 
     vscode.window.showInformationMessage(
-      `${recipeNames[recipeSelection.recipe_id] || 'Project'} scaffold started! Follow the terminal prompts.`
+      `${getRecipeDisplayName(recipeSelection.recipe_id)} scaffold started! Follow the terminal prompts.`
     );
 
-    // START POST-SCAFFOLD ORCHESTRATION (same as direct proceed path)
-    const scaffoldId = message.scaffoldId || ctx.generateId();
+    // Reuse the same scaffold_id that was used for scaffold_apply_started
+    const scaffoldId = scaffoldIdForApply;
 
     try {
       const coreModule = await import('core');
       const startPostScaffoldOrchestration = coreModule.startPostScaffoldOrchestration;
 
+      console.log(`${LOG_PREFIX} startPostScaffoldOrchestration available: ${typeof startPostScaffoldOrchestration === 'function'}`);
       if (typeof startPostScaffoldOrchestration === 'function') {
         const postScaffoldEventBus = new EventBus(ctx.eventStore!);
 
@@ -485,6 +527,21 @@ export async function handlePreflightProceed(
           console.warn(`${LOG_PREFIX} No API key (ordinex.apiKey) — feature generation will be skipped`);
         }
 
+        // Get blueprint from coordinator if available (use `as any` for enhanced methods)
+        const activeCoordinator = ctx.activeScaffoldCoordinator as any;
+        const blueprint = activeCoordinator?.getBlueprint?.();
+        const styleResolution = activeCoordinator?.getState?.()?.styleResolution;
+        // Priority: explicit UI style intent > resolved style > undefined (let orchestrator derive from app type)
+        const userStyleInput = activeCoordinator?.getStyleInput?.()
+          || styleResolution?.input
+          || undefined;
+
+        // Blueprint wiring diagnostics
+        console.log(`${LOG_PREFIX} [BLUEPRINT_WIRING] activeCoordinator exists: ${!!activeCoordinator}`);
+        console.log(`${LOG_PREFIX} [BLUEPRINT_WIRING] getBlueprint method exists: ${typeof activeCoordinator?.getBlueprint === 'function'}`);
+        console.log(`${LOG_PREFIX} [BLUEPRINT_WIRING] blueprint result: ${blueprint ? `app_type=${blueprint.app_type}, pages=${blueprint.pages?.length}` : 'undefined'}`);
+        console.log(`${LOG_PREFIX} [BLUEPRINT_WIRING] userStyleInput: ${userStyleInput ? `mode=${userStyleInput.mode}, value=${userStyleInput.value}` : 'undefined'}`);
+
         const postScaffoldCtx = {
           taskId: taskId,
           scaffoldId: scaffoldId,
@@ -496,55 +553,154 @@ export async function handlePreflightProceed(
           mode: ctx.currentMode,
           userPrompt: scaffoldPrompt,
           llmClient: featureLLMClient,
+          blueprint: blueprint || undefined,
+          styleInput: userStyleInput,
+          useEnhancedPipeline: true,
         };
 
         console.log(`${LOG_PREFIX} Starting post-scaffold orchestration with userPrompt: "${scaffoldPrompt}"`);
 
-        // Subscribe to post-scaffold events for UI updates + capture project path
+        // Subscribe to post-scaffold events for UI updates + capture project path + build session
         postScaffoldEventBus.subscribe(async (event) => {
-          // Capture project path as soon as scaffold_final_complete is emitted
           if ((event as any).type === 'scaffold_final_complete' && (event as any).payload?.project_path) {
-            ctx.scaffoldProjectPath = (event as any).payload.project_path as string;
-            console.log(`${LOG_PREFIX} Captured scaffoldProjectPath from event: ${ctx.scaffoldProjectPath}`);
+            const payload = (event as any).payload;
+            ctx.scaffoldProjectPath = payload.project_path as string;
+
+            ctx.scaffoldSession = createScaffoldSession({
+              projectPath: payload.project_path,
+              appName: appName,
+              recipeId: recipeSelection.recipe_id as any,
+              designPackId: designPackIdForPost,
+              blueprint: payload.blueprint_summary
+                ? { ...payload.blueprint_summary, app_type: payload.blueprint_summary.app_type || 'web' }
+                : blueprint,
+              doctorStatus: payload.doctor_status,
+              doctorCard: payload.doctor_card,
+              projectSummary: payload.project_summary,
+            });
+            console.log(`${LOG_PREFIX} ScaffoldSession created for: ${appName}`);
           }
           await ctx.sendEventsToWebview(webview, taskId);
         });
 
-        // Fire and forget
-        startPostScaffoldOrchestration(postScaffoldCtx).then((result: any) => {
+        // Fire and forget — auto-open project + start dev server when complete
+        startPostScaffoldOrchestration(postScaffoldCtx).then(async (result: any) => {
           console.log(`${LOG_PREFIX} Post-scaffold complete:`, result);
           if (result?.projectPath) {
             ctx.scaffoldProjectPath = result.projectPath;
             console.log(`${LOG_PREFIX} Stored scaffoldProjectPath: ${ctx.scaffoldProjectPath}`);
+
+            // Add project folder to workspace (without reloading the window)
+            try {
+              const existingFolders = vscode.workspace.workspaceFolders || [];
+              const alreadyOpen = existingFolders.some(f => f.uri.fsPath === result.projectPath);
+              if (!alreadyOpen) {
+                vscode.workspace.updateWorkspaceFolders(
+                  existingFolders.length, // insert at end
+                  0,                      // don't remove any
+                  { uri: vscode.Uri.file(result.projectPath), name: path.basename(result.projectPath) }
+                );
+                console.log(`${LOG_PREFIX} Added project folder to workspace: ${result.projectPath}`);
+              } else {
+                console.log(`${LOG_PREFIX} Project folder already in workspace: ${result.projectPath}`);
+              }
+            } catch (openErr) {
+              console.warn(`${LOG_PREFIX} Could not add project folder to workspace:`, openErr);
+            }
+
+            // Open key generated files in editor tabs
+            try {
+              const keyFiles = getKeyFiles(recipeSelection.recipe_id);
+              let openedCount = 0;
+              for (const relPath of keyFiles) {
+                if (openedCount >= 3) break;
+                const absPath = path.join(result.projectPath, relPath);
+                if (fs.existsSync(absPath)) {
+                  const doc = await vscode.workspace.openTextDocument(absPath);
+                  await vscode.window.showTextDocument(doc, { preview: false, preserveFocus: true });
+                  openedCount++;
+                  console.log(`${LOG_PREFIX} Opened file: ${relPath}`);
+                }
+              }
+            } catch (fileOpenErr) {
+              console.warn(`${LOG_PREFIX} Could not open generated files:`, fileOpenErr);
+            }
+
+            // Auto-start dev server after successful scaffold
+            try {
+              const devCmd = getDevCommand(recipeSelection.recipe_id);
+              const devTerminal = vscode.window.createTerminal({
+                name: `Ordinex: Dev Server`,
+                cwd: result.projectPath,
+              });
+              devTerminal.sendText(devCmd);
+              devTerminal.show(true);
+              console.log(`${LOG_PREFIX} Auto-started dev server in ${result.projectPath}`);
+
+              // Try to open Simple Browser after a delay for server startup
+              // Use proposed onDidWriteTerminalData API if available, else fallback to timeout
+              let browserOpened = false;
+              const windowAny = vscode.window as any;
+              if (typeof windowAny.onDidWriteTerminalData === 'function') {
+                const terminalOutputListener = windowAny.onDidWriteTerminalData((e: any) => {
+                  if (browserOpened || e.terminal !== devTerminal) return;
+                  const text = String(e.data || '');
+                  // Match common dev server ready messages: "localhost:3000", "127.0.0.1:3000", etc.
+                  const portMatch = text.match(/(?:localhost|127\.0\.0\.1|0\.0\.0\.0):(\d{4,5})/);
+                  if (portMatch) {
+                    browserOpened = true;
+                    terminalOutputListener?.dispose();
+                    const port = portMatch[1];
+                    const url = `http://localhost:${port}`;
+                    console.log(`${LOG_PREFIX} Dev server ready on ${url}`);
+                    setTimeout(async () => {
+                      try {
+                        await vscode.commands.executeCommand('simpleBrowser.api.open', url, {
+                          viewColumn: vscode.ViewColumn.Beside,
+                        });
+                        console.log(`${LOG_PREFIX} Opened Simple Browser for dev preview`);
+                      } catch (browserErr) {
+                        console.log(`${LOG_PREFIX} Simple Browser not available, opening external:`, browserErr);
+                        await vscode.env.openExternal(vscode.Uri.parse(url));
+                      }
+                    }, 2000);
+                  }
+                });
+                // Safety timeout: dispose listener after 60 seconds
+                setTimeout(() => {
+                  if (!browserOpened) {
+                    terminalOutputListener?.dispose();
+                    console.log(`${LOG_PREFIX} Dev server port detection timed out`);
+                  }
+                }, 60000);
+              } else {
+                // Fallback: open Simple Browser after fixed timeout
+                console.log(`${LOG_PREFIX} onDidWriteTerminalData not available, using fallback timeout`);
+                setTimeout(async () => {
+                  try {
+                    await vscode.commands.executeCommand('simpleBrowser.api.open', 'http://localhost:3000', {
+                      viewColumn: vscode.ViewColumn.Beside,
+                    });
+                    console.log(`${LOG_PREFIX} Opened Simple Browser (fallback timeout)`);
+                  } catch (browserErr) {
+                    console.log(`${LOG_PREFIX} Simple Browser not available:`, browserErr);
+                  }
+                }, 10000);
+              }
+            } catch (devErr) {
+              console.warn(`${LOG_PREFIX} Auto dev server failed (non-fatal):`, devErr);
+            }
           }
         }).catch((error: any) => {
           console.error(`${LOG_PREFIX} Post-scaffold error:`, error);
         });
       } else {
-        console.warn(`${LOG_PREFIX} startPostScaffoldOrchestration not available, falling back to verification`);
-        // Fallback to old verification pipeline
-        const verifyRecipe: VerifyRecipeInfo = {
-          recipeId: recipeSelection.recipe_id,
-          recipeName: recipeNames[recipeSelection.recipe_id],
-          hasTypeScript: recipeSelection.recipe_id === 'nextjs_app_router' || recipeSelection.recipe_id === 'vite_react',
-        };
-        ctx.pendingVerifyTargetDir = targetDir;
-        ctx.pendingVerifyRecipe = verifyRecipe;
-        ctx.pendingVerifyScaffoldId = scaffoldId;
-        triggerPostScaffoldVerification(ctx, targetDir, verifyRecipe, scaffoldId, taskId, webview);
+        console.error(`${LOG_PREFIX} startPostScaffoldOrchestration not available in core module — scaffold will not complete`);
+        vscode.window.showErrorMessage('Scaffold pipeline unavailable. Please update the core package.');
       }
     } catch (coreImportError) {
       console.error(`${LOG_PREFIX} Failed to import core module:`, coreImportError);
-      // Fallback to verification
-      const verifyRecipe: VerifyRecipeInfo = {
-        recipeId: recipeSelection.recipe_id,
-        recipeName: recipeNames[recipeSelection.recipe_id],
-        hasTypeScript: recipeSelection.recipe_id === 'nextjs_app_router' || recipeSelection.recipe_id === 'vite_react',
-      };
-      ctx.pendingVerifyTargetDir = targetDir;
-      ctx.pendingVerifyRecipe = verifyRecipe;
-      ctx.pendingVerifyScaffoldId = scaffoldId;
-      triggerPostScaffoldVerification(ctx, targetDir, verifyRecipe, scaffoldId, taskId, webview);
+      vscode.window.showErrorMessage('Failed to load scaffold pipeline. Please check the core package.');
     }
 
   } catch (error) {
@@ -553,234 +709,10 @@ export async function handlePreflightProceed(
   }
 }
 
-// ---------------------------------------------------------------------------
-// triggerPostScaffoldVerification
-// ---------------------------------------------------------------------------
-
-/**
- * Step 44: Trigger post-scaffold verification pipeline.
- *
- * Waits for scaffold command to create files (polls for package.json),
- * then runs verification checks and sends results to webview.
- */
-export async function triggerPostScaffoldVerification(
-  ctx: IProvider,
-  targetDir: string,
-  recipe: VerifyRecipeInfo,
-  scaffoldId: string,
-  taskId: string,
-  webview: vscode.Webview,
-): Promise<void> {
-  const LOG_PREFIX = '[Ordinex:Verify]';
-  console.log(`${LOG_PREFIX} Waiting for scaffold to create files in ${targetDir}...`);
-
-  // Poll for package.json up to 3 minutes (scaffold CLI takes time)
-  const maxWaitMs = 180_000;
-  const pollIntervalMs = 3_000;
-  const startWait = Date.now();
-  let found = false;
-
-  while (Date.now() - startWait < maxWaitMs) {
-    if (fs.existsSync(path.join(targetDir, 'package.json'))) {
-      found = true;
-      break;
-    }
-    await new Promise(resolve => setTimeout(resolve, pollIntervalMs));
-  }
-
-  if (!found) {
-    console.log(`${LOG_PREFIX} package.json not found after ${maxWaitMs / 1000}s, skipping verification`);
-    return;
-  }
-
-  // Small delay for file system to settle
-  await new Promise(resolve => setTimeout(resolve, 2000));
-
-  console.log(`${LOG_PREFIX} Running post-scaffold verification...`);
-
-  const eventBus = new (require('events').EventEmitter)();
-  const events: Event[] = [];
-  eventBus.on('event', (e: Event) => {
-    events.push(e);
-    // Store events as they come in
-    if (ctx.eventStore) {
-      ctx.eventStore.append(e);
-    }
-  });
-
-  const verifyCtx: VerifyEventCtx = {
-    scaffoldId,
-    runId: taskId,
-    eventBus,
-    mode: ctx.currentMode,
-  };
-
-  const config: VerifyConfig = {
-    installTimeoutMs: 120_000,
-    lintTimeoutMs: 60_000,
-    typecheckTimeoutMs: 60_000,
-    buildTimeoutMs: 120_000,
-    allowBuild: true,
-    installMaxRetries: 1,
-    replayMode: false,
-  };
-
-  try {
-    const result = await runPostVerificationWithEvents(targetDir, recipe, config, verifyCtx);
-
-    console.log(`${LOG_PREFIX} Verification complete: ${result.outcome}`);
-
-    // Send verification result to webview
-    webview.postMessage({
-      type: 'ordinex:verificationCard',
-      payload: {
-        scaffold_id: scaffoldId,
-        run_id: taskId,
-        outcome: result.outcome,
-        steps: result.steps,
-        total_duration_ms: result.totalDurationMs,
-        package_manager: result.packageManager,
-        from_replay: result.fromReplay,
-        allow_continue: result.outcome !== 'fail',
-      },
-    });
-
-    // Clear verification state on success (but preserve taskId for follow-ups)
-    if (result.outcome === 'pass') {
-      ctx.currentStage = 'none';
-      ctx.pendingVerifyTargetDir = null;
-      ctx.pendingVerifyRecipe = null;
-      ctx.pendingVerifyScaffoldId = null;
-    }
-  } catch (error) {
-    console.error(`${LOG_PREFIX} Verification error:`, error);
-  }
-}
-
-// ---------------------------------------------------------------------------
-// handleVerificationRetry
-// ---------------------------------------------------------------------------
-
-/**
- * Step 44: Handle verification retry from webview.
- */
-export async function handleVerificationRetry(
-  ctx: IProvider,
-  message: any,
-  webview: vscode.Webview,
-): Promise<void> {
-  const LOG_PREFIX = '[Ordinex:Verify]';
-  console.log(`${LOG_PREFIX} Retry requested for scaffold ${message.scaffoldId}`);
-
-  const targetDir = ctx.pendingVerifyTargetDir;
-  const recipe = ctx.pendingVerifyRecipe;
-  const scaffoldId = ctx.pendingVerifyScaffoldId || message.scaffoldId;
-  const taskId = ctx.currentTaskId || ctx.generateId();
-
-  if (!targetDir || !recipe) {
-    console.error(`${LOG_PREFIX} No pending verification context for retry`);
-    vscode.window.showErrorMessage('Cannot retry verification: no pending context.');
-    return;
-  }
-
-  await triggerPostScaffoldVerification(ctx, targetDir, recipe, scaffoldId, taskId, webview);
-}
-
-// ---------------------------------------------------------------------------
-// handleVerificationRestore
-// ---------------------------------------------------------------------------
-
-/**
- * Step 44: Handle verification restore (rollback to checkpoint).
- */
-export async function handleVerificationRestore(
-  ctx: IProvider,
-  message: any,
-  webview: vscode.Webview,
-): Promise<void> {
-  const LOG_PREFIX = '[Ordinex:Verify]';
-  console.log(`${LOG_PREFIX} Restore checkpoint requested for scaffold ${message.scaffoldId}`);
-
-  const taskId = ctx.currentTaskId || ctx.generateId();
-
-  // Emit checkpoint restored event
-  await ctx.emitEvent({
-    event_id: ctx.generateId(),
-    task_id: taskId,
-    timestamp: new Date().toISOString(),
-    type: 'scaffold_checkpoint_restored',
-    mode: ctx.currentMode,
-    stage: ctx.currentStage,
-    payload: {
-      scaffold_id: message.scaffoldId,
-      reason: 'verification_failed',
-      restored_at_iso: new Date().toISOString(),
-    },
-    evidence_ids: [],
-    parent_event_id: null,
-  });
-
-  // Clean up state
-  ctx.pendingVerifyTargetDir = null;
-  ctx.pendingVerifyRecipe = null;
-  ctx.pendingVerifyScaffoldId = null;
-  ctx.currentTaskId = null;
-  ctx.currentStage = 'none';
-
-  vscode.window.showInformationMessage('Scaffold checkpoint restored. You can try again.');
-  await ctx.sendEventsToWebview(webview, taskId);
-}
-
-// ---------------------------------------------------------------------------
-// handleVerificationContinue
-// ---------------------------------------------------------------------------
-
-/**
- * Step 44: Handle verification continue anyway.
- */
-export async function handleVerificationContinue(
-  ctx: IProvider,
-  message: any,
-  webview: vscode.Webview,
-): Promise<void> {
-  const LOG_PREFIX = '[Ordinex:Verify]';
-  console.log(`${LOG_PREFIX} Continue anyway after verification for scaffold ${message.scaffoldId}`);
-
-  const taskId = ctx.currentTaskId || ctx.generateId();
-
-  // Capture project path before clearing state
-  const projectPath = ctx.scaffoldProjectPath || ctx.pendingVerifyTargetDir || '';
-  if (projectPath && !ctx.scaffoldProjectPath) {
-    ctx.scaffoldProjectPath = projectPath;
-  }
-
-  // Emit final complete event (include project_path so buttons work)
-  await ctx.emitEvent({
-    event_id: ctx.generateId(),
-    task_id: taskId,
-    timestamp: new Date().toISOString(),
-    type: 'scaffold_final_complete',
-    mode: ctx.currentMode,
-    stage: ctx.currentStage,
-    payload: {
-      scaffold_id: message.scaffoldId,
-      project_path: projectPath,
-      verification_outcome: 'continued_with_warnings',
-      completed_at_iso: new Date().toISOString(),
-    },
-    evidence_ids: [],
-    parent_event_id: null,
-  });
-
-  // Clean up verification state (but preserve taskId for follow-ups)
-  ctx.pendingVerifyTargetDir = null;
-  ctx.pendingVerifyRecipe = null;
-  ctx.pendingVerifyScaffoldId = null;
-  ctx.currentStage = 'none';
-
-  vscode.window.showInformationMessage('Scaffold complete! Some verification checks had warnings.');
-  await ctx.sendEventsToWebview(webview, taskId);
-}
+// Legacy verification functions (triggerPostScaffoldVerification, handleVerificationRetry,
+// handleVerificationRestore, handleVerificationContinue) have been removed.
+// The enhanced pipeline in core/postScaffoldOrchestrator handles all post-scaffold
+// orchestration including quality gates, overlays, and component setup.
 
 // ---------------------------------------------------------------------------
 // handleNextStepSelected
@@ -1074,12 +1006,21 @@ export async function handleNextStepSelected(
       }
 
       case 'editor': {
-        // S3: Open project folder in editor
+        // S3: Open project folder in editor (add to workspace, don't reload)
         const editorPath = suggestion?.projectPath || resolvedProjectPath;
         if (editorPath) {
           console.log(`${LOG_PREFIX} Opening in editor: ${editorPath}`);
-          const uri = vscode.Uri.file(editorPath);
-          await vscode.commands.executeCommand('vscode.openFolder', uri, { forceNewWindow: false });
+          const existingFolders = vscode.workspace.workspaceFolders || [];
+          const alreadyOpen = existingFolders.some(f => f.uri.fsPath === editorPath);
+          if (!alreadyOpen) {
+            vscode.workspace.updateWorkspaceFolders(
+              existingFolders.length,
+              0,
+              { uri: vscode.Uri.file(editorPath), name: path.basename(editorPath) }
+            );
+          }
+          // Also reveal the folder in the explorer
+          await vscode.commands.executeCommand('workbench.view.explorer');
         } else {
           vscode.window.showWarningMessage('No project path available to open.');
         }

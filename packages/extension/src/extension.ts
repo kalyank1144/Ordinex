@@ -52,7 +52,7 @@ import { FsUndoService } from './fsUndoService';
 // R2: Extracted handler imports
 import type { IProvider } from './handlerContext';
 import { handleSubmitPrompt } from './handlers/submitPromptHandler';
-import { handleAnswerMode } from './handlers/answerHandler';
+
 import {
   handleConfirmMode,
   handleExecutePlan,
@@ -80,9 +80,6 @@ import {
   handleScaffoldFlow,
   handlePreflightResolution,
   handlePreflightProceed,
-  handleVerificationRetry,
-  handleVerificationRestore,
-  handleVerificationContinue,
   handleNextStepSelected,
 } from './handlers/scaffoldHandler';
 import {
@@ -106,7 +103,7 @@ class MissionControlViewProvider implements vscode.WebviewViewProvider {
   // R2: Properties made public for handler access via IProvider interface
   public eventStore: EventStore | null = null;
   public currentTaskId: string | null = null;
-  public currentMode: Mode = 'ANSWER';
+  public currentMode: Mode = 'MISSION';
   public currentStage: 'plan' | 'retrieve' | 'edit' | 'test' | 'repair' | 'none' = 'none';
   public repairOrchestrator: RepairOrchestrator | null = null;
   public isProcessing: boolean = false;
@@ -126,6 +123,7 @@ class MissionControlViewProvider implements vscode.WebviewViewProvider {
   public pendingVerifyScaffoldId: string | null = null;
   public settingsPanel: vscode.WebviewPanel | null = null;
   public scaffoldProjectPath: string | null = null;
+  public scaffoldSession: import('core').ScaffoldSession | null = null;
   private _memoryService: FsMemoryService | null = null;
   private _projectMemoryManager: ProjectMemoryManager | null = null;
   public recentEventsWindow: Event[] = [];
@@ -678,7 +676,7 @@ class MissionControlViewProvider implements vscode.WebviewViewProvider {
           task_id: task.task_id,
           timestamp: new Date().toISOString(),
           type: 'task_interrupted',
-          mode: (task.mode as Mode) || 'ANSWER',
+          mode: (task.mode as Mode) || 'MISSION',
           stage: (task.stage as any) || 'none',
           payload: {
             task_id: task.task_id,
@@ -708,7 +706,7 @@ class MissionControlViewProvider implements vscode.WebviewViewProvider {
         // Rehydrate extension state
         this.currentTaskId = task.task_id;
         globalCurrentTaskId = task.task_id;
-        this.currentMode = (task.mode as Mode) || 'ANSWER';
+        this.currentMode = (task.mode as Mode) || 'MISSION';
         this.currentStage = (task.stage as any) || 'none';
 
         // Send events to webview for seamless timeline display
@@ -728,6 +726,158 @@ class MissionControlViewProvider implements vscode.WebviewViewProvider {
       }
     } catch (err) {
       console.error('[Persistence] Error in restoreOrDetectCrash:', err);
+    }
+  }
+
+  /**
+   * Handle Doctor Card action buttons from the scaffold progress UI.
+   */
+  private async handleDoctorAction(message: any, webview: vscode.Webview): Promise<void> {
+    const actionId = message.action;
+    const doctorCard = message.doctor_card;
+    const doctorStatus = message.doctor_status;
+    const projectPath = message.project_path || this.scaffoldProjectPath;
+    console.log('[DoctorAction] Received:', actionId, 'project:', projectPath);
+
+    switch (actionId) {
+      case 'open_logs': {
+        const outputChannel = vscode.window.createOutputChannel('Ordinex Scaffold Logs');
+        outputChannel.show();
+        break;
+      }
+
+      case 'fix_automatically':
+      case 'fix_and_resume': {
+        if (this.isMissionExecuting) {
+          vscode.window.showWarningMessage('A mission is already running. Please wait for it to complete.');
+          return;
+        }
+
+        const taskId = message.task_id || this.currentTaskId || this.generateId();
+
+        let sessionCtx = '';
+        if (this.scaffoldSession) {
+          const { buildFollowUpContext } = await import('core');
+          sessionCtx = buildFollowUpContext(this.scaffoldSession) + '\n\n';
+        }
+
+        const fixPlan = {
+          goal: 'Fix all project errors until it builds and runs cleanly',
+          assumptions: [],
+          success_criteria: [
+            'Build command succeeds with zero errors',
+            'Dev server starts without errors',
+          ],
+          scope_contract: {
+            max_files: 30,
+            max_lines: 3000,
+            allowed_tools: ['read_file', 'write_file', 'edit_file', 'search_files', 'list_directory', 'run_command'],
+            direct_write: true,
+          },
+          steps: [
+            {
+              step_id: 'fix_all',
+              description:
+                sessionCtx +
+                'A project was just scaffolded but has build errors. Your job is to fix every error until the project builds and runs.\n\n' +
+                'Process:\n' +
+                '1. Run `npm run build` to see all errors\n' +
+                '2. Read the full error output carefully — identify every distinct error\n' +
+                '3. Fix all the errors you found\n' +
+                '4. Run `npm run build` again\n' +
+                '5. If there are still errors, go back to step 2\n' +
+                '6. Once the build passes, start the dev server to verify it runs without runtime errors\n\n' +
+                'Rules:\n' +
+                '- Do not stop after fixing one type of error. Keep iterating until the build is fully clean.\n' +
+                '- Read error messages carefully. Fix the root cause, not symptoms.\n' +
+                '- If a file has issues, read it first to understand the context before editing.\n' +
+                '- Do not ask questions. Just fix everything.',
+              expected_evidence: ['command_output', 'files_modified'],
+            },
+          ],
+          risks: [],
+        };
+
+        if (projectPath) {
+          this.scaffoldProjectPath = projectPath;
+        }
+
+        const missionId = `doctor_fix_${Date.now()}`;
+
+        await this.emitEvent({
+          event_id: this.generateId(),
+          task_id: taskId,
+          timestamp: new Date().toISOString(),
+          type: 'mission_started',
+          mode: 'MISSION',
+          stage: this.currentStage,
+          payload: {
+            mission_id: missionId,
+            goal: fixPlan.goal,
+            mission_title: 'Doctor Fix: Resolve Build Errors',
+            steps_count: 1,
+            source: 'doctor_card',
+          },
+          evidence_ids: [],
+          parent_event_id: null,
+        });
+
+        await this.sendEventsToWebview(webview, taskId);
+
+        this.isMissionExecuting = true;
+        vscode.commands.executeCommand('setContext', 'ordinex.isRunning', true);
+
+        console.log('[DoctorAction] Launching direct agentic fix — single step, no approval');
+
+        try {
+          await handleExecutePlan(
+            this as unknown as IProvider,
+            {
+              taskId,
+              planOverride: fixPlan,
+              missionId,
+              emitMissionStarted: false,
+            },
+            webview
+          );
+        } finally {
+          this.isMissionExecuting = false;
+          this.currentExecutingMissionId = null;
+          vscode.commands.executeCommand('setContext', 'ordinex.isRunning', false);
+          await this.sendEventsToWebview(webview, taskId);
+        }
+        break;
+      }
+
+      case 'rollback': {
+        const confirmChoice = await vscode.window.showWarningMessage(
+          'Rollback to the last good commit? This will discard recent changes.',
+          { modal: true },
+          'Rollback'
+        );
+        if (confirmChoice === 'Rollback' && projectPath) {
+          const terminal = vscode.window.createTerminal('Ordinex Rollback');
+          terminal.sendText(`cd "${projectPath}" && git checkout -- .`);
+          terminal.show();
+          vscode.window.showInformationMessage('Ordinex: Rollback complete. Files restored to last commit.');
+        }
+        break;
+      }
+
+      case 'open_dev_server':
+      case 'restart_dev_server': {
+        const terminal = vscode.window.createTerminal('Ordinex Dev');
+        if (projectPath) {
+          terminal.sendText(`cd "${projectPath}" && npm run dev`);
+        } else {
+          terminal.sendText('npm run dev');
+        }
+        terminal.show();
+        break;
+      }
+
+      default:
+        console.log('[DoctorAction] Unknown action:', actionId);
     }
   }
 
@@ -753,7 +903,7 @@ class MissionControlViewProvider implements vscode.WebviewViewProvider {
       });
       this.currentTaskId = null;
       this.currentStage = 'none';
-      this.currentMode = 'ANSWER';
+      this.currentMode = 'MISSION';
       if (service) await service.clearActiveTask();
       await this.sendEventsToWebview(webview, task_id);
       return;
@@ -1046,7 +1196,7 @@ class MissionControlViewProvider implements vscode.WebviewViewProvider {
 
     // Clear task & mission state
     this.currentTaskId = null;
-    this.currentMode = 'ANSWER';
+    this.currentMode = 'MISSION';
     this.currentStage = 'none';
     this.isMissionExecuting = false;
     this.currentExecutingMissionId = null;
@@ -1237,18 +1387,6 @@ class MissionControlViewProvider implements vscode.WebviewViewProvider {
         await handlePreflightProceed(ctx, message, webview);
         break;
 
-      case 'verification_retry':
-        await handleVerificationRetry(ctx, message, webview);
-        break;
-
-      case 'verification_restore':
-        await handleVerificationRestore(ctx, message, webview);
-        break;
-
-      case 'verification_continue':
-        await handleVerificationContinue(ctx, message, webview);
-        break;
-
       case 'next_step_selected':
         await handleNextStepSelected(ctx, message, webview);
         break;
@@ -1277,6 +1415,10 @@ class MissionControlViewProvider implements vscode.WebviewViewProvider {
         await handleOpenFile(ctx, message);
         break;
 
+      case 'doctor_action':
+        await this.handleDoctorAction(message, webview);
+        break;
+
       case 'ordinex:loopAction':
         await this.handleLoopAction(message, webview);
         break;
@@ -1291,7 +1433,7 @@ class MissionControlViewProvider implements vscode.WebviewViewProvider {
       case 'ordinex:newChat':
         console.log('[Step52] New chat requested — resetting provider state');
         this.currentTaskId = null;
-        this.currentMode = 'ANSWER';
+        this.currentMode = 'MISSION';
         this.currentStage = 'none';
         this.isMissionExecuting = false;
         this.currentExecutingMissionId = null;
@@ -1344,7 +1486,7 @@ class MissionControlViewProvider implements vscode.WebviewViewProvider {
         // the previous task's mode/stage when the target task lacks those events.
         this.currentTaskId = switchTaskId;
         globalCurrentTaskId = switchTaskId;
-        this.currentMode = 'ANSWER';
+        this.currentMode = 'MISSION';
         this.currentStage = 'none';
 
         // Derive mode and stage from the task's events (if available)
@@ -2093,6 +2235,16 @@ export function activate(context: vscode.ExtensionContext) {
       const providerRef = provider as any;
       if (providerRef.isMissionExecuting && webview) {
         webview.postMessage({ type: 'ordinex:triggerStop' });
+      }
+    })
+  );
+
+  // Cmd+. / Ctrl+. — Cycle mode (Agent ↔ Plan)
+  context.subscriptions.push(
+    vscode.commands.registerCommand('ordinex.cycleMode', () => {
+      const webview = (provider as any)._currentWebview as vscode.Webview | null;
+      if (webview) {
+        webview.postMessage({ type: 'ordinex:cycleMode' });
       }
     })
   );

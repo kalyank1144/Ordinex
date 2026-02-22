@@ -1,5 +1,5 @@
 /**
- * ModeManager: Enforces mode boundaries (ANSWER/PLAN/MISSION)
+ * ModeManager: Enforces mode boundaries (PLAN/MISSION)
  * Based on 05_TECHNICAL_IMPLEMENTATION_SPEC.md Section 6
  * 
  * Requirements:
@@ -27,7 +27,6 @@ export type Action =
  * Mode permissions matrix
  */
 const MODE_PERMISSIONS: Record<Mode, Set<Action>> = {
-  ANSWER: new Set(['read_file', 'retrieve']),
   PLAN: new Set(['read_file', 'retrieve', 'plan']),
   MISSION: new Set(['read_file', 'write_file', 'execute_command', 'retrieve', 'plan', 'diff', 'checkpoint']),
 };
@@ -68,20 +67,19 @@ export interface ModeTransitionResult {
  * Mode ordering for escalation/downgrade detection.
  */
 const MODE_LEVEL: Record<Mode, number> = {
-  ANSWER: 0,
-  PLAN: 1,
-  MISSION: 2,
+  PLAN: 0,
+  MISSION: 1,
 };
 
 /**
- * Check if a mode transition is an escalation (UP: ANSWER→PLAN, ANSWER→MISSION, PLAN→MISSION).
+ * Check if a mode transition is an escalation (UP: PLAN→MISSION).
  */
 export function isEscalation(from: Mode, to: Mode): boolean {
   return MODE_LEVEL[to] > MODE_LEVEL[from];
 }
 
 /**
- * Check if a mode transition is a downgrade (DOWN: MISSION→PLAN, MISSION→ANSWER, PLAN→ANSWER).
+ * Check if a mode transition is a downgrade (DOWN: MISSION→PLAN).
  */
 export function isDowngrade(from: Mode, to: Mode): boolean {
   return MODE_LEVEL[to] < MODE_LEVEL[from];
@@ -91,7 +89,7 @@ export function isDowngrade(from: Mode, to: Mode): boolean {
  * ModeManager enforces mode boundaries and detects violations
  */
 export class ModeManager {
-  private currentMode: Mode = 'ANSWER';
+  private currentMode: Mode = 'MISSION';
   private currentStage: Stage = 'none';
   private readonly taskId: string;
   private readonly eventBus?: EventBus;
@@ -223,12 +221,5 @@ export class ModeManager {
    */
   isPlanMode(): boolean {
     return this.currentMode === 'PLAN';
-  }
-
-  /**
-   * Check if currently in ANSWER mode
-   */
-  isAnswerMode(): boolean {
-    return this.currentMode === 'ANSWER';
   }
 }

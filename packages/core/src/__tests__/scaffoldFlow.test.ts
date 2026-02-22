@@ -207,8 +207,16 @@ describe('ScaffoldFlowCoordinator', () => {
       expect(proposalEvent?.payload.summary).toContain('Vite');
     });
 
-    it('should emit scaffold_decision_requested event', async () => {
+    it('should NOT emit scaffold_decision_requested until emitDecisionCard is called', async () => {
       await coordinator.startScaffoldFlow('run-123', 'create a new app');
+
+      const decisionEvent = publishedEvents.find(e => e.type === 'scaffold_decision_requested');
+      expect(decisionEvent).toBeUndefined();
+    });
+
+    it('should emit scaffold_decision_requested after emitDecisionCard', async () => {
+      await coordinator.startScaffoldFlow('run-123', 'create a new app');
+      await coordinator.emitDecisionCard();
 
       const decisionEvent = publishedEvents.find(e => e.type === 'scaffold_decision_requested');
       expect(decisionEvent).toBeDefined();
@@ -218,6 +226,7 @@ describe('ScaffoldFlowCoordinator', () => {
 
     it('should include Proceed and Cancel options', async () => {
       await coordinator.startScaffoldFlow('run-123', 'create a new app');
+      await coordinator.emitDecisionCard();
 
       const decisionEvent = publishedEvents.find(e => e.type === 'scaffold_decision_requested');
       const options = decisionEvent?.payload.options as any[];
@@ -232,6 +241,7 @@ describe('ScaffoldFlowCoordinator', () => {
 
     it('should include Change Style option', async () => {
       await coordinator.startScaffoldFlow('run-123', 'create a new app');
+      await coordinator.emitDecisionCard();
 
       const decisionEvent = publishedEvents.find(e => e.type === 'scaffold_decision_requested');
       const options = decisionEvent?.payload.options as any[];
@@ -240,10 +250,10 @@ describe('ScaffoldFlowCoordinator', () => {
       expect(changeStyleOption).toBeDefined();
     });
 
-    it('should update state to awaiting_decision', async () => {
-      const state = await coordinator.startScaffoldFlow('run-123', 'create a new app');
+    it('should update state to awaiting_decision after emitDecisionCard', async () => {
+      await coordinator.startScaffoldFlow('run-123', 'create a new app');
+      await coordinator.emitDecisionCard();
       
-      expect(state.status).toBe('awaiting_decision');
       expect(coordinator.isAwaitingDecision()).toBe(true);
     });
 
@@ -260,7 +270,8 @@ describe('ScaffoldFlowCoordinator', () => {
   describe('handleUserAction - proceed', () => {
     it('should emit scaffold_completed with ready_for_step_35_2 status', async () => {
       await coordinator.startScaffoldFlow('run-123', 'create a new app');
-      publishedEvents = []; // Clear previous events
+      await coordinator.emitDecisionCard();
+      publishedEvents = [];
       
       await coordinator.handleUserAction('proceed');
       
@@ -271,6 +282,7 @@ describe('ScaffoldFlowCoordinator', () => {
 
     it('should update state to completed', async () => {
       await coordinator.startScaffoldFlow('run-123', 'create a new app');
+      await coordinator.emitDecisionCard();
       const state = await coordinator.handleUserAction('proceed');
       
       expect(state.status).toBe('completed');
@@ -281,6 +293,7 @@ describe('ScaffoldFlowCoordinator', () => {
   describe('handleUserAction - cancel', () => {
     it('should emit scaffold_completed with cancelled status', async () => {
       await coordinator.startScaffoldFlow('run-123', 'create a new app');
+      await coordinator.emitDecisionCard();
       publishedEvents = [];
       
       await coordinator.handleUserAction('cancel');
@@ -292,6 +305,7 @@ describe('ScaffoldFlowCoordinator', () => {
 
     it('should update state to completed with cancelled', async () => {
       await coordinator.startScaffoldFlow('run-123', 'create a new app');
+      await coordinator.emitDecisionCard();
       const state = await coordinator.handleUserAction('cancel');
       
       expect(state.status).toBe('completed');
@@ -302,6 +316,7 @@ describe('ScaffoldFlowCoordinator', () => {
   describe('handleStyleChange', () => {
     it('should show style picker and keep flow in awaiting_decision', async () => {
       await coordinator.startScaffoldFlow('run-123', 'create a new app');
+      await coordinator.emitDecisionCard();
       const state = await coordinator.handleStyleChange();
 
       expect(state.status).toBe('awaiting_decision');
@@ -319,6 +334,7 @@ describe('ScaffoldFlowCoordinator', () => {
 
     it('should throw if handleUserAction called when not awaiting decision', async () => {
       await coordinator.startScaffoldFlow('run-123', 'create a new app');
+      await coordinator.emitDecisionCard();
       await coordinator.handleUserAction('proceed');
       
       await expect(coordinator.handleUserAction('cancel')).rejects.toThrow('Cannot handle action in status');

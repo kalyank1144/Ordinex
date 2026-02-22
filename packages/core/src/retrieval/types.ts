@@ -3,7 +3,7 @@
  * Based on 04_INDEXING_RETRIEVAL_SPEC.md
  */
 
-export type RetrievalMode = 'ANSWER' | 'PLAN' | 'MISSION';
+export type RetrievalMode = 'PLAN' | 'MISSION';
 export type RetrievalStage = 'plan' | 'retrieve' | 'edit' | 'test' | 'repair';
 
 /**

@@ -138,6 +138,7 @@ export type EventType =
   | 'scaffold_progress'
   | 'design_pack_applied'
   | 'scaffold_final_complete'
+  | 'scaffold_doctor_card'
   // Step 35.7: Non-Empty Directory + Monorepo Targeting
   | 'scaffold_preflight_decision_needed'
   | 'scaffold_preflight_decision_taken'
@@ -177,6 +178,10 @@ export type EventType =
   | 'scaffold_verify_started'
   | 'scaffold_verify_step_completed'
   | 'scaffold_verify_completed'
+  // Post-Scaffold Autofix Pipeline
+  | 'scaffold_autofix_started'
+  | 'scaffold_autofix_applied'
+  | 'scaffold_autofix_failed'
   // Step 45: Settings Panel
   | 'settings_changed'
   // Scaffold Feature Intelligence (LLM-Powered Feature Generation)
@@ -210,7 +215,8 @@ export type EventType =
   // AgenticLoop Integration: Loop Pause + Continue
   | 'loop_paused'
   | 'loop_continued'
-  | 'loop_completed';
+  | 'loop_completed'
+  | 'loop_failed';
 
 export const CANONICAL_EVENT_TYPES: readonly EventType[] = [
   'intent_received',
@@ -334,6 +340,7 @@ export const CANONICAL_EVENT_TYPES: readonly EventType[] = [
   'scaffold_progress',
   'design_pack_applied',
   'scaffold_final_complete',
+  'scaffold_doctor_card',
   // Step 35.7: Non-Empty Directory + Monorepo Targeting
   'scaffold_preflight_decision_needed',
   'scaffold_preflight_decision_taken',
@@ -373,6 +380,10 @@ export const CANONICAL_EVENT_TYPES: readonly EventType[] = [
   'scaffold_verify_started',
   'scaffold_verify_step_completed',
   'scaffold_verify_completed',
+  // Post-Scaffold Autofix Pipeline
+  'scaffold_autofix_started',
+  'scaffold_autofix_applied',
+  'scaffold_autofix_failed',
   // Step 45: Settings Panel
   'settings_changed',
   // Scaffold Feature Intelligence (LLM-Powered Feature Generation)
@@ -409,9 +420,10 @@ export const CANONICAL_EVENT_TYPES: readonly EventType[] = [
   'loop_paused',
   'loop_continued',
   'loop_completed',
+  'loop_failed',
 ] as const;
 
-export type Mode = 'ANSWER' | 'PLAN' | 'MISSION';
+export type Mode = 'PLAN' | 'MISSION';
 
 /**
  * Step 33: Behavior Types (Pre-execution intelligence layer)

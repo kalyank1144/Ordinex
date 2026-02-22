@@ -7,30 +7,27 @@ export function getMessageHandlerJs(): string {
       }
 
       function ensureStreamingMission(message) {
-        // If previous session is complete, or step/iteration changed, start fresh
-        if (!state.streamingMission || state.streamingMission.isComplete) {
-          // Snapshot completed blocks for timeline persistence
-          if (state.streamingMission && state.streamingMission.isComplete && state.streamingMission.blocks.length > 0) {
-            if (!state._completedMissionBlocks) state._completedMissionBlocks = [];
-            state._completedMissionBlocks.push({
-              stepId: state.streamingMission.stepId,
-              iteration: state.streamingMission.iteration,
-              blocks: state.streamingMission.blocks
-            });
-          }
+        if (!state.streamingMission) {
+          // First time — create the session
           state.streamingMission = {
             taskId: message.task_id || 'unknown',
-            stepId: message.step_id || '',
-            iteration: message.iteration || 1,
             blocks: [],
             activeNarrationId: null,
-            isComplete: false
+            isComplete: false,
+            _createdAt: Date.now()
           };
-          // Reset perf state for new session
           state._missionDeltaCount = 0;
           state._missionLastParsedText = '';
           state._missionLastParsedHtml = '';
           state._missionUserPinnedScroll = false;
+        } else if (state.streamingMission.isComplete) {
+          // Follow-up prompt — resume the SAME session, keep all blocks
+          state.streamingMission.isComplete = false;
+          state.streamingMission.activeNarrationId = null;
+          state.streamingMission._createdAt = Date.now();
+          state._missionDeltaCount = 0;
+          state._missionLastParsedText = '';
+          state._missionLastParsedHtml = '';
         }
       }
 
@@ -116,6 +113,10 @@ export function getMessageHandlerJs(): string {
                     html = renderNarrationBlock(block, block.id === state.streamingMission.activeNarrationId);
                   } else if (block.kind === 'tool') {
                     html = renderToolBlock(block);
+                  } else if (block.kind === 'separator') {
+                    html = renderFollowUpSeparator();
+                  } else if (block.kind === 'prompt') {
+                    html = renderPromptBlock(block);
                   }
                   if (html) {
                     var wrapper = document.createElement('div');
@@ -183,20 +184,30 @@ export function getMessageHandlerJs(): string {
               console.log('[EVENTS] \u2551  \ud83d\udce8 EVENTS UPDATE FROM BACKEND        \u2551');
               console.log('[EVENTS] \u255a\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u255d');
 
-              // Backend sent updated events - replace our state
+              // Backend sent updated events — merge with existing to preserve cross-task continuity
               if (message.events) {
                 console.log('[EVENTS] Received', message.events.length, 'events');
                 console.log('[EVENTS] Previous events count:', state.events.length);
 
                 // Log last 3 events for debugging
-                const lastThree = message.events.slice(-3);
+                var lastThree = message.events.slice(-3);
                 console.log('[EVENTS] Last 3 events:');
-                lastThree.forEach((e, idx) => {
-                  console.log(\`[EVENTS]   \${idx + 1}. \${e.type}\`, e.payload?.mission_id ? \`(mission: \${e.payload.mission_id.substring(0, 8)}...)\` : '');
+                lastThree.forEach(function(e, idx) {
+                  var missionInfo = (e.payload && e.payload.mission_id) ? '(mission: ' + e.payload.mission_id.substring(0, 8) + '...)' : '';
+                  console.log('[EVENTS]   ' + (idx + 1) + '. ' + e.type, missionInfo);
                 });
 
-                state.events = message.events;
-                console.log('[EVENTS] \u2713 Events state updated');
+                // Smart merge: keep events from tasks NOT in the incoming batch,
+                // then append incoming events. This preserves scaffold timeline
+                // when a follow-up prompt creates a new task_id.
+                var incomingTaskIds = {};
+                message.events.forEach(function(e) { if (e.task_id) incomingTaskIds[e.task_id] = true; });
+                var preserved = state.events.filter(function(e) { return e.task_id && !incomingTaskIds[e.task_id]; });
+                if (preserved.length > 0) {
+                  console.log('[EVENTS] Preserving', preserved.length, 'events from previous tasks');
+                }
+                state.events = preserved.concat(message.events);
+                console.log('[EVENTS] \u2713 Events state updated (merged:', state.events.length, 'total)');
 
                 // CRITICAL: Update Mission Control Bar BEFORE clearing optimistic state
                 // This ensures the UI reflects the running state from actual events
@@ -277,32 +288,13 @@ export function getMessageHandlerJs(): string {
                     state.streamingPlan = null;
                   }
                 }
-                // Mission streaming: mark complete on loop_paused/loop_completed (edit step done)
-                // Don't null — blocks persist in the timeline above the LoopPaused card.
-                if (state.streamingMission && !state.streamingMission.isComplete) {
-                  const hasLoopEnd = message.events.some(e =>
-                    e.type === 'loop_paused' || e.type === 'loop_completed'
-                  );
-                  if (hasLoopEnd) {
-                    state.streamingMission.isComplete = true;
-                    state.streamingMission.activeNarrationId = null;
-                    state._missionDeltaCount = 0;
-                    state._missionLastParsedText = '';
-                    state._missionLastParsedHtml = '';
-                    state._missionUserPinnedScroll = false;
-                  }
-                }
-
-                // CRITICAL: During active streaming, do NOT call renderMission().
-                // renderMission() replaces the entire missionTab.innerHTML which:
-                //   1. Destroys the live streaming blocks container → visual flash
-                //   2. Resets scroll position → scroll jumps
-                //   3. Breaks RAF-throttled streaming updates
-                // Instead, only update lightweight UI (control bar, logs, counters).
-                // The streaming UI is managed by missionStreamDelta / missionToolActivity handlers.
+                // Streaming completion is handled solely by missionStreamComplete.
+                // eventsUpdate does NOT mutate streaming state — this prevents
+                // race conditions where old terminal events in the accumulating
+                // events list prematurely kill active streaming.
                 var isActivelyStreaming = state.streamingMission && !state.streamingMission.isComplete;
+
                 if (isActivelyStreaming) {
-                  // Lightweight updates only — don't touch missionTab DOM
                   updateMissionControlBar();
                   renderLogs();
                   renderSystemsCounters();
@@ -421,8 +413,34 @@ export function getMessageHandlerJs(): string {
 
             // ===== A6: MISSION EDIT STEP STREAMING (Sequential Blocks) =====
             case 'ordinex:missionStreamDelta':
+              // Track if this is a follow-up (session was complete, now resuming)
+              var wasComplete = state.streamingMission && state.streamingMission.isComplete;
               ensureStreamingMission(message);
-              state.streamingMission.iteration = message.iteration || state.streamingMission.iteration;
+              // Insert separator + user prompt bubble between follow-up sessions
+              if (wasComplete && state.streamingMission.blocks.length > 0) {
+                closeNarration();
+                state.streamingMission.blocks.push({
+                  id: newBlockId('sep'),
+                  kind: 'separator',
+                  ts: Date.now()
+                });
+                // Extract user prompt from the latest intent_received event
+                var followUpPrompt = '';
+                for (var ei = state.events.length - 1; ei >= 0; ei--) {
+                  if (state.events[ei].type === 'intent_received' && state.events[ei].payload && state.events[ei].payload.prompt) {
+                    followUpPrompt = state.events[ei].payload.prompt;
+                    break;
+                  }
+                }
+                if (followUpPrompt) {
+                  state.streamingMission.blocks.push({
+                    id: newBlockId('prompt'),
+                    kind: 'prompt',
+                    text: followUpPrompt,
+                    ts: Date.now()
+                  });
+                }
+              }
               appendNarration(message.delta);
 
               // RAF-throttled render (no full renderMission per token)
@@ -627,7 +645,7 @@ export function getMessageHandlerJs(): string {
                     var t = tasks[ti];
                     var truncTitle = t.title.length > 60 ? t.title.substring(0, 57) + '...' : t.title;
                     var isActive = (currentTid && t.task_id === currentTid);
-                    var modeBadge = t.mode || 'ANSWER';
+                    var modeBadge = t.mode || 'MISSION';
                     var modeClass = 'history-mode-' + modeBadge.toLowerCase();
                     var relTime = formatRelativeTime(t.last_event_at);
                     html += '<div class="history-item' + (isActive ? ' history-item-active' : '') + '" onclick="handleSwitchTask(\\'';
@@ -661,7 +679,7 @@ export function getMessageHandlerJs(): string {
               state.streamingAnswer = null;
               if (state._completedAnswers) state._completedAnswers = [];
               state.currentStage = message.stage || 'none';
-              state.currentMode = message.mode || 'ANSWER';
+              state.currentMode = message.mode || 'MISSION';
               state.pendingScopeExpansion = null;
 
               // Reset counters and recalculate from loaded events
@@ -751,6 +769,53 @@ export function getMessageHandlerJs(): string {
               // Notify extension backend
               if (typeof vscode !== 'undefined') {
                 vscode.postMessage({ type: 'ordinex:newChat' });
+              }
+              break;
+
+            // Context usage: update the ring indicator
+            case 'ordinex:contextUsage': {
+              var ring = document.getElementById('contextRingFill');
+              var tooltip = document.getElementById('contextRingTooltip');
+              if (ring && message.percentage !== undefined) {
+                var pct = Math.min(message.percentage, 100);
+                var circumference = 50.265; // 2 * PI * r=8
+                var offset = circumference * (1 - pct / 100);
+                ring.style.strokeDashoffset = offset;
+                ring.classList.remove('warn', 'critical');
+                if (pct >= 75) ring.classList.add('critical');
+                else if (pct >= 50) ring.classList.add('warn');
+              }
+              if (tooltip) {
+                var usedK = (message.used / 1000).toFixed(1);
+                var totalK = (message.total / 1000).toFixed(0);
+                tooltip.textContent = Math.round(message.percentage) + '% \u00B7 ' + usedK + 'K / ' + totalK + 'K context used';
+              }
+              break;
+            }
+
+            // Context health: compaction in progress
+            case 'ordinex:contextCompacting': {
+              var ringEl = document.getElementById('contextRingFill');
+              if (ringEl) {
+                ringEl.classList.add('critical');
+                setTimeout(function() { ringEl.classList.remove('critical'); }, 2000);
+              }
+              break;
+            }
+
+            // Context health: suggest new session after 3+ compactions
+            case 'ordinex:suggestNewSession': {
+              const banner = document.getElementById('contextSessionBanner');
+              if (banner) banner.style.display = 'flex';
+              break;
+            }
+
+            // Cmd+. / Ctrl+. — Cycle mode (Agent ↔ Plan)
+            case 'ordinex:cycleMode':
+              if (modeSelect) {
+                const nextMode = state.currentMode === 'MISSION' ? 'PLAN' : 'MISSION';
+                state.currentMode = nextMode;
+                modeSelect.value = nextMode;
               }
               break;
 

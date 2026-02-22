@@ -4,7 +4,7 @@
  * Core Concept: Behavior is selected FIRST, Mode is a downstream consequence.
  * 
  * The 5 Behaviors:
- * - ANSWER: Discussion, explanation, opinions (no execution)
+ * - MISSION: Discussion, explanation, opinions (no execution)
  * - CLARIFY: Missing info → ask + offer tools
  * - QUICK_ACTION: Small, obvious change → gated diff/tool
  * - PLAN: Large or greenfield work
@@ -12,7 +12,7 @@
  * 
  * Behavior Selection Algorithm:
  * 1. Is there an active run? → CONTINUE_RUN
- * 2. Is this a pure question? → ANSWER
+ * 2. Is this a pure question? → MISSION
  * 3. Is required information missing? → CLARIFY (max 2 attempts)
  * 4. Determine scope → trivial/small → QUICK_ACTION, medium/large → PLAN
  * 5. Resolve references ("this", "it") → Priority stack or CLARIFY
@@ -36,7 +36,7 @@ import {
   StyleSourceMode,
 } from './types';
 import { Event } from './types';
-import { detectCommandIntent } from './userCommandDetector';
+
 import { detectGreenfieldIntent } from './intent/greenfieldDetector';
 import {
   buildReferenceContext,
@@ -70,7 +70,7 @@ const CONFIG = {
 // ============================================================================
 
 /**
- * Pure question patterns (ANSWER behavior)
+ * Pure question patterns (MISSION behavior)
  */
 const QUESTION_PATTERNS = {
   starters: [
@@ -275,28 +275,7 @@ export function analyzeIntent(
   }
   
   // =========================================================================
-  // STEP 0.5: Check for command intent (Step 34.5 integration)
-  // Commands should be detected early, before active run check
-  // =========================================================================
-  const commandDetection = detectCommandIntent(originalPrompt);
-  if (commandDetection.isCommandIntent && commandDetection.confidence >= 0.75) {
-    // This is a command request, not a continue-run request
-    const keywords = commandDetection.detectedKeywords?.join(', ') || 'command execution';
-    return createIntentAnalysis(
-      'QUICK_ACTION',
-      { type: 'fresh' },
-      commandDetection.confidence,
-      `Command intent detected: ${keywords}`,
-      undefined,
-      undefined,
-      'small', // Commands are typically small scope
-      commandDetection.inferredCommands
-    );
-  }
-  
-  // =========================================================================
   // STEP 1: Is there an active run? → CONTINUE_RUN
-  // Only if NOT a command intent
   // =========================================================================
   if (context.activeRun) {
     return createIntentAnalysis(
@@ -308,7 +287,7 @@ export function analyzeIntent(
   }
   
   // =========================================================================
-  // STEP 2: Is this a pure question? → ANSWER
+  // STEP 2: Is this a pure question? → ANSWER behavior (agent handles it)
   // =========================================================================
   if (isPureQuestion(normalizedPrompt)) {
     return createIntentAnalysis(
@@ -439,7 +418,7 @@ function checkUserOverride(prompt: string): { behavior: Behavior; command: strin
 }
 
 /**
- * Check if the prompt is a pure question (ANSWER behavior)
+ * Check if the prompt is a pure question (MISSION behavior)
  */
 function isPureQuestion(normalizedPrompt: string): boolean {
   // Check if it ends with ?
@@ -898,7 +877,7 @@ function createIntentAnalysis(
   switch (behavior) {
     case 'ANSWER':
     case 'CLARIFY':
-      derivedMode = 'ANSWER';
+      derivedMode = 'MISSION';
       break;
     case 'QUICK_ACTION':
       derivedMode = 'MISSION';
@@ -910,7 +889,7 @@ function createIntentAnalysis(
       derivedMode = 'MISSION';
       break;
     default:
-      derivedMode = 'ANSWER';
+      derivedMode = 'MISSION';
   }
   
   return {
@@ -1139,7 +1118,7 @@ export function analyzeIntentWithFlow(
     // Only route to scaffold if:
     // 1. NOT an active run (CONTINUE_RUN behavior)
     // 2. NOT a user override forcing standard flow
-    // 3. NOT a pure question (ANSWER behavior)
+    // 3. NOT a pure question (MISSION behavior)
     if (
       baseAnalysis.behavior !== 'CONTINUE_RUN' &&
       baseAnalysis.behavior !== 'ANSWER' &&

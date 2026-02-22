@@ -10,7 +10,7 @@ export const version = '0.0.0';
 // Export types
 export * from './types';
 
-// Step 35.8: Greenfield Intent Detection (Single Source of Truth)
+// Greenfield Intent Detection (Single Source of Truth)
 export {
   detectGreenfieldIntent,
   isDefinitelyGreenfield,
@@ -18,36 +18,21 @@ export {
   IntentSignal,
 } from './intent/greenfieldDetector';
 
-export {
-  llmClassifyIntent,
-  needsLlmClassification,
-  LlmIntent,
-  LlmIntentResult,
-  LlmClassifyArgs,
-} from './intent/llmIntentClassifier';
-
-// Step 40: Production-Grade Intent Routing (Unified Router)
+// Intent Routing (Workspace-Aware Scaffold Detection + Pass-Through)
 export {
   detectGreenfieldIntent as detectGreenfieldSignal,
-  detectCommandIntent as detectCommandSignal,
-  detectEditScale,
   detectSlashOverride,
-  normalizeUserInput,
 } from './intent/intentSignals';
 
 export {
   routeIntent,
-  routeUserInput,
-  isDefinitelyScaffold,
-  isDefinitelyRunCommand,
-  shouldCallLLM,
-  generateClarificationQuestion,
 } from './intent/intentRouter';
 
 export type {
   RoutedIntent,
   RoutingContext,
   IntentRoutingResult,
+  WorkspaceState,
 } from './intent/intentRouter';
 
 // Export event-sourcing components
@@ -255,6 +240,7 @@ export type {
   ToolExecutionProvider,
   ToolExecutionResult,
   LLMClient,
+  LLMClientCapabilities,
   LLMClientResponse,
   AgenticLoopConfig,
   AgenticLoopResult,
@@ -269,7 +255,24 @@ export type {
   ConversationMessage,
   ConversationHistoryConfig,
   ContentBlock,
+  CompactionResult,
+  CompactionLLMClient,
 } from './conversationHistory';
+
+// Export Context Budget Manager
+export {
+  ContextBudgetManager,
+} from './contextBudgetManager';
+
+export type {
+  ContextLayer,
+  ContextBudgetResult,
+} from './contextBudgetManager';
+
+// Export Activity Context
+export {
+  buildRecentActivityContext,
+} from './activityContext';
 
 // Export Tool Schemas (A3 — Anthropic function calling)
 export {
@@ -615,7 +618,6 @@ export {
   detectActiveRun,
   detectFlowKind,
   isGreenfieldRequest,
-  isPureQuestion,
   resolveReferences,
   detectScope,
   extractReferencedFiles,
@@ -698,14 +700,6 @@ export type {
   CommandPhaseContext,
 } from './commandPhase';
 
-export {
-  detectCommandIntent,
-  matchesCommandPattern,
-} from './userCommandDetector';
-
-export type {
-  CommandIntentResult,
-} from './userCommandDetector';
 
 // Step 35: Greenfield Scaffold Flow (Decision-Point-Based Scaffolding)
 export {
@@ -768,11 +762,25 @@ export type {
   PackageManager,
 } from './scaffold/recipeTypes';
 
+// Recipe config — single source of truth for recipe commands, names, components
+export {
+  getRecipeConfig,
+  getRecipeDisplayName,
+  getCreateCommand,
+  getDevCommand,
+  getBuildCommand,
+  getKeyFiles,
+  getEstimates,
+  getShadcnComponents,
+  getOverlayDir,
+  getAllRecipeIds,
+} from './scaffold/recipeConfig';
+export type { RecipeDefinition } from './scaffold/recipeConfig';
+
 // Step 35.X: Post-Scaffold Orchestrator (Design Pack Application + Next Steps)
 export {
   startPostScaffoldOrchestration,
   pollForCompletion,
-  applyDesignPackToProject,
   DEFAULT_POLLING_CONFIG,
 } from './scaffold/postScaffoldOrchestrator';
 
@@ -782,14 +790,17 @@ export type {
   PostScaffoldPollingConfig,
 } from './scaffold/postScaffoldOrchestrator';
 
+// Scaffold Session — follow-up prompt context threading
+export {
+  createScaffoldSession,
+  buildFollowUpContext,
+} from './scaffold/scaffoldSession';
+export type { ScaffoldSession } from './scaffold/scaffoldSession';
+
 // Step 35.5: Design Packs
 export {
   getDesignPackById,
   getDefaultPacksForPicker,
-  getPacksByVibe,
-  generateCssVariables,
-  generateGlobalsCss,
-  generateTailwindConfig,
   DESIGN_PACKS,
 } from './scaffold/designPacks';
 
@@ -797,7 +808,8 @@ export type {
   DesignPack,
   DesignPackId,
   DesignVibe,
-  DesignTokens,
+  DesignPackTokens,
+  DesignPackTokens as DesignTokens,
   ColorTokens,
   FontTokens,
 } from './scaffold/designPacks';
@@ -1108,3 +1120,240 @@ export type {
   ErrorPatternMatch,
   RecoveryAction,
 } from './errorPatterns';
+
+// ============================================================================
+// Scaffold Improvement Plan — New Modules
+// ============================================================================
+
+// Blueprint Schema (canonical types + validation)
+export {
+  SCAFFOLD_STAGE_ORDER,
+  validateBlueprint,
+  classifyConfidence,
+  createEmptyProjectContext,
+  DEFAULT_GATE_COMMANDS,
+} from './scaffold/blueprintSchema';
+
+export type {
+  ScaffoldStage as ScaffoldPipelineStage,
+  AppType,
+  LayoutType,
+  BlueprintPage,
+  BlueprintDataModel,
+  BlueprintFeature,
+  AppBlueprint,
+  BlueprintExtractionResult,
+  BlueprintConfidenceTier,
+  RecipeGateCommands,
+  DoctorStatus,
+  StageTelemetry,
+  StageHistoryEntry,
+  StyleInput,
+  OrdinexProjectContext,
+  PassManifest,
+  ManifestEntry,
+  BlueprintValidationResult,
+} from './scaffold/blueprintSchema';
+
+// Blueprint Extractor
+export {
+  buildExtractionPrompt,
+  parseBlueprintFromLLMResponse,
+  computeConfidence,
+  getArchetypeSkeleton,
+  correctAppTypeForRecipe,
+  listArchetypes,
+  ARCHETYPE_SKELETONS,
+} from './scaffold/appBlueprintExtractor';
+
+// Staging Workspace (atomic publish)
+export {
+  initStagingWorkspace,
+  publishStaged,
+  cleanupStaging,
+  stageFile,
+  readStagedOrOriginal,
+  listStagedFiles,
+} from './scaffold/stagingWorkspace';
+
+export type {
+  StagingContext,
+} from './scaffold/stagingWorkspace';
+
+// Git Committer (commit-per-step)
+export {
+  ensureGitInit,
+  commitStage,
+  getCurrentHash,
+  getFullHash,
+  isInsideGitRepo,
+} from './scaffold/gitCommitter';
+
+export type {
+  CommitResult,
+  CommitContext,
+} from './scaffold/gitCommitter';
+
+// Project Context (.ordinex/context.json persistence)
+export {
+  loadProjectContext,
+  saveProjectContext,
+  initProjectContext,
+  recordStageResult,
+  updateDoctorStatus,
+  updateStyleInfo,
+  getLastSuccessfulStage,
+} from './scaffold/projectContext';
+
+// Token Validator (WCAG AA enforcement)
+export {
+  contrastRatio,
+  validateAndCorrectTokens,
+  hexToHsl,
+  tokensToShadcnVars,
+} from './scaffold/tokenValidator';
+
+export type {
+  DesignTokens as ScaffoldDesignTokens,
+  ContrastCheckResult,
+  TokenValidationResult,
+} from './scaffold/tokenValidator';
+
+// Style Intent Resolver
+export {
+  resolveStyleIntent,
+  resolveStyleIntentWithLLM,
+  tokensFromHex,
+  listVibePresets,
+  getAppTypeDefaultStyle,
+} from './scaffold/styleIntentResolver';
+
+export type {
+  StyleResolutionResult,
+  VibeId,
+  VibePreset,
+} from './scaffold/styleIntentResolver';
+
+// Overlay Applier
+export {
+  applyOverlay,
+  detectTailwindVersion,
+} from './scaffold/overlayApplier';
+
+export type {
+  OverlayConfig,
+  OverlayResult,
+} from './scaffold/overlayApplier';
+
+// Design Pack to shadcn
+export {
+  generateShadcnCssBlock,
+  generateShadcnThemeBlock,
+  initShadcn,
+  updateGlobalsCssTokens,
+} from './scaffold/designPackToShadcn';
+
+export type {
+  ShadcnInitResult,
+} from './scaffold/designPackToShadcn';
+
+// OKLCH Color Engine
+export {
+  generateScale,
+  generateDarkScale,
+  generateThemeScales,
+  generateFullTheme,
+  mapScalesToTokens,
+  mapDarkScalesToTokens,
+  hexToOklch,
+  oklchToHex,
+  formatOklchCss,
+  formatOklchRaw,
+  hexToOklchCss,
+  hexToOklchRaw,
+  checkContrast,
+  tokensToOklchVars,
+} from './scaffold/oklchEngine';
+
+export type {
+  OklchColor,
+  ColorScale,
+  ThemeScales,
+  SemanticTokens,
+} from './scaffold/oklchEngine';
+
+// Deterministic AutoFix
+export {
+  runDeterministicAutofix,
+} from './scaffold/deterministicAutofix';
+
+export type {
+  AutofixResult,
+  AutofixAction,
+} from './scaffold/deterministicAutofix';
+
+// Quality Gate Pipeline (code quality after generation)
+export {
+  runQualityGatePipeline,
+  runDevSmokeGate,
+} from './scaffold/qualityGatePipeline';
+
+export type {
+  GateCheckName,
+  GateCheckStatus,
+  GateCheckResult,
+  PipelineResult,
+  PipelineOptions,
+} from './scaffold/qualityGatePipeline';
+
+// Multi-Pass Generator
+export {
+  planGeneration,
+  executeMultiPassGeneration,
+  buildPassManifest,
+  applyPassManifest,
+  parseMultiFileResponse,
+  passToStage,
+  buildLayoutPassPrompt,
+  buildRoutesPassPrompt,
+  buildComponentsPassPrompt,
+  buildPagesPassPrompt,
+  buildPolishPassPrompt,
+} from './scaffold/multiPassGenerator';
+
+export type {
+  PassType,
+  GeneratedFile,
+  PassResult,
+  MultiPassConfig,
+  GenerationPlan,
+  MultiPassExecutionResult,
+  PassProgressCallback,
+} from './scaffold/multiPassGenerator';
+
+// Doctor Card
+export {
+  buildDoctorCardPayload,
+  pipelineToDoctorStatus,
+} from './scaffold/doctorCard';
+
+export type {
+  DoctorActionId,
+  DoctorAction,
+  DoctorCheckDisplay,
+  DoctorCardPayload,
+} from './scaffold/doctorCard';
+
+// Version Pinning
+export {
+  loadVersionConfig,
+  overlayDirForNextMajor,
+  overlayDirForRecipe,
+  resetVersionCache,
+} from './scaffold/ordinexVersions';
+
+export type {
+  OrdinexVersionConfig,
+  WebVersions,
+  MobileVersions,
+} from './scaffold/ordinexVersions';

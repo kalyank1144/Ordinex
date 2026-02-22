@@ -49,7 +49,7 @@ export interface ScopeExpansionRequest {
  * Mission Control UI types - event-driven rendering
  */
 
-export type Mode = 'ANSWER' | 'PLAN' | 'MISSION';
+export type Mode = 'PLAN' | 'MISSION';
 
 export type Stage = 'plan' | 'retrieve' | 'edit' | 'test' | 'repair' | 'command' | 'none';
 
@@ -108,7 +108,7 @@ export type EventType =
   | 'budget_exhausted'
   | 'autonomy_halted'
   | 'autonomy_completed'
-  // ANSWER Mode
+  // Agent Mode (streaming)
   | 'context_collected'
   | 'stream_delta'
   | 'stream_complete'

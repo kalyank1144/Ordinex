@@ -41,6 +41,7 @@ const SCAFFOLD_PROGRESS_EVENT_SET = new Set([
   'scaffold_applied',
   'scaffold_apply_completed',
   'scaffold_progress',
+  'scaffold_doctor_card',
   'design_pack_applied',
   'feature_extraction_started',
   'feature_extraction_completed',
@@ -129,7 +130,10 @@ function createInitialStages(): ScaffoldStage[] {
   return [
     { id: 'create', label: 'Creating project files', status: 'pending' },
     { id: 'design', label: 'Applying design system', status: 'pending' },
+    { id: 'overlay', label: 'Premium shell overlays', status: 'pending' },
+    { id: 'shadcn', label: 'Setting up components', status: 'pending' },
     { id: 'features', label: 'Generating features', status: 'pending' },
+    { id: 'quality_gates', label: 'Quality gates', status: 'pending' },
     { id: 'verify', label: 'Verifying project', status: 'pending' },
   ];
 }
@@ -145,11 +149,43 @@ function applyEvent(state: ScaffoldProgressState, event: any): void {
 
     case 'scaffold_progress': {
       const status = payload.status;
-      if (status === 'creating') {
+      const stage = payload.stage;
+      if (status === 'creating' || stage === 'init') {
         setStageActive(stages, 'create');
-      } else if (status === 'applying_design') {
+      } else if (status === 'applying_design' || stage === 'tokens' || stage === 'overlay') {
         setStageDone(stages, 'create');
-        setStageActive(stages, 'design');
+        if (stage === 'overlay') {
+          setStageDone(stages, 'design');
+          setStageActive(stages, 'overlay');
+        } else {
+          setStageActive(stages, 'design');
+        }
+      } else if (stage === 'shadcn') {
+        setStageDone(stages, 'overlay');
+        setStageActive(stages, 'shadcn');
+      } else if (stage === 'autofix') {
+        setStageDone(stages, 'shadcn');
+      } else if (stage === 'features') {
+        setStageDone(stages, 'shadcn');
+        setStageActive(stages, 'features');
+      } else if (stage === 'quality_gates') {
+        setStageDone(stages, 'features');
+        if (status === 'done' || status === 'error') {
+          // Quality gates are non-blocking — always show as done
+          setStageDone(stages, 'quality_gates');
+          if (payload.detail) {
+            findStage(stages, 'quality_gates')!.detail = String(payload.detail);
+          }
+        } else {
+          setStageActive(stages, 'quality_gates');
+        }
+      } else if (stage === 'quality_gates_done' || stage === 'doctor_card') {
+        setStageDone(stages, 'quality_gates');
+        if (payload.doctor_status) {
+          const ds = payload.doctor_status;
+          findStage(stages, 'quality_gates')!.detail =
+            `tsc: ${ds.tsc}, build: ${ds.build}`;
+        }
       }
       break;
     }
@@ -225,6 +261,16 @@ function applyEvent(state: ScaffoldProgressState, event: any): void {
     case 'scaffold_autofix_failed':
       findStage(stages, 'verify')!.detail = 'Auto-fix failed';
       break;
+
+    case 'scaffold_doctor_card': {
+      setStageDone(stages, 'quality_gates');
+      if (payload.doctor_status) {
+        const ds = payload.doctor_status;
+        findStage(stages, 'quality_gates')!.detail =
+          `tsc: ${ds.tsc}, build: ${ds.build}`;
+      }
+      break;
+    }
 
     // scaffold_checkpoint_created: no stage change, just count event
     default:
