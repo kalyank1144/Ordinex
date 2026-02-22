@@ -23,6 +23,7 @@ import { runDesignSystemStage } from './stages/designSystem';
 import { runFeatureGenerationStage } from './stages/featureGeneration';
 import { runQualityGateStage } from './stages/qualityGate';
 import { runSummaryStage } from './stages/summary';
+import { correctAppTypeForRecipe } from './appBlueprintExtractor';
 
 export async function runEnhancedPipeline(
   ctx: PostScaffoldContext,
@@ -50,6 +51,15 @@ export async function runEnhancedPipeline(
 
   // Stage 1: Git Init + Project Context
   await runInitStage(stageCtx, state);
+
+  // Correct app_type if it conflicts with the recipe (e.g. LLM says "mobile_app" but recipe is Next.js)
+  if (ctx.blueprint) {
+    const corrected = correctAppTypeForRecipe(ctx.blueprint, ctx.recipeId);
+    if (corrected.app_type !== ctx.blueprint.app_type) {
+      console.log(`${logPrefix} [BLUEPRINT] Corrected app_type: "${ctx.blueprint.app_type}" → "${corrected.app_type}" (recipe=${ctx.recipeId})`);
+      ctx.blueprint = corrected;
+    }
+  }
 
   // Stage 2-4: Design System (style, overlay, shadcn)
   await runDesignSystemStage(stageCtx, state);

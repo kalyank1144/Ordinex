@@ -131,7 +131,7 @@ export function renderAnswerStreamCard(event: Event, taskId: string): string {
     <div class="event-card answer-stream-card" id="answer-stream-${taskId}">
       <div class="event-card-header">
         <span class="event-icon" style="color: var(--vscode-charts-green)">💬</span>
-        <span class="event-type">ANSWER ${hasContext ? '(Project-Aware)' : '(Read-Only)'}</span>
+        <span class="event-type">Ask ${hasContext ? '(Project-Aware)' : '(Read-Only)'}</span>
         <span class="event-timestamp">${formatTimestamp(event.timestamp)}</span>
       </div>
       <div class="answer-meta">

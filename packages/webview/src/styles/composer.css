@@ -85,6 +85,95 @@
   100% { opacity: 1; transform: translateY(0); }
 }
 
+/* ===== CONTEXT USAGE RING ===== */
+.context-ring-wrap {
+  position: relative;
+  flex-shrink: 0;
+  margin-left: 4px;
+  cursor: default;
+  display: flex;
+  align-items: center;
+}
+
+.context-ring {
+  display: block;
+}
+
+.context-ring-bg {
+  stroke: var(--vscode-widget-border);
+  opacity: 0.4;
+}
+
+.context-ring-fill {
+  stroke: var(--vscode-charts-green);
+  stroke-linecap: round;
+  transition: stroke-dashoffset 0.6s ease, stroke 0.3s ease;
+}
+
+.context-ring-fill.warn {
+  stroke: var(--vscode-charts-yellow);
+}
+
+.context-ring-fill.critical {
+  stroke: var(--vscode-charts-red);
+}
+
+.context-ring-tooltip {
+  display: none;
+  position: absolute;
+  bottom: calc(100% + 6px);
+  right: 0;
+  white-space: nowrap;
+  font-size: 11px;
+  padding: 4px 8px;
+  border-radius: 4px;
+  background: var(--vscode-editorHoverWidget-background);
+  border: 1px solid var(--vscode-editorHoverWidget-border);
+  color: var(--vscode-editorHoverWidget-foreground);
+  pointer-events: none;
+  z-index: 100;
+}
+
+.context-ring-wrap:hover .context-ring-tooltip {
+  display: block;
+}
+
+/* ===== CONTEXT SESSION BANNER ===== */
+.context-session-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 6px 12px;
+  background: var(--vscode-inputValidation-warningBackground);
+  border: 1px solid var(--vscode-inputValidation-warningBorder);
+  border-radius: 6px;
+  margin: 0 12px 4px 12px;
+  font-size: 11px;
+  color: var(--vscode-foreground);
+  animation: slideDown 0.3s ease-out;
+}
+
+@keyframes slideDown {
+  from { opacity: 0; transform: translateY(-8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.context-session-dismiss {
+  background: transparent;
+  border: none;
+  color: var(--vscode-descriptionForeground);
+  cursor: pointer;
+  font-size: 14px;
+  padding: 0 2px;
+  line-height: 1;
+  flex-shrink: 0;
+}
+
+.context-session-dismiss:hover {
+  color: var(--vscode-foreground);
+}
+
 /* ===== COMPOSER BAR ===== */
 .composer {
   border-top: 1px solid var(--vscode-panel-border);

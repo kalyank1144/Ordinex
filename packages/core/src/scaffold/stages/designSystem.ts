@@ -138,6 +138,12 @@ export async function runDesignSystemStage(
     } catch { /* non-fatal */ }
 
     console.log(`${logPrefix} ✓ Style resolved: ${state.designTokens.primary} primary, ${Object.keys(state.shadcnVars).length} CSS vars`);
+
+    await emitScaffoldProgress(ctx, 'applying_design' as any, {
+      message: `Design tokens resolved (${Object.keys(state.shadcnVars).length} CSS vars)`,
+      stage: 'tokens',
+      status: 'done',
+    });
   } catch (styleErr) {
     console.warn(`${logPrefix} Style resolution warning (non-fatal):`, styleErr);
   }
@@ -305,7 +311,10 @@ export async function runDesignSystemStage(
       } else {
         console.warn(`${logPrefix} [SHADCN] ⚠️ globals.css rewrite FAILED, falling back to partial update`);
         if (Object.keys(state.shadcnVars).length > 0) {
-          await updateGlobalsCssTokens(projectPath, state.designTokens);
+          const fallbackOk = await updateGlobalsCssTokens(projectPath, state.designTokens);
+          if (!fallbackOk) {
+            console.error(`${logPrefix} [SHADCN] ❌ Fallback updateGlobalsCssTokens also failed — design tokens NOT applied!`);
+          }
         }
         const designPackVibe = getDesignPackById(ctx.designPackId)?.vibe;
         if (designPackVibe) {

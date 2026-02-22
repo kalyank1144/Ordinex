@@ -36,10 +36,24 @@ export interface ToolExecutionProvider {
 }
 
 /**
- * Anthropic API client interface (subset needed by the loop).
- * Matches the Anthropic SDK's messages.create() signature.
+ * Model capabilities reported by the LLM client at runtime.
+ * Each provider implementation sets these based on its model.
+ * The AgenticLoop uses them instead of hardcoded values.
+ */
+export interface LLMClientCapabilities {
+  maxOutputTokens: number;
+  contextWindow?: number;
+  provider?: string;
+}
+
+/**
+ * Provider-agnostic LLM client interface.
+ * Implementations: AnthropicLLMClient, OpenAILLMClient, etc.
  */
 export interface LLMClient {
+  /** Model capabilities — the loop reads maxOutputTokens from here. */
+  capabilities?: LLMClientCapabilities;
+
   createMessage(params: {
     model: string;
     max_tokens: number;
@@ -164,7 +178,7 @@ export class AgenticLoop {
       history,
       systemPrompt,
       model: userModel,
-      maxTokens = 4096,
+      maxTokens: callerMaxTokens,
       onText,
       onStreamDelta,
       tokenCounter,
@@ -172,6 +186,15 @@ export class AgenticLoop {
 
     const actualModel = resolveModel(userModel);
     const tools = this.config.tools ?? buildToolsParam({ readOnly: this.config.readOnly });
+
+    // Resolve max output tokens: client capabilities → caller override → safe default.
+    // This makes the loop provider-agnostic — each LLMClient reports its own limits.
+    const SAFE_DEFAULT = 8192;
+    const maxTokens = callerMaxTokens
+      ?? llmClient.capabilities?.maxOutputTokens
+      ?? SAFE_DEFAULT;
+    console.log(`[AgenticLoop] maxOutputTokens=${maxTokens} (source: ${callerMaxTokens ? 'caller' : llmClient.capabilities ? 'client' : 'default'})`);
+
 
     const result: AgenticLoopResult = {
       finalText: '',
@@ -323,10 +346,22 @@ export class AgenticLoop {
         tool_calls: toolUseBlocks.length,
       });
 
-      // --- If no tool use, we're done ---
+      // --- If no tool use, decide whether to stop or continue ---
       if (response.stop_reason !== 'tool_use' || toolUseBlocks.length === 0) {
         result.finalText += textParts.join('');
-        result.stopReason = response.stop_reason === 'max_tokens' ? 'max_tokens' : 'end_turn';
+
+        if (response.stop_reason === 'max_tokens' && toolUseBlocks.length === 0) {
+          // Output was truncated before the LLM could finish its tool call.
+          // Add a continuation prompt so the LLM can pick up where it left off.
+          console.warn(`[AgenticLoop] Response truncated (max_tokens) on iteration ${i + 1} — continuing`);
+          history.addUserMessage([{
+            type: 'text',
+            text: '[System: Your previous response was truncated due to output length. Please continue from where you left off. If you were about to use a tool, go ahead and call it now.]',
+          }]);
+          continue;
+        }
+
+        result.stopReason = 'end_turn';
         return result;
       }
 

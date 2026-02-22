@@ -10,7 +10,7 @@ export const version = '0.0.0';
 // Export types
 export * from './types';
 
-// Step 35.8: Greenfield Intent Detection (Single Source of Truth)
+// Greenfield Intent Detection (Single Source of Truth)
 export {
   detectGreenfieldIntent,
   isDefinitelyGreenfield,
@@ -18,36 +18,21 @@ export {
   IntentSignal,
 } from './intent/greenfieldDetector';
 
-export {
-  llmClassifyIntent,
-  needsLlmClassification,
-  LlmIntent,
-  LlmIntentResult,
-  LlmClassifyArgs,
-} from './intent/llmIntentClassifier';
-
-// Step 40: Production-Grade Intent Routing (Unified Router)
+// Intent Routing (Workspace-Aware Scaffold Detection + Pass-Through)
 export {
   detectGreenfieldIntent as detectGreenfieldSignal,
-  detectCommandIntent as detectCommandSignal,
-  detectEditScale,
   detectSlashOverride,
-  normalizeUserInput,
 } from './intent/intentSignals';
 
 export {
   routeIntent,
-  routeUserInput,
-  isDefinitelyScaffold,
-  isDefinitelyRunCommand,
-  shouldCallLLM,
-  generateClarificationQuestion,
 } from './intent/intentRouter';
 
 export type {
   RoutedIntent,
   RoutingContext,
   IntentRoutingResult,
+  WorkspaceState,
 } from './intent/intentRouter';
 
 // Export event-sourcing components
@@ -255,6 +240,7 @@ export type {
   ToolExecutionProvider,
   ToolExecutionResult,
   LLMClient,
+  LLMClientCapabilities,
   LLMClientResponse,
   AgenticLoopConfig,
   AgenticLoopResult,
@@ -269,7 +255,24 @@ export type {
   ConversationMessage,
   ConversationHistoryConfig,
   ContentBlock,
+  CompactionResult,
+  CompactionLLMClient,
 } from './conversationHistory';
+
+// Export Context Budget Manager
+export {
+  ContextBudgetManager,
+} from './contextBudgetManager';
+
+export type {
+  ContextLayer,
+  ContextBudgetResult,
+} from './contextBudgetManager';
+
+// Export Activity Context
+export {
+  buildRecentActivityContext,
+} from './activityContext';
 
 // Export Tool Schemas (A3 — Anthropic function calling)
 export {
@@ -615,7 +618,6 @@ export {
   detectActiveRun,
   detectFlowKind,
   isGreenfieldRequest,
-  isPureQuestion,
   resolveReferences,
   detectScope,
   extractReferencedFiles,
@@ -698,14 +700,6 @@ export type {
   CommandPhaseContext,
 } from './commandPhase';
 
-export {
-  detectCommandIntent,
-  matchesCommandPattern,
-} from './userCommandDetector';
-
-export type {
-  CommandIntentResult,
-} from './userCommandDetector';
 
 // Step 35: Greenfield Scaffold Flow (Decision-Point-Based Scaffolding)
 export {
@@ -787,7 +781,6 @@ export type { RecipeDefinition } from './scaffold/recipeConfig';
 export {
   startPostScaffoldOrchestration,
   pollForCompletion,
-  applyDesignPackToProject,
   DEFAULT_POLLING_CONFIG,
 } from './scaffold/postScaffoldOrchestrator';
 
@@ -808,10 +801,6 @@ export type { ScaffoldSession } from './scaffold/scaffoldSession';
 export {
   getDesignPackById,
   getDefaultPacksForPicker,
-  getPacksByVibe,
-  generateCssVariables,
-  generateGlobalsCss,
-  generateTailwindConfig,
   DESIGN_PACKS,
 } from './scaffold/designPacks';
 
@@ -1172,6 +1161,7 @@ export {
   parseBlueprintFromLLMResponse,
   computeConfidence,
   getArchetypeSkeleton,
+  correctAppTypeForRecipe,
   listArchetypes,
   ARCHETYPE_SKELETONS,
 } from './scaffold/appBlueprintExtractor';

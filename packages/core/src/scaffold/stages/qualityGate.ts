@@ -197,12 +197,35 @@ async function attemptLLMRepair(
   const fileRefs = extractFileRefsFromErrors(errorSummaries, projectPath);
   const fileContents: Record<string, string> = {};
 
-  for (const ref of fileRefs.slice(0, 15)) {
+  // Dynamic budget: compute how many chars of file content the model can accept.
+  // Same math as ContextBudgetManager but scoped to repair prompts.
+  const CHARS_PER_TOKEN = 4;
+  const MODEL_CONTEXT = 200_000;
+  const OUTPUT_RESERVE = 16_384;
+  const OVERHEAD = 2_000;
+  const systemPromptChars = 400; // short system prompt for repair
+  const errorTokens = Math.ceil(errorSummaries.length / CHARS_PER_TOKEN);
+  const systemTokens = Math.ceil(systemPromptChars / CHARS_PER_TOKEN);
+  const budgetTokens = MODEL_CONTEXT - OUTPUT_RESERVE - OVERHEAD - systemTokens - errorTokens;
+  const budgetChars = Math.max(budgetTokens * CHARS_PER_TOKEN, 20_000);
+
+  let charsUsed = 0;
+
+  for (const ref of fileRefs) {
     try {
       const fullPath = path.resolve(projectPath, ref);
       if (fs.existsSync(fullPath)) {
         const content = fs.readFileSync(fullPath, 'utf-8');
-        fileContents[ref] = content.length <= 8000 ? content : content.slice(0, 8000) + '\n// ... truncated ...';
+        const available = budgetChars - charsUsed;
+        if (available <= 0) break;
+        if (content.length <= available) {
+          fileContents[ref] = content;
+          charsUsed += content.length;
+        } else {
+          fileContents[ref] = content.slice(0, available) + '\n// ... truncated ...';
+          charsUsed += available;
+          break;
+        }
       }
     } catch { /* skip */ }
   }
@@ -217,10 +240,18 @@ async function attemptLLMRepair(
       try {
         const entries = fs.readdirSync(fullDir, { withFileTypes: true });
         for (const entry of entries) {
-          if (entry.isFile() && /\.(tsx?|jsx?)$/.test(entry.name) && Object.keys(fileContents).length < 15) {
-            const rel = `${dir}/${entry.name}`;
-            const content = fs.readFileSync(path.join(fullDir, entry.name), 'utf-8');
-            fileContents[rel] = content.length <= 8000 ? content : content.slice(0, 8000) + '\n// ... truncated ...';
+          if (!entry.isFile() || !/\.(tsx?|jsx?)$/.test(entry.name)) continue;
+          const available = budgetChars - charsUsed;
+          if (available <= 0) break;
+          const rel = `${dir}/${entry.name}`;
+          const content = fs.readFileSync(path.join(fullDir, entry.name), 'utf-8');
+          if (content.length <= available) {
+            fileContents[rel] = content;
+            charsUsed += content.length;
+          } else {
+            fileContents[rel] = content.slice(0, available) + '\n// ... truncated ...';
+            charsUsed += available;
+            break;
           }
         }
       } catch { /* skip */ }
@@ -231,7 +262,7 @@ async function attemptLLMRepair(
     return { fixed: false, filesModified: [], description: 'Could not read any error-referenced files' };
   }
 
-  console.log(`${logPrefix} [LLM_REPAIR] Attempt ${attempt}: analyzing ${failedChecks.length} failures across ${Object.keys(fileContents).length} files`);
+  console.log(`${logPrefix} [LLM_REPAIR] Attempt ${attempt}: analyzing ${failedChecks.length} failures across ${Object.keys(fileContents).length} files (${Math.round(charsUsed / 1000)}K chars, budget ${Math.round(budgetChars / 1000)}K)`);
 
   const repairPrompt = buildRepairPrompt(errorSummaries, fileContents, attempt, projectPath);
 
@@ -247,6 +278,11 @@ async function attemptLLMRepair(
       `LLM repair attempt ${attempt}`,
     );
 
+    const stopReason = (response as any)?.stop_reason;
+    if (stopReason === 'max_tokens') {
+      console.warn(`${logPrefix} [LLM_REPAIR] Response truncated (stop_reason=max_tokens) — will attempt to parse partial`);
+    }
+
     const text = (response as any)?.content
       ?.filter((b: any) => b.type === 'text')
       ?.map((b: any) => b.text)
@@ -254,7 +290,10 @@ async function attemptLLMRepair(
 
     const fixes = parseRepairResponse(text);
     if (!fixes || fixes.length === 0) {
-      return { fixed: false, filesModified: [], description: 'LLM returned no actionable fixes' };
+      const reason = stopReason === 'max_tokens'
+        ? 'LLM response truncated (max_tokens) — try fewer files'
+        : 'LLM returned no actionable fixes';
+      return { fixed: false, filesModified: [], description: reason };
     }
 
     const protectedPaths = ['globals.css', 'layout.tsx', 'lib/utils.ts'];

@@ -89,20 +89,6 @@ describe('Mode Confirmation Policy', () => {
       expect(decision.severity).toBe('medium');
     });
     
-    test('High confidence + low severity → no confirmation', () => {
-      const mockResult: ClassificationResultV2 = {
-        suggestedMode: 'PLAN',
-        confidence: 'high',
-        reasonTags: ['planning_terms'],
-        scores: { answer: 0, plan: 5, mission: 0 },
-        reasonSignature: 'planning_terms→PLAN'
-      };
-      
-      // User chose ANSWER but system suggests PLAN (low severity)
-      const decision = policy.shouldConfirm('task1', 'ANSWER', mockResult, 1);
-      expect(decision.shouldConfirm).toBe(false);
-      expect(decision.severity).toBe('low');
-    });
   });
   
   describe('Severity levels', () => {
@@ -119,19 +105,6 @@ describe('Mode Confirmation Policy', () => {
       expect(decision.severity).toBe('high');
     });
     
-    test('ANSWER→MISSION is high severity', () => {
-      const mockResult: ClassificationResultV2 = {
-        suggestedMode: 'MISSION',
-        confidence: 'high',
-        reasonTags: ['action_verbs'],
-        scores: { answer: 0, plan: 0, mission: 5 },
-        reasonSignature: 'action_verbs→MISSION'
-      };
-      
-      const decision = policy.shouldConfirm('task1', 'ANSWER', mockResult, 1);
-      expect(decision.severity).toBe('high');
-    });
-    
     test('MISSION→PLAN is medium severity', () => {
       const mockResult: ClassificationResultV2 = {
         suggestedMode: 'PLAN',
@@ -145,7 +118,7 @@ describe('Mode Confirmation Policy', () => {
       expect(decision.severity).toBe('medium');
     });
     
-    test('ANSWER↔PLAN is low severity', () => {
+    test('PLAN↔PLAN is no mismatch (no severity)', () => {
       const mockResult: ClassificationResultV2 = {
         suggestedMode: 'PLAN',
         confidence: 'medium',
@@ -154,8 +127,9 @@ describe('Mode Confirmation Policy', () => {
         reasonSignature: 'planning_terms→PLAN'
       };
       
-      const decision = policy.shouldConfirm('task1', 'ANSWER', mockResult, 1);
-      expect(decision.severity).toBe('low');
+      const decision = policy.shouldConfirm('task1', 'PLAN', mockResult, 1);
+      expect(decision.severity).toBe('none');
+      expect(decision.shouldConfirm).toBe(false);
     });
   });
   

@@ -47,35 +47,26 @@ export function getOnboardingJs(): string {
 
           // ===== SLIDE 2: Modes =====
           + '<div class="onboarding-slide" data-slide="1">'
-          + '<div class="onb-slide-title">Three Powerful Modes</div>'
-          + '<div class="onb-slide-subtitle">Choose the right mode for every task. Each is optimized for a different workflow.</div>'
+          + '<div class="onb-slide-title">Two Powerful Modes</div>'
+          + '<div class="onb-slide-subtitle">Choose the right mode for every task.</div>'
           + '<div class="onb-modes">'
-          // ANSWER mode
-          + '<div class="onb-mode-card answer">'
-          + '<div class="onb-mode-header">'
-          + '<span class="onb-mode-icon">💬</span>'
-          + '<span class="onb-mode-name">ANSWER</span>'
-          + '<span class="onb-mode-badge">Read-only</span>'
-          + '</div>'
-          + '<div class="onb-mode-desc">Ask questions about your codebase. Get explanations, find bugs, understand architecture — without making any changes.</div>'
-          + '</div>'
-          // PLAN mode
-          + '<div class="onb-mode-card plan">'
-          + '<div class="onb-mode-header">'
-          + '<span class="onb-mode-icon">📋</span>'
-          + '<span class="onb-mode-name">PLAN</span>'
-          + '<span class="onb-mode-badge">Analysis</span>'
-          + '</div>'
-          + '<div class="onb-mode-desc">Generate detailed implementation plans with architecture diagrams, risk assessment, and step-by-step guidance. Review and refine before executing.</div>'
-          + '</div>'
-          // MISSION mode
+          // Agent mode (default)
           + '<div class="onb-mode-card mission">'
           + '<div class="onb-mode-header">'
           + '<span class="onb-mode-icon">🚀</span>'
-          + '<span class="onb-mode-name">MISSION</span>'
-          + '<span class="onb-mode-badge">Autonomous</span>'
+          + '<span class="onb-mode-name">Agent</span>'
+          + '<span class="onb-mode-badge">Default</span>'
           + '</div>'
-          + '<div class="onb-mode-desc">The AI agent autonomously reads, writes, and tests code. Checkpoint-protected with approval gates at every risky step.</div>'
+          + '<div class="onb-mode-desc">The AI agent reads, writes, and tests code autonomously. Ask questions, request changes, run commands — it handles everything. Checkpoint-protected with approval gates.</div>'
+          + '</div>'
+          // Plan mode
+          + '<div class="onb-mode-card plan">'
+          + '<div class="onb-mode-header">'
+          + '<span class="onb-mode-icon">📋</span>'
+          + '<span class="onb-mode-name">Plan</span>'
+          + '<span class="onb-mode-badge">Analysis</span>'
+          + '</div>'
+          + '<div class="onb-mode-desc">Generate detailed implementation plans with architecture diagrams, risk assessment, and step-by-step guidance. Review and refine before executing.</div>'
           + '</div>'
           + '</div>'
           + '<div class="onb-actions">'
@@ -89,9 +80,9 @@ export function getOnboardingJs(): string {
           + '<div class="onb-slide-title">Try Something</div>'
           + '<div class="onb-slide-subtitle">Click a suggestion below to start, or type your own prompt after closing this guide.</div>'
           + '<div class="onb-prompts">'
-          + buildPrompt('💬', 'Explain the architecture of this project', 'ANSWER', 'answer')
-          + buildPrompt('📋', 'Plan adding authentication to this app', 'PLAN', 'plan')
           + buildPrompt('🚀', 'Add a dark mode toggle to the settings', 'MISSION', 'mission')
+          + buildPrompt('📋', 'Plan adding authentication to this app', 'PLAN', 'plan')
+          + buildPrompt('💬', 'Explain the architecture of this project', 'MISSION', 'mission')
           + buildPrompt('🔍', 'Find and fix potential security issues', 'MISSION', 'mission')
           + buildPrompt('🧪', 'Write tests for the main utility functions', 'MISSION', 'mission')
           + '</div>'

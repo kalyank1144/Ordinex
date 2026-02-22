@@ -40,13 +40,9 @@ describe('Mode Classifier V2', () => {
   });
 
   describe('Action verbs override question form', () => {
-    test('"Show me how to add logging" → MISSION (not ANSWER high)', () => {
+    test('"Show me how to add logging" → MISSION', () => {
       const result = classifyPromptV2('Show me how to add logging');
-      // Should be MISSION or at least not ANSWER with high confidence
-      if (result.suggestedMode === 'ANSWER') {
-        expect(result.confidence).not.toBe('high');
-      }
-      // More likely: should be MISSION with medium confidence
+      expect(result.suggestedMode).toBe('MISSION');
       expect(result.reasonTags).toContain('action_verbs');
     });
     
@@ -129,30 +125,30 @@ describe('Mode Classifier V2', () => {
     });
   });
 
-  describe('Pure questions → ANSWER', () => {
-    test('"What is TypeScript?" → ANSWER high', () => {
+  describe('Pure questions → MISSION', () => {
+    test('"What is TypeScript?" → MISSION high', () => {
       const result = classifyPromptV2('What is TypeScript?');
-      expect(result.suggestedMode).toBe('ANSWER');
+      expect(result.suggestedMode).toBe('MISSION');
       expect(result.confidence).toBe('high');
       expect(result.reasonTags).toContain('question_form');
     });
     
-    test('"Explain JWT vs sessions" → ANSWER high', () => {
+    test('"Explain JWT vs sessions" → MISSION high', () => {
       const result = classifyPromptV2('Explain JWT vs sessions');
-      expect(result.suggestedMode).toBe('ANSWER');
+      expect(result.suggestedMode).toBe('MISSION');
       expect(result.confidence).toBe('high');
       expect(result.reasonTags).toContain('question_form');
     });
     
-    test('"Why does React use virtual DOM?" → ANSWER', () => {
+    test('"Why does React use virtual DOM?" → MISSION', () => {
       const result = classifyPromptV2('Why does React use virtual DOM?');
-      expect(result.suggestedMode).toBe('ANSWER');
+      expect(result.suggestedMode).toBe('MISSION');
       expect(result.reasonTags).toContain('question_form');
     });
     
-    test('"How does async/await work?" → ANSWER', () => {
+    test('"How does async/await work?" → MISSION', () => {
       const result = classifyPromptV2('How does async/await work?');
-      expect(result.suggestedMode).toBe('ANSWER');
+      expect(result.suggestedMode).toBe('MISSION');
       expect(result.reasonTags).toContain('question_form');
     });
   });
@@ -182,7 +178,7 @@ describe('Mode Classifier V2', () => {
     test('High confidence when clear single mode', () => {
       const result = classifyPromptV2('What is Redux?');
       expect(result.confidence).toBe('high');
-      expect(result.suggestedMode).toBe('ANSWER');
+      expect(result.suggestedMode).toBe('MISSION');
     });
     
     test('Medium confidence when moderate signal', () => {
@@ -218,7 +214,7 @@ describe('Mode Classifier V2', () => {
   describe('Backward compatibility', () => {
     test('classifyPrompt() wrapper works', () => {
       const result = classifyPrompt('What is TypeScript?');
-      expect(result.suggestedMode).toBe('ANSWER');
+      expect(result.suggestedMode).toBe('MISSION');
       expect(result.confidence).toBe('high');
       expect(result.reasoning).toContain('question_form');
     });

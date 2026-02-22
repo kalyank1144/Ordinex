@@ -71,6 +71,10 @@
       {
         "command": "ordinex.stopExecution",
         "title": "Ordinex: Stop Execution"
+      },
+      {
+        "command": "ordinex.cycleMode",
+        "title": "Ordinex: Toggle Mode (Agent / Plan)"
       }
     ],
     "keybindings": [
@@ -100,6 +104,11 @@
         "key": "escape",
         "mac": "escape",
         "when": "view.ordinex.missionControl.visible && ordinex.isRunning"
+      },
+      {
+        "command": "ordinex.cycleMode",
+        "key": "ctrl+.",
+        "mac": "cmd+."
       }
     ],
     "menus": {

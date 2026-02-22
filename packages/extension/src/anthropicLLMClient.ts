@@ -8,16 +8,24 @@
 
 import type {
   LLMClient,
+  LLMClientCapabilities,
   LLMClientResponse,
   ConversationMessage,
   ToolSchema,
 } from 'core';
+import { getMaxOutputTokens, getContextWindow } from 'core';
 
 export class AnthropicLLMClient implements LLMClient {
   private readonly apiKey: string;
+  public readonly capabilities: LLMClientCapabilities;
 
-  constructor(apiKey: string) {
+  constructor(apiKey: string, modelId?: string) {
     this.apiKey = apiKey;
+    this.capabilities = {
+      maxOutputTokens: modelId ? getMaxOutputTokens(modelId) : 8192,
+      contextWindow: modelId ? getContextWindow(modelId) : 200_000,
+      provider: 'anthropic',
+    };
   }
 
   async createMessage(params: {

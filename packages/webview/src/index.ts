@@ -228,9 +228,8 @@ ${css}
         <label>Mode:</label>
         <select class="logs-filter-select" id="logsModeFilter">
           <option value="all">All</option>
-          <option value="ANSWER">ANSWER</option>
-          <option value="PLAN">PLAN</option>
-          <option value="MISSION">MISSION</option>
+          <option value="MISSION">Agent</option>
+          <option value="PLAN">Plan</option>
         </select>
         <span class="logs-stats" id="logsStats">0 events</span>
       </div>
@@ -266,14 +265,19 @@ ${css}
     </div>
   </div>
 
+  <!-- Context Session Banner (dismissible, shown after 3+ compactions) -->
+  <div id="contextSessionBanner" class="context-session-banner" style="display: none;">
+    <span>This session has been running for a while. Starting a new chat may improve response quality.</span>
+    <button class="context-session-dismiss" onclick="document.getElementById('contextSessionBanner').style.display='none'">✕</button>
+  </div>
+
   <!-- Composer Bar -->
   <div class="composer">
     <div class="composer-controls">
       <label>Mode:</label>
       <select id="modeSelect">
-        <option value="ANSWER">ANSWER</option>
-        <option value="PLAN">PLAN</option>
-        <option value="MISSION">MISSION</option>
+        <option value="MISSION" selected>Agent</option>
+        <option value="PLAN">Plan</option>
       </select>
       <label>Model:</label>
       <select id="modelSelect" title="Select LLM model">
@@ -286,6 +290,14 @@ ${css}
     </div>
     <div class="composer-input-wrapper">
       <textarea id="promptInput" placeholder="Enter your prompt..." rows="2"></textarea>
+      <div id="contextHealthIndicator" class="context-ring-wrap" title="Context usage">
+        <svg class="context-ring" viewBox="0 0 20 20" width="18" height="18">
+          <circle class="context-ring-bg" cx="10" cy="10" r="8" fill="none" stroke-width="2.5"/>
+          <circle id="contextRingFill" class="context-ring-fill" cx="10" cy="10" r="8" fill="none" stroke-width="2.5"
+            stroke-dasharray="50.265" stroke-dashoffset="50.265" transform="rotate(-90 10 10)"/>
+        </svg>
+        <span id="contextRingTooltip" class="context-ring-tooltip"></span>
+      </div>
       <button class="send-stop-btn send" id="sendStopBtn" title="Send">▶</button>
     </div>
     <!-- Hidden buttons for backward compatibility -->

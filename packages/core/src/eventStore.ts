@@ -120,7 +120,7 @@ export class EventStore {
         taskMap.set(tid, {
           task_id: tid,
           title: '',
-          mode: event.mode || 'ANSWER',
+          mode: event.mode || 'MISSION',
           first_event_at: event.timestamp,
           last_event_at: event.timestamp,
           event_count: 1,

@@ -308,7 +308,7 @@ export function classifyPromptV2(prompt: string): ClassificationResultV2 {
   } else if (scores.plan === maxScore) {
     suggestedMode = 'PLAN';
   } else {
-    suggestedMode = 'ANSWER';
+    suggestedMode = 'MISSION';
   }
   
   // Generate stable reasonSignature for caching
@@ -355,12 +355,6 @@ export function shouldRequireConfirmation(
 ): boolean {
   // No confirmation needed if modes match
   if (userSelectedMode === suggestedMode) {
-    return false;
-  }
-
-  // IMPORTANT: Never require confirmation for ANSWER mode
-  // ANSWER mode is read-only (no file changes), so it's always safe to proceed
-  if (userSelectedMode === 'ANSWER') {
     return false;
   }
 

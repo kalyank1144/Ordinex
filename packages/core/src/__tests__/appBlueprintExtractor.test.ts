@@ -3,6 +3,7 @@ import {
   parseBlueprintFromLLMResponse,
   computeConfidence,
   getArchetypeSkeleton,
+  correctAppTypeForRecipe,
   listArchetypes,
   buildExtractionPrompt,
   ARCHETYPE_SKELETONS,
@@ -118,5 +119,54 @@ describe('buildExtractionPrompt', () => {
     expect(prompt).toContain('Build a todo app');
     expect(prompt).toContain('app_type');
     expect(prompt).toContain('is_auth_required');
+  });
+});
+
+describe('correctAppTypeForRecipe', () => {
+  const makeBp = (appType: string, pageNames: string[] = ['Dashboard']): AppBlueprint => ({
+    app_type: appType as any,
+    app_name: 'Test App',
+    primary_layout: 'sidebar',
+    pages: pageNames.map(n => ({
+      name: n,
+      path: `/${n.toLowerCase()}`,
+      description: `${n} page`,
+      key_components: ['Component'],
+      layout: 'sidebar' as const,
+      is_auth_required: false,
+    })),
+    data_models: [{ name: 'Item', fields: ['id', 'name'] }],
+    shadcn_components: ['card', 'button'],
+    features: [{ name: 'Feature', description: 'Desc', complexity: 'low' as const }],
+  });
+
+  it('does not change app_type when recipe is expo', () => {
+    const bp = makeBp('mobile_app');
+    const result = correctAppTypeForRecipe(bp, 'expo');
+    expect(result.app_type).toBe('mobile_app');
+  });
+
+  it('corrects mobile_app to dashboard_saas for nextjs_app_router', () => {
+    const bp = makeBp('mobile_app');
+    const result = correctAppTypeForRecipe(bp, 'nextjs_app_router');
+    expect(result.app_type).not.toBe('mobile_app');
+  });
+
+  it('corrects mobile_app to ecommerce when pages include cart/product', () => {
+    const bp = makeBp('mobile_app', ['Products', 'Cart', 'Checkout']);
+    const result = correctAppTypeForRecipe(bp, 'nextjs_app_router');
+    expect(result.app_type).toBe('ecommerce');
+  });
+
+  it('does not change non-mobile_app types', () => {
+    const bp = makeBp('dashboard_saas');
+    const result = correctAppTypeForRecipe(bp, 'nextjs_app_router');
+    expect(result.app_type).toBe('dashboard_saas');
+  });
+
+  it('corrects mobile_app to vite_react recipe', () => {
+    const bp = makeBp('mobile_app');
+    const result = correctAppTypeForRecipe(bp, 'vite_react');
+    expect(result.app_type).not.toBe('mobile_app');
   });
 });

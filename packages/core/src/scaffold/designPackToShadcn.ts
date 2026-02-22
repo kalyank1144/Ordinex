@@ -269,7 +269,8 @@ export async function updateGlobalsCssTokens(
     await fs.promises.writeFile(existing, content, 'utf-8');
     console.log(`[DesignPackToShadcn] Updated tokens in ${existing} (tailwind ${isV4 ? 'v4' : 'v3'})`);
     return true;
-  } catch {
+  } catch (err) {
+    console.error(`[DesignPackToShadcn] Failed to update globals.css at ${existing}:`, err);
     return false;
   }
 }

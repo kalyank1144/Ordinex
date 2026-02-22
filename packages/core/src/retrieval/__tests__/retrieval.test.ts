@@ -123,32 +123,6 @@ describe('Retrieval System', () => {
       expect(totalLines).toBeLessThanOrEqual(50);
     });
 
-    it('should enforce ANSWER mode file limit', async () => {
-      const request: RetrievalRequest = {
-        query: 'function',
-        mode: 'ANSWER',
-        stage: 'retrieve',
-        constraints: { max_files: 5, max_lines: 200 },
-      };
-
-      await expect(retriever.retrieve(request)).rejects.toThrow(
-        'ANSWER mode cannot retrieve more than 3 files'
-      );
-    });
-
-    it('should allow ANSWER mode with valid constraints', async () => {
-      const request: RetrievalRequest = {
-        query: 'function',
-        mode: 'ANSWER',
-        stage: 'retrieve',
-        constraints: { max_files: 2, max_lines: 100 },
-      };
-
-      const result = await retriever.retrieve(request);
-
-      expect(result.results.length).toBeLessThanOrEqual(2);
-    });
-
     it('should apply default constraints when not specified', async () => {
       const request: RetrievalRequest = {
         query: 'function',
@@ -260,17 +234,18 @@ describe('Retrieval System', () => {
       const events: any[] = [];
       const unsubscribe = eventBus.subscribe(e => { events.push(e); });
 
-      const request: RetrievalRequest = {
+      // Use invalid mode to trigger retrieval failure (ANSWER was removed; only PLAN | MISSION valid)
+      const request = {
         query: 'test',
-        mode: 'ANSWER',
-        stage: 'retrieve',
-        constraints: { max_files: 10, max_lines: 200 }, // Invalid for ANSWER mode
+        mode: 'ANSWER' as const,
+        stage: 'retrieve' as const,
+        constraints: { max_files: 10, max_lines: 200 },
       };
 
       try {
-        await retriever.retrieve(request);
+        await retriever.retrieve(request as RetrievalRequest);
       } catch (err) {
-        // Expected to throw
+        // Expected to throw: Unknown mode: ANSWER
       }
 
       const failedEvent = events.find(e => e.type === 'retrieval_failed');

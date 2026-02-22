@@ -45,7 +45,7 @@ export function renderCrashRecoveryCard(event: Event): string {
     <div class="approval-details" style="margin: 8px 0;">
       <div class="detail-row">
         <span class="detail-label">Mode:</span>
-        <span class="detail-value">${escapeHtml(mode || 'ANSWER')}</span>
+        <span class="detail-value">${escapeHtml(mode || 'MISSION')}</span>
       </div>
       <div class="detail-row">
         <span class="detail-label">Stage:</span>

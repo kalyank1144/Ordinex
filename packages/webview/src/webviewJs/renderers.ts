@@ -399,14 +399,14 @@ export function getRenderersJs(): string {
         return html;
       }
 
-      // Render Streaming Answer Card (also used for completed answer) — uses plan-card design
+      // Render Agent streaming card (text narration between tool calls) — uses plan-card design
       function renderStreamingAnswerCard() {
         if (!state.streamingAnswer || !state.streamingAnswer.text) {
           return '';
         }
 
         var isComplete = !!state.streamingAnswer.isComplete;
-        var title = isComplete ? 'Answer' : 'Streaming Answer';
+        var title = isComplete ? 'Agent Response' : 'Agent';
         var timestampHtml = isComplete
           ? '<span class="plan-card-time">\u2713 Complete</span>'
           : '<span class="plan-card-time" style="display:flex;align-items:center;gap:6px;"><span class="plan-streaming-dot"></span>Live</span>';
@@ -414,7 +414,7 @@ export function getRenderersJs(): string {
 
         return '<div class="plan-card">'
           + '<div class="plan-card-header">'
-          + '<span class="plan-card-type"><span class="plan-card-icon" style="background:var(--vscode-charts-blue);">\ud83d\udcac</span>' + title + '</span>'
+          + '<span class="plan-card-type"><span class="plan-card-icon" style="background:var(--vscode-charts-green);">\u26a1</span>' + title + '</span>'
           + timestampHtml
           + '</div>'
           + '<div class="plan-card-body">'
@@ -608,33 +608,53 @@ export function getRenderersJs(): string {
           + errorHtml;
       }
 
-      // ===== LIVE STREAMING: lightweight container for targeted DOM updates =====
-      // During active streaming the blocks need a container so RAF updates can find them.
-      // Visually this is NOT a heavy card — just a subtle header + flowing blocks.
-      function renderLiveStreamingContainer() {
+      // ===== STREAMING BLOCKS: unified renderer for all agent output =====
+      // Renders narration, tool calls, and follow-up separators in a single
+      // continuous container. Shows live indicator only when agent is active.
+      function renderStreamingBlocks() {
         var sm = state.streamingMission;
         if (!sm || !sm.blocks || sm.blocks.length === 0) return '';
 
-        var stepLabel = sm.stepId ? ' (Step: ' + escapeHtml(sm.stepId) + ')' : '';
-        var iterLabel = sm.iteration ? ' Iter ' + sm.iteration : '';
+        var isLive = !sm.isComplete;
+        var statusBadge = isLive
+          ? '<span style="font-size:10px;padding:1px 6px;border-radius:8px;background:var(--vscode-charts-green);color:#fff;margin-left:auto;">\u26a1 Live</span>'
+          : '<span style="font-size:10px;padding:1px 6px;border-radius:8px;background:var(--vscode-widget-border);color:var(--vscode-foreground);margin-left:auto;">\u2713 Done</span>';
 
         var blocksHtml = sm.blocks.map(function(block) {
           if (block.kind === 'narration') {
-            return renderNarrationBlock(block, block.id === sm.activeNarrationId);
+            return renderNarrationBlock(block, isLive && block.id === sm.activeNarrationId);
           } else if (block.kind === 'tool') {
             return renderToolBlock(block);
+          } else if (block.kind === 'separator') {
+            return renderFollowUpSeparator();
+          } else if (block.kind === 'prompt') {
+            return renderPromptBlock(block);
           }
           return '';
         }).join('');
 
         return '<div style="margin:8px 0 4px 0;">'
           + '<div style="display:flex;align-items:center;gap:6px;margin-bottom:6px;padding-bottom:4px;border-bottom:1px solid var(--vscode-widget-border);">'
-          +   '<span style="color:var(--vscode-charts-orange);font-size:14px;">\u2699\ufe0f</span>'
-          +   '<span style="font-size:12px;font-weight:600;color:var(--vscode-foreground);">Editing' + stepLabel + iterLabel + '</span>'
-          +   '<span style="font-size:10px;padding:1px 6px;border-radius:8px;background:var(--vscode-charts-orange);color:#fff;margin-left:auto;">\u26a1 Live</span>'
+          +   '<span style="color:var(--vscode-charts-green);font-size:14px;">\u26a1</span>'
+          +   '<span style="font-size:12px;font-weight:600;color:var(--vscode-foreground);">Agent</span>'
+          +   statusBadge
           + '</div>'
           + '<div class="streaming-blocks-container" style="padding:0 0 0 8px;">'
           +   blocksHtml
+          + '</div>'
+          + '</div>';
+      }
+
+      function renderFollowUpSeparator() {
+        return '<div style="margin:14px 0;height:1px;background:var(--vscode-widget-border);opacity:0.5;"></div>';
+      }
+
+      function renderPromptBlock(block) {
+        var text = block.text || '';
+        return '<div data-block-id="' + block.id + '" style="margin:8px 0 10px 0;display:flex;align-items:flex-start;gap:8px;">'
+          + '<div style="width:22px;height:22px;border-radius:50%;background:var(--vscode-charts-blue);color:#fff;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;flex-shrink:0;">U</div>'
+          + '<div style="font-size:13px;line-height:1.5;color:var(--vscode-foreground);padding:6px 10px;background:var(--vscode-input-background);border-radius:8px;max-width:90%;word-break:break-word;">'
+          + escapeHtml(text)
           + '</div>'
           + '</div>';
       }
@@ -692,7 +712,7 @@ export function getRenderersJs(): string {
         'scaffold_final_complete',
         'plan_large_detected',
         'repeated_failure_detected',
-        'loop_paused', 'loop_completed'
+        'loop_paused', 'loop_completed', 'loop_failed'
       ]);
 
       const PROGRESS_TIER_EVENTS = new Set([
@@ -1685,27 +1705,8 @@ export function getRenderersJs(): string {
             // total === 0 or no data: fall through to generic card
           }
 
-          // Inject completed streaming blocks ABOVE loop_paused/loop_completed cards.
-          // Blocks flow as individual timeline items (narration = bubble, tool = row).
-          if (event.type === 'loop_paused' || event.type === 'loop_completed') {
-            // Historical completed blocks from previous iterations
-            if (state._completedMissionBlocks && state._completedMissionBlocks.length > 0) {
-              for (var cbi = 0; cbi < state._completedMissionBlocks.length; cbi++) {
-                var histItems = renderCompletedBlocksAsTimelineItems(state._completedMissionBlocks[cbi]);
-                for (var hi = 0; hi < histItems.length; hi++) {
-                  items.push(histItems[hi]);
-                }
-              }
-              state._completedMissionBlocks = [];
-            }
-            // Current completed streaming session
-            if (state.streamingMission && state.streamingMission.isComplete && state.streamingMission.blocks.length > 0) {
-              var curItems = renderCompletedBlocksAsTimelineItems(state.streamingMission);
-              for (var cui = 0; cui < curItems.length; cui++) {
-                items.push(curItems[cui]);
-              }
-            }
-          }
+          // loop_completed/loop_paused/loop_failed: no special rendering needed.
+          // Streaming blocks are always rendered at the end of the timeline.
 
           // Hide loop_completed card — the diff_applied card is the clean end marker
           if (event.type === 'loop_completed') {
@@ -1783,10 +1784,9 @@ export function getRenderersJs(): string {
             <div class="plan-card-wrapper">\${renderStreamingPlanCard()}</div>
           \`);
         }
-        // Only render active (non-complete) streaming blocks at the end.
-        // Completed blocks are rendered inline above loop_paused/loop_completed cards.
-        if (state.streamingMission && !state.streamingMission.isComplete && state.streamingMission.blocks && state.streamingMission.blocks.length > 0) {
-          items.push('<div class="mission-live-container">' + renderLiveStreamingContainer() + '</div>');
+        // Streaming blocks: always render at the end of the timeline.
+        if (state.streamingMission && state.streamingMission.blocks && state.streamingMission.blocks.length > 0) {
+          items.push('<div class="mission-live-container">' + renderStreamingBlocks() + '</div>');
         }
 
         // Render deferred diff_applied card at the very END — after narration/streaming blocks.
@@ -2495,6 +2495,20 @@ export function getRenderersJs(): string {
         if (event.type === 'loop_paused') {
           return renderLoopPausedInline(event);
         }
+        // AgenticLoop: loop_failed card
+        if (event.type === 'loop_failed') {
+          const p = event.payload || {};
+          const errorMsg = p.error || p.reason || 'Unknown error';
+          return \`
+            <div class="event-card" style="border-left:3px solid #f87171;padding:10px 12px;">
+              <div style="display:flex;align-items:center;gap:6px;margin-bottom:6px;">
+                <span style="font-size:16px;">\u26a0</span>
+                <span style="font-weight:600;color:#f87171;">Agent Loop Failed</span>
+              </div>
+              <div style="color:var(--vscode-descriptionForeground);font-size:12px;">\${escapeHtml(errorMsg)}</div>
+            </div>
+          \`;
+        }
         // AgenticLoop: loop_completed card
         if (event.type === 'loop_completed') {
           const p = event.payload || {};
@@ -2520,7 +2534,7 @@ export function getRenderersJs(): string {
           const recommendedAction = p.recommended_action || '';
           const options = (p.options) || [];
           const lastCheckpointId = p.last_checkpoint_id || null;
-          const mode = p.mode || 'ANSWER';
+          const mode = p.mode || 'MISSION';
           const stage = p.stage || 'none';
           const eventCount = p.event_count || 0;
           const timeSinceMs = p.time_since_interruption_ms || 0;
@@ -2864,7 +2878,7 @@ export function getRenderersJs(): string {
               
               if (tool === 'llm_answer') {
                 const humanModel = model ? humanizeModelName(model) : '';
-                return \`Answering (\${humanModel || 'LLM'})\${hasContext ? ' · Project-aware' : ''}\`;
+                return \`Agent responding (\${humanModel || 'LLM'})\${hasContext ? ' · Project-aware' : ''}\`;
               }
               
               const target = e.payload.target;
@@ -2881,7 +2895,7 @@ export function getRenderersJs(): string {
               const success = e.payload.success !== false;
               
               if (tool === 'llm_answer') {
-                return \`Answer \${success ? 'completed' : 'failed'}\${duration ? ' (' + Math.round(duration / 1000) + 's)' : ''}\`;
+                return \`Response \${success ? 'completed' : 'failed'}\${duration ? ' (' + Math.round(duration / 1000) + 's)' : ''}\`;
               }
               
               return \`\${tool}\${duration ? ' (' + duration + 'ms)' : ''}\`;
@@ -2973,7 +2987,7 @@ export function getRenderersJs(): string {
                 const todoCount = e.payload.todo_count;
                 return \`\${filesScanned} files scanned, \${anchorFiles} anchor files\${stack !== 'unknown' ? ' | Stack: ' + stack : ''}\${todoCount ? ' | TODOs: ' + todoCount : ''}\`;
               }
-              // ANSWER mode context
+              // Agent context
               const filesCount = (e.payload.files_included || []).length;
               const totalLines = e.payload.total_lines || 0;
               const stack = (e.payload.inferred_stack || []).join(', ');

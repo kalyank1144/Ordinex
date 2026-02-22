@@ -23,7 +23,7 @@ import {
 } from './types';
 import { EventBus } from './eventBus';
 import { analyzeIntent, IntentAnalysisContext } from './intentAnalyzer';
-import { detectCommandIntent } from './userCommandDetector';
+
 import { detectGreenfieldIntent } from './intent/greenfieldDetector';
 
 // ============================================================================
@@ -156,7 +156,7 @@ async function handleAnswerBehavior(context: HandlerContext): Promise<BehaviorHa
     task_id: taskId,
     timestamp: new Date().toISOString(),
     type: 'mode_set',
-    mode: 'ANSWER',
+    mode: 'MISSION',
     stage: 'none',
     payload: {
       from_behavior: 'ANSWER',
@@ -169,7 +169,7 @@ async function handleAnswerBehavior(context: HandlerContext): Promise<BehaviorHa
   return {
     success: true,
     behavior: 'ANSWER',
-    derived_mode: 'ANSWER',
+    derived_mode: 'MISSION',
     next_action: 'stream_response',
     payload: {
       prompt,
@@ -200,7 +200,7 @@ async function handleClarifyBehavior(context: HandlerContext): Promise<BehaviorH
     return {
       success: false,
       behavior: 'CLARIFY',
-      derived_mode: 'ANSWER',
+      derived_mode: 'MISSION',
       next_action: 'complete',
       error: 'CLARIFY behavior selected but no clarification request provided',
     };
@@ -212,7 +212,7 @@ async function handleClarifyBehavior(context: HandlerContext): Promise<BehaviorH
     task_id: taskId,
     timestamp: new Date().toISOString(),
     type: 'clarification_requested',
-    mode: 'ANSWER',
+    mode: 'MISSION',
     stage: 'none',
     payload: {
       question: intentAnalysis.clarification.question,
@@ -228,7 +228,7 @@ async function handleClarifyBehavior(context: HandlerContext): Promise<BehaviorH
   return {
     success: true,
     behavior: 'CLARIFY',
-    derived_mode: 'ANSWER',
+    derived_mode: 'MISSION',
     awaiting_response: true,
     next_action: 'show_clarification',
     payload: {
@@ -256,7 +256,7 @@ export async function processClarificationResponse(
     task_id: taskId,
     timestamp: new Date().toISOString(),
     type: 'clarification_received',
-    mode: 'ANSWER',
+    mode: 'MISSION',
     stage: 'none',
     payload: {
       action: response.action,
@@ -290,7 +290,7 @@ export async function processClarificationResponse(
           context_source: { type: 'fresh' },
           confidence: 1.0,
           reasoning: 'User confirmed: just explain/discuss',
-          derived_mode: 'ANSWER',
+          derived_mode: 'MISSION',
         };
       } else if (response.value === 'QUICK_ACTION') {
         return {
@@ -316,7 +316,7 @@ export async function processClarificationResponse(
         context_source: { type: 'fresh' },
         confidence: 1.0,
         reasoning: 'User cancelled operation',
-        derived_mode: 'ANSWER',
+        derived_mode: 'MISSION',
       };
   }
   
@@ -343,44 +343,6 @@ export async function processClarificationResponse(
 async function handleQuickActionBehavior(context: HandlerContext): Promise<BehaviorHandlerResult> {
   const { taskId, prompt, intentAnalysis, eventBus, analysisContext } = context;
   
-  // Step 34.5: Check if this is a command execution request
-  const commandIntent = detectCommandIntent(prompt);
-  
-  if (commandIntent.isCommandIntent && commandIntent.confidence >= 0.7) {
-    // This is a command execution request, not a code change
-    // Emit mode_set with command context
-    await eventBus.publish({
-      event_id: randomUUID(),
-      task_id: taskId,
-      timestamp: new Date().toISOString(),
-      type: 'mode_set',
-      mode: 'MISSION',
-      stage: 'command',
-      payload: {
-        from_behavior: 'QUICK_ACTION',
-        reason: `Command execution: ${commandIntent.reasoning}`,
-        detected_keywords: commandIntent.detectedKeywords,
-        inferred_commands: commandIntent.inferredCommands,
-      },
-      evidence_ids: [],
-      parent_event_id: null,
-    });
-    
-    return {
-      success: true,
-      behavior: 'QUICK_ACTION',
-      derived_mode: 'MISSION',
-      next_action: 'run_command',
-      payload: {
-        prompt,
-        command_intent: commandIntent,
-        gated: true, // Always require approval
-        execution_context: 'user_run',
-      },
-    };
-  }
-  
-  // Regular code change flow
   // Emit mode_set event (MISSION mode for QUICK_ACTION)
   await eventBus.publish({
     event_id: randomUUID(),
@@ -484,7 +446,7 @@ async function handleContinueRunBehavior(context: HandlerContext): Promise<Behav
     return {
       success: false,
       behavior: 'CONTINUE_RUN',
-      derived_mode: 'ANSWER',
+      derived_mode: 'MISSION',
       next_action: 'complete',
       error: 'CONTINUE_RUN selected but no active run found',
     };
@@ -680,16 +642,14 @@ export async function processContinueRunResponse(
  */
 export function behaviorToMode(behavior: Behavior): Mode {
   switch (behavior) {
-    case 'ANSWER':
-    case 'CLARIFY':
-      return 'ANSWER';
-    case 'QUICK_ACTION':
-    case 'CONTINUE_RUN':
-      return 'MISSION';
     case 'PLAN':
       return 'PLAN';
+    case 'ANSWER':
+    case 'CLARIFY':
+    case 'QUICK_ACTION':
+    case 'CONTINUE_RUN':
     default:
-      return 'ANSWER';
+      return 'MISSION';
   }
 }
 

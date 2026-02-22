@@ -23,7 +23,7 @@ import { MissionRunStage } from './missionRunner';
 function createInitialState(taskId: string): TaskState {
   return {
     task_id: taskId,
-    mode: 'ANSWER',
+    mode: 'MISSION',
     status: 'idle',
     stage: 'none',
     iteration: {

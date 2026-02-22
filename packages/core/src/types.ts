@@ -215,7 +215,8 @@ export type EventType =
   // AgenticLoop Integration: Loop Pause + Continue
   | 'loop_paused'
   | 'loop_continued'
-  | 'loop_completed';
+  | 'loop_completed'
+  | 'loop_failed';
 
 export const CANONICAL_EVENT_TYPES: readonly EventType[] = [
   'intent_received',
@@ -419,9 +420,10 @@ export const CANONICAL_EVENT_TYPES: readonly EventType[] = [
   'loop_paused',
   'loop_continued',
   'loop_completed',
+  'loop_failed',
 ] as const;
 
-export type Mode = 'ANSWER' | 'PLAN' | 'MISSION';
+export type Mode = 'PLAN' | 'MISSION';
 
 /**
  * Step 33: Behavior Types (Pre-execution intelligence layer)

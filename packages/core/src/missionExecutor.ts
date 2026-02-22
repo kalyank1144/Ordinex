@@ -1613,6 +1613,19 @@ export class MissionExecutor {
     } catch (err) {
       const errMsg = err instanceof Error ? err.message : String(err);
       console.error('[MissionExecutor] AgenticLoop error:', errMsg);
+
+      await this.emitEvent({
+        event_id: randomUUID(),
+        task_id: this.taskId,
+        timestamp: new Date().toISOString(),
+        type: 'loop_failed',
+        mode: this.mode,
+        stage: 'edit',
+        payload: { reason: 'loop_error', error: errMsg },
+        evidence_ids: [],
+        parent_event_id: null,
+      });
+
       this.cleanupLoopState(stepId);
       return { success: false, stage: 'edit', shouldPause: true, pauseReason: 'edit_step_error', error: errMsg };
     }
@@ -1685,6 +1698,19 @@ export class MissionExecutor {
     } catch (err) {
       const errMsg = err instanceof Error ? err.message : String(err);
       console.error('[MissionExecutor] AgenticLoop error:', errMsg);
+
+      await this.emitEvent({
+        event_id: randomUUID(),
+        task_id: this.taskId,
+        timestamp: new Date().toISOString(),
+        type: 'loop_failed',
+        mode: this.mode,
+        stage: 'edit',
+        payload: { reason: 'loop_error', error: errMsg },
+        evidence_ids: [],
+        parent_event_id: null,
+      });
+
       this.cleanupLoopState(stepId);
       return { success: false, stage: 'edit', shouldPause: true, pauseReason: 'edit_step_error', error: errMsg };
     }

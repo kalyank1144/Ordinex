@@ -11,13 +11,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import type { RecipeId } from './recipeTypes';
-import {
-  getDesignPackById,
-  generateGlobalsCss,
-  generateTailwindConfig,
-  DesignPack,
-  DesignPackId,
-} from './designPacks';
+import type { DesignPackId } from './designPacks';
 import { getRecipeDisplayName as configDisplayName } from './recipeConfig';
 
 // Re-export types from pipelineTypes for backward compatibility
@@ -67,52 +61,6 @@ export async function pollForCompletion(
   }
 
   return false;
-}
-
-// ============================================================================
-// DESIGN PACK APPLICATION (standalone utility)
-// ============================================================================
-
-export interface DesignPackApplyResult {
-  success: boolean;
-  modifiedFiles: string[];
-  error?: string;
-}
-
-export async function applyDesignPackToProject(
-  projectPath: string,
-  designPackId: DesignPackId,
-): Promise<DesignPackApplyResult> {
-  const pack = getDesignPackById(designPackId);
-  if (!pack) {
-    return { success: false, modifiedFiles: [], error: `Design pack '${designPackId}' not found` };
-  }
-
-  const modifiedFiles: string[] = [];
-
-  try {
-    interface CssTarget { path: string; type: 'globals' | 'tailwind' | 'module'; }
-    const targets = getCssTargetsForRecipe(projectPath);
-
-    for (const target of targets) {
-      const fullPath = path.join(projectPath, target.path);
-      if (!fs.existsSync(fullPath)) continue;
-
-      if (target.type === 'globals') {
-        const css = generateGlobalsCss(pack);
-        fs.writeFileSync(fullPath, css, 'utf-8');
-        modifiedFiles.push(target.path);
-      } else if (target.type === 'tailwind') {
-        const config = generateTailwindConfig(pack);
-        fs.writeFileSync(fullPath, config, 'utf-8');
-        modifiedFiles.push(target.path);
-      }
-    }
-  } catch (err) {
-    return { success: false, modifiedFiles, error: err instanceof Error ? err.message : String(err) };
-  }
-
-  return { success: true, modifiedFiles };
 }
 
 // ============================================================================
@@ -214,40 +162,3 @@ export async function startPostScaffoldOrchestration(
   }
 }
 
-// ============================================================================
-// CSS TARGET HELPERS
-// ============================================================================
-
-interface CssTarget {
-  path: string;
-  type: 'globals' | 'tailwind' | 'module';
-}
-
-function getCssTargetsForRecipe(projectPath: string): CssTarget[] {
-  const targets: CssTarget[] = [];
-  const hasSrcDir = fs.existsSync(path.join(projectPath, 'src'));
-
-  const globalsPaths = hasSrcDir
-    ? ['src/app/globals.css', 'src/styles/globals.css']
-    : ['app/globals.css', 'styles/globals.css'];
-
-  for (const p of globalsPaths) {
-    if (fs.existsSync(path.join(projectPath, p))) {
-      targets.push({ path: p, type: 'globals' });
-      break;
-    }
-  }
-
-  const tailwindPaths = ['tailwind.config.ts', 'tailwind.config.js', 'tailwind.config.mjs'];
-  for (const p of tailwindPaths) {
-    if (fs.existsSync(path.join(projectPath, p))) {
-      targets.push({ path: p, type: 'tailwind' });
-      break;
-    }
-  }
-
-  return targets;
-}
-
-// NOTE: pollForCompletion, applyDesignPackToProject, startPostScaffoldOrchestration
-// are exported inline via their function declarations above.

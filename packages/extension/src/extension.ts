@@ -52,7 +52,7 @@ import { FsUndoService } from './fsUndoService';
 // R2: Extracted handler imports
 import type { IProvider } from './handlerContext';
 import { handleSubmitPrompt } from './handlers/submitPromptHandler';
-import { handleAnswerMode } from './handlers/answerHandler';
+
 import {
   handleConfirmMode,
   handleExecutePlan,
@@ -103,7 +103,7 @@ class MissionControlViewProvider implements vscode.WebviewViewProvider {
   // R2: Properties made public for handler access via IProvider interface
   public eventStore: EventStore | null = null;
   public currentTaskId: string | null = null;
-  public currentMode: Mode = 'ANSWER';
+  public currentMode: Mode = 'MISSION';
   public currentStage: 'plan' | 'retrieve' | 'edit' | 'test' | 'repair' | 'none' = 'none';
   public repairOrchestrator: RepairOrchestrator | null = null;
   public isProcessing: boolean = false;
@@ -676,7 +676,7 @@ class MissionControlViewProvider implements vscode.WebviewViewProvider {
           task_id: task.task_id,
           timestamp: new Date().toISOString(),
           type: 'task_interrupted',
-          mode: (task.mode as Mode) || 'ANSWER',
+          mode: (task.mode as Mode) || 'MISSION',
           stage: (task.stage as any) || 'none',
           payload: {
             task_id: task.task_id,
@@ -706,7 +706,7 @@ class MissionControlViewProvider implements vscode.WebviewViewProvider {
         // Rehydrate extension state
         this.currentTaskId = task.task_id;
         globalCurrentTaskId = task.task_id;
-        this.currentMode = (task.mode as Mode) || 'ANSWER';
+        this.currentMode = (task.mode as Mode) || 'MISSION';
         this.currentStage = (task.stage as any) || 'none';
 
         // Send events to webview for seamless timeline display
@@ -829,18 +829,23 @@ class MissionControlViewProvider implements vscode.WebviewViewProvider {
 
         console.log('[DoctorAction] Launching direct agentic fix — single step, no approval');
 
-        // handleExecutePlan with planOverride bypasses planning mode entirely —
-        // it goes straight into execution with the AgenticLoop + tools.
-        await handleExecutePlan(
-          this as unknown as IProvider,
-          {
-            taskId,
-            planOverride: fixPlan,
-            missionId,
-            emitMissionStarted: false,
-          },
-          webview
-        );
+        try {
+          await handleExecutePlan(
+            this as unknown as IProvider,
+            {
+              taskId,
+              planOverride: fixPlan,
+              missionId,
+              emitMissionStarted: false,
+            },
+            webview
+          );
+        } finally {
+          this.isMissionExecuting = false;
+          this.currentExecutingMissionId = null;
+          vscode.commands.executeCommand('setContext', 'ordinex.isRunning', false);
+          await this.sendEventsToWebview(webview, taskId);
+        }
         break;
       }
 
@@ -898,7 +903,7 @@ class MissionControlViewProvider implements vscode.WebviewViewProvider {
       });
       this.currentTaskId = null;
       this.currentStage = 'none';
-      this.currentMode = 'ANSWER';
+      this.currentMode = 'MISSION';
       if (service) await service.clearActiveTask();
       await this.sendEventsToWebview(webview, task_id);
       return;
@@ -1191,7 +1196,7 @@ class MissionControlViewProvider implements vscode.WebviewViewProvider {
 
     // Clear task & mission state
     this.currentTaskId = null;
-    this.currentMode = 'ANSWER';
+    this.currentMode = 'MISSION';
     this.currentStage = 'none';
     this.isMissionExecuting = false;
     this.currentExecutingMissionId = null;
@@ -1428,7 +1433,7 @@ class MissionControlViewProvider implements vscode.WebviewViewProvider {
       case 'ordinex:newChat':
         console.log('[Step52] New chat requested — resetting provider state');
         this.currentTaskId = null;
-        this.currentMode = 'ANSWER';
+        this.currentMode = 'MISSION';
         this.currentStage = 'none';
         this.isMissionExecuting = false;
         this.currentExecutingMissionId = null;
@@ -1481,7 +1486,7 @@ class MissionControlViewProvider implements vscode.WebviewViewProvider {
         // the previous task's mode/stage when the target task lacks those events.
         this.currentTaskId = switchTaskId;
         globalCurrentTaskId = switchTaskId;
-        this.currentMode = 'ANSWER';
+        this.currentMode = 'MISSION';
         this.currentStage = 'none';
 
         // Derive mode and stage from the task's events (if available)
@@ -2230,6 +2235,16 @@ export function activate(context: vscode.ExtensionContext) {
       const providerRef = provider as any;
       if (providerRef.isMissionExecuting && webview) {
         webview.postMessage({ type: 'ordinex:triggerStop' });
+      }
+    })
+  );
+
+  // Cmd+. / Ctrl+. — Cycle mode (Agent ↔ Plan)
+  context.subscriptions.push(
+    vscode.commands.registerCommand('ordinex.cycleMode', () => {
+      const webview = (provider as any)._currentWebview as vscode.Webview | null;
+      if (webview) {
+        webview.postMessage({ type: 'ordinex:cycleMode' });
       }
     })
   );

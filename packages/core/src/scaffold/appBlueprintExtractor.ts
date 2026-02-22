@@ -312,6 +312,36 @@ export function parseBlueprintFromLLMResponse(
 }
 
 /**
+ * Correct app_type if it conflicts with the selected recipe.
+ * e.g. LLM may classify a fitness app as "mobile_app" but the recipe is nextjs_app_router.
+ */
+export function correctAppTypeForRecipe(
+  blueprint: AppBlueprint,
+  recipeId: string,
+): AppBlueprint {
+  if (recipeId === 'expo') return blueprint;
+  if (blueprint.app_type !== 'mobile_app') return blueprint;
+
+  const inferredType = inferWebAppType(blueprint);
+  return { ...blueprint, app_type: inferredType };
+}
+
+function inferWebAppType(bp: AppBlueprint): AppType {
+  const pageNames = bp.pages.map(p => p.name.toLowerCase()).join(' ');
+  const featureNames = bp.features.map(f => f.name.toLowerCase()).join(' ');
+  const all = `${pageNames} ${featureNames}`;
+
+  if (all.includes('product') || all.includes('cart') || all.includes('checkout')) return 'ecommerce';
+  if (all.includes('blog') || all.includes('portfolio')) return 'blog_portfolio';
+  if (all.includes('admin') || all.includes('cms')) return 'admin_panel';
+  if (all.includes('landing') || all.includes('hero') || all.includes('pricing')) return 'landing_page';
+  if (all.includes('feed') || all.includes('social') || all.includes('community')) return 'social_community';
+  if (all.includes('docs') || all.includes('documentation')) return 'documentation';
+  if (all.includes('listing') || all.includes('marketplace')) return 'marketplace';
+  return 'dashboard_saas';
+}
+
+/**
  * Get archetype skeleton for a given app type.
  */
 export function getArchetypeSkeleton(appType: string): AppBlueprint {

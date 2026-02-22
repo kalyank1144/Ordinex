@@ -32,16 +32,16 @@ describe('ModeManager', () => {
   });
 
   describe('Mode Transitions', () => {
-    it('should start in ANSWER mode', () => {
-      expect(modeManager.getMode()).toBe('ANSWER');
-      expect(modeManager.isAnswerMode()).toBe(true);
+    it('should start in MISSION (Agent) mode', () => {
+      expect(modeManager.getMode()).toBe('MISSION');
+      expect(modeManager.isMissionMode()).toBe(true);
     });
 
     it('should transition to PLAN mode', () => {
       modeManager.setMode('PLAN');
       expect(modeManager.getMode()).toBe('PLAN');
       expect(modeManager.isPlanMode()).toBe(true);
-      expect(modeManager.isAnswerMode()).toBe(false);
+      expect(modeManager.isMissionMode()).toBe(false);
     });
 
     it('should transition to MISSION mode', () => {
@@ -73,12 +73,6 @@ describe('ModeManager', () => {
       expect(modeManager.getStage()).toBe('edit');
     });
 
-    it('should reject non-none stages in ANSWER mode', () => {
-      expect(() => {
-        modeManager.setStage('edit');
-      }).toThrow(/only valid in MISSION mode/);
-    });
-
     it('should reject non-none stages in PLAN mode', () => {
       modeManager.setMode('PLAN');
       expect(() => {
@@ -87,10 +81,6 @@ describe('ModeManager', () => {
     });
 
     it('should allow none stage in any mode', () => {
-      modeManager.setMode('ANSWER');
-      modeManager.setStage('none');
-      expect(modeManager.getStage()).toBe('none');
-
       modeManager.setMode('PLAN');
       modeManager.setStage('none');
       expect(modeManager.getStage()).toBe('none');
@@ -98,28 +88,6 @@ describe('ModeManager', () => {
   });
 
   describe('Mode Violations', () => {
-    it('should reject write_file in ANSWER mode', () => {
-      const result = modeManager.validateAction('write_file');
-      expect(result.allowed).toBe(false);
-      expect(result.violation?.currentMode).toBe('ANSWER');
-      expect(result.violation?.attemptedAction).toBe('write_file');
-    });
-
-    it('should reject execute_command in ANSWER mode', () => {
-      const result = modeManager.validateAction('execute_command');
-      expect(result.allowed).toBe(false);
-    });
-
-    it('should allow read_file in ANSWER mode', () => {
-      const result = modeManager.validateAction('read_file');
-      expect(result.allowed).toBe(true);
-    });
-
-    it('should allow retrieve in ANSWER mode', () => {
-      const result = modeManager.validateAction('retrieve');
-      expect(result.allowed).toBe(true);
-    });
-
     it('should reject write_file in PLAN mode', () => {
       modeManager.setMode('PLAN');
       const result = modeManager.validateAction('write_file');
@@ -145,6 +113,7 @@ describe('ModeManager', () => {
     });
 
     it('should emit mode_violation event when enforcing illegal action', async () => {
+      modeManager.setMode('PLAN');
       const events: string[] = [];
       eventBus.subscribe((event) => {
         events.push(event.type);
@@ -519,7 +488,7 @@ describe('TaskLifecycleController', () => {
     it('should provide access to mode manager', () => {
       const modeManager = controller.getModeManager();
       expect(modeManager).toBeInstanceOf(ModeManager);
-      expect(modeManager.getMode()).toBe('ANSWER');
+      expect(modeManager.getMode()).toBe('MISSION');
     });
   });
 });
@@ -546,7 +515,8 @@ describe('Integration: Lifecycle + Mode Enforcement', () => {
   it('should enforce mode safety throughout lifecycle', async () => {
     const modeManager = controller.getModeManager();
     
-    // Start in ANSWER mode - can only read
+    // Switch to PLAN mode - read-only (read_file, retrieve, plan)
+    modeManager.setMode('PLAN');
     expect(modeManager.validateAction('read_file').allowed).toBe(true);
     expect(modeManager.validateAction('write_file').allowed).toBe(false);
     

@@ -21,6 +21,7 @@ import type {
 import type { RecipeId } from './recipeTypes';
 import type { DesignPack } from './designPacks';
 import type { FeatureLLMClient } from './featureExtractor';
+import type { DesignTokens } from './tokenValidator';
 
 // ============================================================================
 // TYPES
@@ -73,8 +74,9 @@ export async function generateFeatureCode(
   model?: string,
   projectContext?: ProjectContext,
   hasSrcDir?: boolean,
+  designTokens?: DesignTokens,
 ): Promise<FeatureGenerationResult | null> {
-  const systemPrompt = buildGenerationSystemPrompt(recipeId, designPack, projectContext, hasSrcDir);
+  const systemPrompt = buildGenerationSystemPrompt(recipeId, designPack, projectContext, hasSrcDir, designTokens);
 
   // Attempt 1: Full requirements with standard token budget
   const attempt1 = await callGenerationLLM(
@@ -191,9 +193,13 @@ function reduceFeatureScope(requirements: FeatureRequirements): FeatureRequireme
 // SYSTEM PROMPT CONSTRUCTION
 // ============================================================================
 
-function buildGenerationSystemPrompt(recipeId: RecipeId, designPack: DesignPack | null, projectContext?: ProjectContext, hasSrcDir?: boolean): string {
+function buildGenerationSystemPrompt(recipeId: RecipeId, designPack: DesignPack | null, projectContext?: ProjectContext, hasSrcDir?: boolean, tokens?: DesignTokens): string {
   const recipeConstraints = getRecipeConstraints(recipeId, hasSrcDir);
-  const designTokens = designPack ? getDesignTokenString(designPack) : 'Use default Tailwind colors';
+  const designTokensStr = designPack
+    ? getDesignTokenString(designPack)
+    : tokens
+      ? getTokensOnlyDesignString(tokens)
+      : getSemanticClassFallback();
 
   // Build project context section from real project files
   let projectContextSection = '';
@@ -253,7 +259,7 @@ CONSTRAINTS:
 - Generate clean, production-quality code
 ${rscRules}
 DESIGN TOKENS:
-${designTokens}
+${designTokensStr}
 
 SHADCN/UI COMPONENTS (CRITICAL — USE THESE INSTEAD OF RAW HTML):
 The project has shadcn/ui installed with these components available at @/components/ui/*:
@@ -652,6 +658,69 @@ LAYOUT PRINCIPLES:
 DESIGN STYLE: MINIMAL CLEAN
 Use clean, content-first aesthetic with semantic Tailwind classes.`;
   }
+}
+
+function getTokensOnlyDesignString(tkns: DesignTokens): string {
+  const tokenVars = Object.entries(tkns)
+    .filter(([, v]) => typeof v === 'string' && v.length > 0)
+    .map(([k, v]) => `  --${k.replace(/_/g, '-')}: ${v};`)
+    .join('\n');
+
+  return `Custom design tokens have been applied to globals.css as CSS variables:
+${tokenVars}
+
+SEMANTIC COLOR CLASSES (always available — USE THESE, never hardcode colors):
+- Primary (CTAs, buttons): bg-primary text-primary-foreground
+- Secondary (secondary actions): bg-secondary text-secondary-foreground
+- Accent (highlights, links): bg-accent text-accent-foreground
+- Muted (subtle backgrounds): bg-muted text-muted-foreground
+- Background/Foreground: bg-background text-foreground
+- Card surfaces: bg-card text-card-foreground
+- Borders: border-border
+- Inputs: border-input
+- Focus rings: ring-ring
+- Destructive: bg-destructive text-destructive-foreground
+
+CARD PATTERNS:
+- className="bg-card border border-border rounded-lg shadow-sm"
+- For featured: add "ring-2 ring-ring/20"
+
+BUTTON PATTERNS:
+- Primary: className="bg-primary text-primary-foreground rounded-md px-5 py-2 hover:bg-primary/90 transition-colors"
+
+CRITICAL RULES:
+- Do NOT use arbitrary value syntax like text-[var(--primary)] or bg-[var(--background)]
+- Do NOT use hardcoded colors like bg-blue-500, border-gray-200, text-white, bg-white, border-white/20
+- ALWAYS use semantic class names: bg-primary, text-foreground, border-border, bg-card, etc.
+- The app should feel cohesive and visually polished, not like a default template`;
+}
+
+function getSemanticClassFallback(): string {
+  return `The project uses shadcn/ui's CSS variable-based design system with semantic Tailwind classes.
+
+SEMANTIC COLOR CLASSES (always available — USE THESE, never hardcode colors):
+- Primary (CTAs, buttons): bg-primary text-primary-foreground
+- Secondary (secondary actions): bg-secondary text-secondary-foreground
+- Accent (highlights, links): bg-accent text-accent-foreground
+- Muted (subtle backgrounds): bg-muted text-muted-foreground
+- Background/Foreground: bg-background text-foreground
+- Card surfaces: bg-card text-card-foreground
+- Borders: border-border
+- Inputs: border-input
+- Focus rings: ring-ring
+- Destructive: bg-destructive text-destructive-foreground
+
+CARD PATTERNS:
+- className="bg-card border border-border rounded-lg shadow-sm"
+
+BUTTON PATTERNS:
+- Primary: className="bg-primary text-primary-foreground rounded-md px-5 py-2 hover:bg-primary/90 transition-colors"
+
+CRITICAL RULES:
+- Do NOT use arbitrary value syntax like text-[var(--primary)] or bg-[var(--background)]
+- Do NOT use hardcoded colors like bg-blue-500, border-gray-200, text-white, bg-white, border-white/20
+- ALWAYS use semantic class names: bg-primary, text-foreground, border-border, bg-card, etc.
+- The app should feel cohesive and visually polished, not like a default template`;
 }
 
 function getDesignTokenString(designPack: DesignPack): string {

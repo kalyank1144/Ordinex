@@ -20,7 +20,7 @@ export function getStateJs(): string {
         activeTab: 'mission',
         taskStatus: 'ready',
         currentStage: 'none',
-        currentMode: 'ANSWER',
+        currentMode: 'MISSION',
         narrationCards: [],
         pendingAttachments: [],
         scopeSummary: {

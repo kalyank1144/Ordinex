@@ -178,7 +178,9 @@ describe('buildGenerationSystemPrompt', () => {
 
   it('handles null design pack', () => {
     const prompt = buildGenerationSystemPrompt('vite_react', null);
-    expect(prompt).toContain('default Tailwind colors');
+    expect(prompt).toContain('SEMANTIC COLOR CLASSES');
+    expect(prompt).toContain('border-border');
+    expect(prompt).toContain('bg-primary');
   });
 
   it('includes TypeScript constraint', () => {

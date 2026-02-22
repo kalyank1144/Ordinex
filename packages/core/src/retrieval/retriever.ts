@@ -8,7 +8,7 @@
  * - Every result must have a reason
  * - Emit retrieval_started/completed/failed events
  * - Produce evidence objects for excerpts
- * - Mode-based retrieval rules (ANSWER/PLAN/MISSION)
+ * - Mode-based retrieval rules (PLAN/MISSION)
  * - Deterministic results
  */
 
@@ -120,13 +120,6 @@ export class Retriever {
    */
   private validateRetrievalForMode(request: RetrievalRequest): void {
     switch (request.mode) {
-      case 'ANSWER':
-        // ANSWER mode: retrieval is OPTIONAL, limited scope
-        if (request.constraints.max_files > 3) {
-          throw new Error('ANSWER mode cannot retrieve more than 3 files');
-        }
-        break;
-
       case 'PLAN':
         // PLAN mode: retrieval is ALLOWED, read-only
         // Strict scope limits apply

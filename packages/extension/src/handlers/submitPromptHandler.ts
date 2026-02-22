@@ -1,63 +1,126 @@
 /**
- * Submit Prompt Handler — extracted from MissionControlViewProvider.
+ * Submit Prompt Handler — Main entry point for all user submissions.
  *
- * This is the MAIN entry point for all user submissions. It combines intent
- * analysis, mode routing, enrichment, and all behavior paths (answer, plan,
- * scaffold, quick-action, clarify, continue-run).
+ * Simplified routing:
+ *   1. Workspace-aware scaffold detection (is this a greenfield request?)
+ *   2. Route to user's selected mode: Agent (default) or Plan
  *
- * All functions take `ctx: IProvider` as first parameter instead of using `this`.
+ * No more: QUICK_ACTION, RUN_COMMAND, CLARIFY, CONTINUE_RUN, LLM classification,
+ * edit-scale detection, or auto-mode-switching.
  */
 
 import type { IProvider } from '../handlerContext';
-import type {
-  EnrichedInput,
-  IntentAnalysisContext,
-  Mode,
-  Event,
-  StructuredPlan,
-  CommandMode,
-} from 'core';
+import type { EnrichedInput, Mode } from 'core';
 import * as vscode from 'vscode';
+import * as fs from 'fs';
+import * as path from 'path';
 import {
   routeIntent,
-  detectActiveRun,
-  detectCommandIntent,
   enrichUserInput,
-  generateTemplatePlan,
   buildFollowUpContext,
-  runCommandPhase,
-  CommandPhaseContext,
-  resolveCommandPolicy,
   EventBus,
-  InMemoryEvidenceStore,
 } from 'core';
-import type { RoutedIntent, IntentRoutingResult } from 'core';
+import type { IntentRoutingResult, WorkspaceState } from 'core';
 
-// Cross-handler imports
-import { handleAnswerMode } from './answerHandler';
+import { handleAgentMode } from './agentHandler';
 import { handlePlanMode } from './planHandler';
 import { handleScaffoldFlow } from './scaffoldHandler';
-import { handleExecutePlan } from './missionHandler';
+
+// ---------------------------------------------------------------------------
+// resolveActiveProjectRoot — find the workspace folder that contains the project
+// ---------------------------------------------------------------------------
+
+function resolveActiveProjectRoot(ctx: IProvider): string | undefined {
+  if (ctx.scaffoldProjectPath) return ctx.scaffoldProjectPath;
+  if (ctx.selectedWorkspaceRoot) return ctx.selectedWorkspaceRoot;
+
+  const folders = vscode.workspace.workspaceFolders;
+  if (!folders || folders.length === 0) return undefined;
+
+  // Check workspace folders for package.json (project root).
+  for (const folder of folders) {
+    const p = folder.uri.fsPath;
+    if (fs.existsSync(path.join(p, 'package.json'))) return p;
+  }
+
+  // Scaffold creates projects at <workspace>/<app-name>/. After reload,
+  // the workspace folder is the parent. Check immediate subdirectories.
+  const root = folders[0].uri.fsPath;
+  try {
+    const entries = fs.readdirSync(root).filter(e => !e.startsWith('.'));
+    for (const entry of entries) {
+      const entryPath = path.join(root, entry);
+      try {
+        if (fs.statSync(entryPath).isDirectory() &&
+            fs.existsSync(path.join(entryPath, 'package.json'))) {
+          return entryPath;
+        }
+      } catch { /* skip */ }
+    }
+  } catch { /* skip */ }
+
+  return root;
+}
+
+// ---------------------------------------------------------------------------
+// getWorkspaceState — checks ALL workspace folders for project indicators
+// ---------------------------------------------------------------------------
+
+function getWorkspaceState(primaryRoot: string | undefined): WorkspaceState | undefined {
+  if (!primaryRoot) return undefined;
+  try {
+    const entries = fs.readdirSync(primaryRoot);
+    const visible = entries.filter(e => !e.startsWith('.'));
+    let hasPackageJson = fs.existsSync(path.join(primaryRoot, 'package.json'));
+    let hasGitRepo = fs.existsSync(path.join(primaryRoot, '.git'));
+    let fileCount = visible.length;
+
+    // Scaffold creates projects at <workspace>/<app-name>/. After reload the
+    // workspace root is the PARENT, not the project. Scan immediate
+    // subdirectories so the quick-reject fires for existing projects.
+    if (!hasPackageJson) {
+      for (const entry of visible) {
+        try {
+          const entryPath = path.join(primaryRoot, entry);
+          if (fs.statSync(entryPath).isDirectory() &&
+              fs.existsSync(path.join(entryPath, 'package.json'))) {
+            hasPackageJson = true;
+            fileCount = Math.max(fileCount, 11);
+            break;
+          }
+        } catch { /* skip unreadable entries */ }
+      }
+    }
+
+    // Also check other workspace folders (multi-root workspaces).
+    if (!hasPackageJson) {
+      const folders = vscode.workspace.workspaceFolders || [];
+      for (const folder of folders) {
+        const fp = folder.uri.fsPath;
+        if (fp === primaryRoot) continue;
+        if (fs.existsSync(path.join(fp, 'package.json'))) {
+          hasPackageJson = true;
+          break;
+        }
+      }
+    }
+
+    return { fileCount, hasPackageJson, hasGitRepo };
+  } catch {
+    return undefined;
+  }
+}
 
 // ---------------------------------------------------------------------------
 // handleSubmitPrompt
 // ---------------------------------------------------------------------------
 
-/**
- * Main entry point for all user prompt submissions.
- *
- * Flow:
- *  1. Create task if none active, emit intent_received
- *  2. Enrich user input with intelligence layer
- *  3. Analyze intent (heuristic + optional LLM classifier fallback)
- *  4. Route to behavior: ANSWER, PLAN, scaffold, QUICK_ACTION, CLARIFY, CONTINUE_RUN
- */
 export async function handleSubmitPrompt(
   ctx: IProvider,
   msg: any,
   webview: vscode.Webview,
 ): Promise<void> {
-  console.log('=== handleSubmitPrompt START (Step 33) ===');
+  console.log('=== handleSubmitPrompt START ===');
   const { text, userSelectedMode, modelId, attachments } = msg;
   console.log('Params:', { text, userSelectedMode, modelId, attachmentCount: attachments?.length || 0 });
 
@@ -67,7 +130,6 @@ export async function handleSubmitPrompt(
   }
 
   // Create task_id if not active
-  console.log('Checking currentTaskId:', ctx.currentTaskId);
   if (!ctx.currentTaskId) {
     ctx.currentTaskId = ctx.generateId();
     ctx.currentStage = 'none';
@@ -75,26 +137,17 @@ export async function handleSubmitPrompt(
       reason: 'User selected mode for new task',
       user_initiated: true,
     });
-    console.log('Created new task ID:', ctx.currentTaskId);
   }
 
   const taskId = ctx.currentTaskId;
-  // Step 47: Track currentTaskId at module level for deactivate()
   ctx.setGlobalCurrentTaskId(taskId);
-  console.log('Using task ID:', taskId);
 
-  // PHASE 4: Extract attachment evidence_ids for storing in intent_received
   const attachmentEvidenceIds: string[] = (attachments || [])
     .filter((a: any) => a.evidence_id)
     .map((a: any) => a.evidence_id);
 
-  if (attachmentEvidenceIds.length > 0) {
-    console.log(`[Attachments] ${attachmentEvidenceIds.length} attachment evidence IDs:`, attachmentEvidenceIds);
-  }
-
   try {
-    // 1. Emit intent_received event (includes attachments in payload and evidence_ids)
-    console.log('About to emit intent_received event...');
+    // 1. Emit intent_received event
     await ctx.emitEvent({
       event_id: ctx.generateId(),
       task_id: taskId,
@@ -106,28 +159,22 @@ export async function handleSubmitPrompt(
         prompt: text,
         model_id: modelId || 'sonnet-4.5',
         user_selected_mode: userSelectedMode,
-        // PHASE 4: Store attachment refs in payload for replay/audit
         attachments: attachments || [],
       },
-      evidence_ids: attachmentEvidenceIds, // PHASE 4: Link to evidence
+      evidence_ids: attachmentEvidenceIds,
       parent_event_id: null,
     });
-    console.log('intent_received event emitted');
     await ctx.sendEventsToWebview(webview, taskId);
-
-    // Step 47: Persist active task after intent_received
     await ctx.updateTaskPersistence(taskId, { mode: userSelectedMode, stage: ctx.currentStage });
 
-    // 2. STEP 40.5: Enrich user input with intelligence layer
-    const workspaceRoot = ctx.selectedWorkspaceRoot
-      || vscode.workspace.workspaceFolders?.[0]?.uri.fsPath
-      || '';
+    // 2. Enrich user input with intelligence layer
+    const workspaceRoot = resolveActiveProjectRoot(ctx) || '';
     const openFilePaths = vscode.workspace.textDocuments
       .filter(doc => doc.uri.scheme === 'file')
       .map(doc => doc.uri.fsPath);
 
     let enrichedInput: EnrichedInput | null = null;
-    let effectivePrompt = text; // Falls back to raw text if enrichment fails
+    let effectivePrompt = text;
 
     if (workspaceRoot) {
       try {
@@ -139,32 +186,18 @@ export async function handleSubmitPrompt(
           projectMemoryManager: ctx.getProjectMemoryManager() || undefined,
         });
         effectivePrompt = enrichedInput.enrichedPrompt;
-        console.log('[Step40.5] Enrichment complete:', {
+        console.log('[Enrichment] Complete:', {
           outOfScope: enrichedInput.outOfScope,
-          clarificationNeeded: enrichedInput.clarificationNeeded,
           resolvedCount: enrichedInput.metadata.resolvedCount,
           durationMs: enrichedInput.metadata.enrichmentDurationMs,
         });
       } catch (enrichErr) {
-        console.warn('[Step40.5] Enrichment failed, using raw input:', enrichErr);
+        console.warn('[Enrichment] Failed, using raw input:', enrichErr);
       }
-    } else {
-      console.warn('[Step40.5] No workspace root, skipping enrichment');
-    }
-
-    // 2.5: Enrich follow-up prompt with scaffold session context
-    if (ctx.scaffoldSession) {
-      const sessionContext = buildFollowUpContext(ctx.scaffoldSession);
-      effectivePrompt = `${sessionContext}\n\n${effectivePrompt}`;
-      console.log('[ScaffoldSession] Enriched follow-up prompt with structured session context');
-    } else if (ctx.scaffoldProjectPath) {
-      effectivePrompt = `[Context: Working on scaffolded project at "${ctx.scaffoldProjectPath}"]\n\n${effectivePrompt}`;
-      console.log('[ScaffoldContext] Fallback: enriched with scaffold path only');
     }
 
     // 2a. Handle out-of-scope requests
     if (enrichedInput?.outOfScope) {
-      console.log('[Step40.5] Out-of-scope request detected, sending redirect');
       await ctx.emitEvent({
         event_id: ctx.generateId(),
         task_id: taskId,
@@ -184,472 +217,70 @@ export async function handleSubmitPrompt(
       return;
     }
 
-    // 2b. Handle clarification needed from enrichment
-    if (enrichedInput?.clarificationNeeded && userSelectedMode !== 'PLAN') {
-      console.log('[Step40.5] Clarification needed:', enrichedInput.clarificationQuestion);
-      await ctx.emitEvent({
-        event_id: ctx.generateId(),
-        task_id: taskId,
-        timestamp: new Date().toISOString(),
-        type: 'clarification_requested',
-        mode: ctx.currentMode,
-        stage: ctx.currentStage,
-        payload: {
-          question: enrichedInput.clarificationQuestion || 'Could you provide more details?',
-          options: enrichedInput.clarificationOptions || [],
-          context_source: 'intelligence_layer',
-        },
-        evidence_ids: [],
-        parent_event_id: null,
-      });
-      await ctx.emitEvent({
-        event_id: ctx.generateId(),
-        task_id: taskId,
-        timestamp: new Date().toISOString(),
-        type: 'execution_paused',
-        mode: ctx.currentMode,
-        stage: ctx.currentStage,
-        payload: {
-          reason: 'awaiting_clarification',
-          description: 'Intelligence layer needs more information',
-        },
-        evidence_ids: [],
-        parent_event_id: null,
-      });
-      await ctx.sendEventsToWebview(webview, taskId);
-      return;
-    } else if (enrichedInput?.clarificationNeeded) {
-      console.log('[Step40.5] Clarification needed but skipping for PLAN mode — planHandler will handle');
-    }
-
-    // =========================================================================
-    // 3. UNIFIED INTENT ROUTING — single pipeline, no hardcoded models
-    //
-    // Uses routeIntent() which handles:
-    //   slash overrides → high-confidence heuristics → LLM classification → fallback
-    // The user's selected model is passed through for any LLM classification.
-    // =========================================================================
-    const events = ctx.eventStore?.getEventsByTaskId(taskId) || [];
-    const activeRun = detectActiveRun(events);
-
-    let llmConfig: { apiKey: string; model: string } | undefined;
-    try {
-      const apiKey = await ctx._context.secrets.get('ordinex.apiKey');
-      if (apiKey) {
-        llmConfig = { apiKey, model: modelId || 'claude-sonnet-4-5-20241022' };
-      }
-    } catch { /* no API key — heuristic-only routing */ }
-
-    const routingResult: IntentRoutingResult = await routeIntent(text, {
-      llmConfig,
-      behaviorConfidence: 0.5,
-      events,
+    // 3. Workspace-aware scaffold detection
+    const wsState = getWorkspaceState(workspaceRoot || undefined);
+    console.log('[Router] Workspace state:', {
+      workspaceRoot,
+      scaffoldProjectPath: ctx.scaffoldProjectPath,
+      selectedWorkspaceRoot: ctx.selectedWorkspaceRoot,
+      folderCount: vscode.workspace.workspaceFolders?.length || 0,
+      wsState,
     });
 
-    console.log('[IntentRouter] Result:', {
+    const routingResult: IntentRoutingResult = await routeIntent(text, {
+      workspace: wsState,
+    });
+
+    console.log('[Router] Result:', {
       intent: routingResult.intent,
       source: routingResult.source,
       confidence: routingResult.confidence,
-      llmCalled: routingResult.llmCalled,
       reasoning: routingResult.reasoning,
     });
 
-    // Map RoutedIntent → Mode for event emission
-    const intentToMode: Record<RoutedIntent, Mode> = {
-      SCAFFOLD: 'PLAN',
-      PLAN: 'PLAN',
-      RUN_COMMAND: 'MISSION',
-      QUICK_ACTION: 'MISSION',
-      ANSWER: 'ANSWER',
-      CLARIFY: 'ANSWER',
-    };
-    const derivedMode = intentToMode[routingResult.intent] || 'ANSWER';
-
-    // Emit mode_set event
+    // Emit routing event
     await ctx.emitEvent({
       event_id: ctx.generateId(),
       task_id: taskId,
       timestamp: new Date().toISOString(),
       type: 'mode_set',
-      mode: derivedMode,
+      mode: ctx.currentMode,
       stage: ctx.currentStage,
       payload: {
-        mode: derivedMode,
-        effectiveMode: derivedMode,
-        behavior: routingResult.intent,
+        intent: routingResult.intent,
         user_selected_mode: userSelectedMode,
         confidence: routingResult.confidence,
         reasoning: routingResult.reasoning,
         routing_source: routingResult.source,
+        workspace_state: wsState,
       },
       evidence_ids: [],
       parent_event_id: null,
     });
-
-    // Respect user's explicit mode selection
-    const effectiveMode = (userSelectedMode === 'ANSWER' || userSelectedMode === 'PLAN' || userSelectedMode === 'MISSION')
-      ? userSelectedMode as Mode
-      : derivedMode;
-    if (effectiveMode !== ctx.currentMode) {
-      await ctx.setModeWithEvent(effectiveMode, taskId, {
-        reason: effectiveMode === userSelectedMode
-          ? `User selected mode: ${userSelectedMode}`
-          : `Intent router: ${routingResult.reasoning}`,
-        user_initiated: effectiveMode === userSelectedMode,
-      });
-    }
     await ctx.sendEventsToWebview(webview, taskId);
 
-    // =========================================================================
-    // 4. ROUTE TO HANDLER based on unified intent
-    // =========================================================================
+    // 4. Route to handler
 
     // SCAFFOLD — route to scaffold flow
     if (routingResult.intent === 'SCAFFOLD') {
-      console.log('[IntentRouter] Routing to SCAFFOLD flow');
+      console.log('[Router] Routing to SCAFFOLD flow');
       await handleScaffoldFlow(ctx, effectivePrompt, taskId, modelId || 'sonnet-4.5', webview, attachments || []);
       return;
     }
 
-    // Check for active run that needs continuation
-    if (activeRun && routingResult.intent !== 'RUN_COMMAND') {
-      const commandDetection = detectCommandIntent(text);
-      if (!commandDetection.isCommandIntent || commandDetection.confidence < 0.75) {
-        console.log('[IntentRouter] Active run detected, routing to CONTINUE_RUN');
-        await handleContinueRun(ctx, {
-          clarificationAttempts: events.filter(e => e.type === 'clarification_requested').length,
-          lastOpenEditor: vscode.window.activeTextEditor?.document.fileName,
-          activeRun,
-          lastAppliedDiff: ctx.getLastAppliedDiff(events),
-        }, taskId, webview);
-        return;
-      }
+    // Route based on user's selected mode: Agent (default) or Plan
+    if (userSelectedMode === 'PLAN') {
+      console.log('>>> MODE: PLAN <<<');
+      await handlePlanMode(ctx, effectivePrompt, taskId, modelId || 'sonnet-4.5', webview);
+    } else {
+      console.log('>>> MODE: AGENT <<<');
+      await handleAgentMode(ctx, effectivePrompt, taskId, modelId || 'sonnet-4.5', webview);
     }
 
-    // Map intent to effective behavior, respecting user's mode override
-    let effectiveBehavior: string = routingResult.intent;
-    if (userSelectedMode === 'PLAN' && effectiveBehavior !== 'CLARIFY') {
-      effectiveBehavior = 'PLAN';
-    } else if (userSelectedMode === 'ANSWER' && effectiveBehavior !== 'CLARIFY') {
-      effectiveBehavior = 'ANSWER';
-    }
-    console.log(`[IntentRouter] Executing behavior: ${effectiveBehavior} (routed: ${routingResult.intent}, userSelected: ${userSelectedMode})`);
-
-    switch (effectiveBehavior) {
-      case 'ANSWER':
-        console.log('>>> INTENT: ANSWER <<<');
-        await handleAnswerMode(ctx, effectivePrompt, taskId, modelId || 'sonnet-4.5', webview);
-        break;
-
-      case 'PLAN':
-        console.log('>>> INTENT: PLAN <<<');
-        await handlePlanMode(ctx, effectivePrompt, taskId, modelId || 'sonnet-4.5', webview);
-        break;
-
-      case 'QUICK_ACTION':
-        console.log('>>> INTENT: QUICK_ACTION <<<');
-        await handleQuickAction(ctx, routingResult, text, effectivePrompt, taskId, modelId, webview);
-        break;
-
-      case 'RUN_COMMAND':
-        console.log('>>> INTENT: RUN_COMMAND <<<');
-        await handleQuickAction(ctx, routingResult, text, effectivePrompt, taskId, modelId, webview);
-        break;
-
-      case 'CLARIFY':
-        console.log('>>> INTENT: CLARIFY <<<');
-        await handleClarify(ctx, routingResult, taskId, webview);
-        break;
-
-      default:
-        console.log(`[IntentRouter] Unhandled intent: ${effectiveBehavior}, falling back to PLAN`);
-        await handlePlanMode(ctx, effectivePrompt, taskId, modelId || 'sonnet-4.5', webview);
-    }
-
-    console.log('[IntentRouter] Routing complete');
+    console.log('[Router] Routing complete');
 
   } catch (error) {
     console.error('Error handling submitPrompt:', error);
     vscode.window.showErrorMessage(`Ordinex: ${error}`);
   }
-}
-
-// ---------------------------------------------------------------------------
-// handleQuickAction (private helper)
-// ---------------------------------------------------------------------------
-
-/**
- * QUICK_ACTION behavior: either command execution or quick edit via MissionExecutor.
- */
-async function handleQuickAction(
-  ctx: IProvider,
-  routingResult: IntentRoutingResult,
-  promptForIntent: string,
-  effectivePrompt: string,
-  taskId: string,
-  modelId: string | undefined,
-  webview: vscode.Webview,
-): Promise<void> {
-  // STEP 34.5: Check if this is a command execution request
-  const commandIntent = detectCommandIntent(promptForIntent);
-
-  if (commandIntent.isCommandIntent && commandIntent.confidence >= 0.75) {
-    // This is a COMMAND with high confidence - route to command execution phase
-    console.log('[QUICK_ACTION] Detected command intent:', commandIntent);
-
-    try {
-      const workspaceRoot = ctx.scaffoldProjectPath || vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
-      if (ctx.scaffoldProjectPath) {
-        console.log(`[QUICK_ACTION] Using scaffoldProjectPath as workspace: ${workspaceRoot}`);
-      }
-      if (!workspaceRoot) {
-        throw new Error('No workspace folder open');
-      }
-
-      if (!ctx.eventStore) {
-        throw new Error('EventStore not initialized');
-      }
-
-      // Resolve command policy from VS Code settings
-      const cfg = vscode.workspace.getConfiguration('ordinex');
-      const userMode = cfg.get<string>('commandPolicy.mode');
-      const commandPolicy = resolveCommandPolicy(
-        userMode ? { mode: userMode as CommandMode } : undefined,
-      );
-
-      // Create EventBus for command phase (it needs emit() method)
-      const commandEventBus = new EventBus(ctx.eventStore);
-
-      // Subscribe to events for UI updates
-      commandEventBus.subscribe(async (event) => {
-        await ctx.sendEventsToWebview(webview, taskId);
-      });
-
-      // Build command phase context with all required properties
-      const evidenceStore = new InMemoryEvidenceStore();
-
-      const commandContext: CommandPhaseContext = {
-        run_id: taskId,
-        mission_id: undefined,
-        step_id: undefined,
-        workspaceRoot,
-        eventBus: commandEventBus as any, // EventBus has emit() method that commandPhase needs
-        mode: ctx.currentMode,
-        previousStage: ctx.currentStage,
-        commandPolicy,
-        commands: commandIntent.inferredCommands || ['npm run dev'], // Use inferred commands or fallback
-        executionContext: 'user' as any, // User-initiated command execution
-        isReplayOrAudit: false,
-        writeEvidence: async (type: string, content: string, summary: string) => {
-          const evidenceId = ctx.generateId();
-          await evidenceStore.store({
-            evidence_id: evidenceId,
-            type: type as any,
-            source_event_id: taskId,
-            content_ref: content,
-            summary,
-            created_at: new Date().toISOString()
-          });
-          return evidenceId;
-        }
-      };
-
-      // Execute command phase
-      console.log('[QUICK_ACTION] Running command phase...');
-      const result = await runCommandPhase(commandContext);
-
-      console.log('[QUICK_ACTION] Command phase completed:', result.status);
-
-      if (result.status === 'awaiting_approval') {
-        ctx.pendingCommandContexts.set(taskId, commandContext);
-      } else {
-        // Emit final event
-        await ctx.emitEvent({
-          event_id: ctx.generateId(),
-          task_id: taskId,
-          timestamp: new Date().toISOString(),
-          type: 'final',
-          mode: ctx.currentMode,
-          stage: 'command',
-          payload: {
-            success: result.status === 'success',
-            command_result: result
-          },
-          evidence_ids: result.evidenceRefs || [],
-          parent_event_id: null,
-        });
-      }
-
-      await ctx.sendEventsToWebview(webview, taskId);
-
-    } catch (error) {
-      console.error('[QUICK_ACTION] Command execution error:', error);
-      await ctx.emitEvent({
-        event_id: ctx.generateId(),
-        task_id: taskId,
-        timestamp: new Date().toISOString(),
-        type: 'failure_detected',
-        mode: 'MISSION',
-        stage: ctx.currentStage,
-        payload: {
-          error: error instanceof Error ? error.message : 'Unknown error',
-          kind: 'command_execution_failed'
-        },
-        evidence_ids: [],
-        parent_event_id: null,
-      });
-      await ctx.sendEventsToWebview(webview, taskId);
-      vscode.window.showErrorMessage(`Command execution failed: ${error}`);
-    }
-  } else {
-    // This is an EDIT - use MissionExecutor pipeline
-    console.log('[QUICK_ACTION] Using MissionExecutor edit pipeline (no plan UI)');
-
-    try {
-      const fileHint = 'target files';
-      const stepDescription = `Edit ${fileHint} to resolve: ${effectivePrompt}`;
-
-      const quickPlan: StructuredPlan = {
-        goal: `Quick fix: ${effectivePrompt}`,
-        assumptions: ['Single focused change', 'Minimal scope', 'Fast execution'],
-        success_criteria: ['Issue resolved', 'No unintended changes'],
-        scope_contract: {
-          max_files: 5,
-          max_lines: 200,
-          allowed_tools: ['read', 'write']
-        },
-        steps: [
-          {
-            step_id: 'quick_step_1',
-            description: stepDescription,
-            expected_evidence: ['diff_proposed', 'diff_applied']
-          }
-        ],
-        risks: ['May require clarification if file context is missing']
-      };
-
-      await handleExecutePlan(
-        ctx,
-        { taskId, planOverride: quickPlan, emitMissionStarted: true },
-        webview
-      );
-    } catch (error) {
-      console.error('[QUICK_ACTION] Error:', error);
-      await ctx.emitEvent({
-        event_id: ctx.generateId(),
-        task_id: taskId,
-        timestamp: new Date().toISOString(),
-        type: 'failure_detected',
-        mode: 'MISSION',
-        stage: ctx.currentStage,
-        payload: {
-          error: error instanceof Error ? error.message : 'Unknown error',
-          kind: 'quick_action_failed'
-        },
-        evidence_ids: [],
-        parent_event_id: null,
-      });
-      await ctx.sendEventsToWebview(webview, taskId);
-      vscode.window.showErrorMessage(`Quick action failed: ${error}`);
-    }
-  }
-}
-
-// ---------------------------------------------------------------------------
-// handleClarify (private helper)
-// ---------------------------------------------------------------------------
-
-/**
- * CLARIFY behavior: emit clarification_requested + execution_paused events.
- */
-async function handleClarify(
-  ctx: IProvider,
-  routingResult: IntentRoutingResult,
-  taskId: string,
-  webview: vscode.Webview,
-): Promise<void> {
-  await ctx.emitEvent({
-    event_id: ctx.generateId(),
-    task_id: taskId,
-    timestamp: new Date().toISOString(),
-    type: 'clarification_requested',
-    mode: ctx.currentMode,
-    stage: ctx.currentStage,
-    payload: {
-      question: 'Could you provide more details about what you\'d like me to do?',
-      options: [],
-      context_source: routingResult.source,
-    },
-    evidence_ids: [],
-    parent_event_id: null,
-  });
-
-  await ctx.emitEvent({
-    event_id: ctx.generateId(),
-    task_id: taskId,
-    timestamp: new Date().toISOString(),
-    type: 'execution_paused',
-    mode: ctx.currentMode,
-    stage: ctx.currentStage,
-    payload: {
-      reason: 'awaiting_clarification',
-      description: 'Need more information to proceed'
-    },
-    evidence_ids: [],
-    parent_event_id: null,
-  });
-  await ctx.sendEventsToWebview(webview, taskId);
-}
-
-// ---------------------------------------------------------------------------
-// handleContinueRun (private helper)
-// ---------------------------------------------------------------------------
-
-/**
- * CONTINUE_RUN behavior: show decision options for an active run.
- */
-async function handleContinueRun(
-  ctx: IProvider,
-  analysisContext: IntentAnalysisContext,
-  taskId: string,
-  webview: vscode.Webview,
-): Promise<void> {
-  // Show options to resume, pause, or abort
-  const activeRunStatus = analysisContext.activeRun;
-  const statusText = activeRunStatus
-    ? `An earlier run is ${activeRunStatus.status} (stage: ${activeRunStatus.stage}).`
-    : 'An earlier run appears to be pending user input.';
-  await ctx.emitEvent({
-    event_id: ctx.generateId(),
-    task_id: taskId,
-    timestamp: new Date().toISOString(),
-    type: 'decision_point_needed',
-    mode: ctx.currentMode,
-    stage: ctx.currentStage,
-    payload: {
-      decision_type: 'continue_run',
-      title: 'Active Run Detected',
-      description: `${statusText} Choose an action to continue.`,
-      options: ['resume', 'pause', 'abort', 'propose_fix'],
-      active_run: analysisContext.activeRun,
-    },
-    evidence_ids: [],
-    parent_event_id: null,
-  });
-
-  await ctx.emitEvent({
-    event_id: ctx.generateId(),
-    task_id: taskId,
-    timestamp: new Date().toISOString(),
-    type: 'execution_paused',
-    mode: ctx.currentMode,
-    stage: ctx.currentStage,
-    payload: {
-      reason: 'awaiting_continue_decision',
-      description: 'Choose how to handle active mission'
-    },
-    evidence_ids: [],
-    parent_event_id: null,
-  });
-  await ctx.sendEventsToWebview(webview, taskId);
 }

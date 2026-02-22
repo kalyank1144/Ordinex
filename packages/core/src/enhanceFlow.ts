@@ -213,7 +213,7 @@ export async function runEnhanceFlow(
       };
     }
     
-    // 5. Handle ANSWER behavior (no execution needed)
+    // 5. Handle ANSWER behavior (agent handles everything)
     if (intentAnalysis.behavior === 'ANSWER') {
       return {
         flowKind: 'standard',
