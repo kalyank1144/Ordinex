@@ -478,14 +478,10 @@ export async function resolveStyleIntentWithLLM(
   input: StyleInput,
   llmClient: FeatureLLMClient,
   appType?: string,
-  modelId?: string,
+  modelId: string,
 ): Promise<StyleResolutionResult> {
   if (input.mode === 'hex') {
     return resolveStyleIntent(input);
-  }
-
-  if (!modelId) {
-    throw new Error('[StyleResolver] modelId is required — the user\'s selected model must be passed through the pipeline');
   }
 
   try {

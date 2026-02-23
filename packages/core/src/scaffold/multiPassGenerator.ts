@@ -556,11 +556,8 @@ export async function executeMultiPassGeneration(
   manifestDir?: string,
   hasSrcDir?: boolean,
   tailwindVersion?: 3 | 4,
-  modelId?: string,
+  modelId: string,
 ): Promise<MultiPassExecutionResult> {
-  if (!modelId) {
-    throw new Error('[MultiPass] modelId is required — the user\'s selected model must be passed through the pipeline');
-  }
   const systemPrompt = buildMultiPassSystemPrompt(blueprint, designPack, designTokens, hasSrcDir, tailwindVersion);
   const passResults: PassResult[] = [];
   let totalFiles = 0;
