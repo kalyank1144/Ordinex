@@ -15,6 +15,7 @@
 import type { FeatureRequirements, DataEntity, PageRequirement } from '../types';
 import type { RecipeId } from './recipeTypes';
 import type { LLMConfig } from '../llmService';
+import { debugLog, debugWarn } from './debugLog';
 
 // ============================================================================
 // LLM CLIENT INTERFACE (adapter pattern for testability)
@@ -117,19 +118,19 @@ export async function extractFeatureRequirements(
     throw new Error('[FeatureExtractor] model is required — the user\'s selected model must be passed through the pipeline');
   }
   const usedModel = model;
-  console.log(`[ORDINEX_DEBUG] ========== FEATURE EXTRACTION START ==========`);
-  console.log(`[ORDINEX_DEBUG] extractFeatureRequirements called`);
-  console.log(`[ORDINEX_DEBUG]   userPrompt: "${userPrompt}"`);
-  console.log(`[ORDINEX_DEBUG]   recipeId: ${recipeId}`);
-  console.log(`[ORDINEX_DEBUG]   model: ${usedModel}`);
-  console.log(`[ORDINEX_DEBUG]   llmClient present: ${!!llmClient}`);
+  debugLog(`========== FEATURE EXTRACTION START ==========`);
+  debugLog(`extractFeatureRequirements called`);
+  debugLog(`  userPrompt: "${userPrompt}"`);
+  debugLog(`  recipeId: ${recipeId}`);
+  debugLog(`  model: ${usedModel}`);
+  debugLog(`  llmClient present: ${!!llmClient}`);
 
   try {
     const frameworkContext = getFrameworkContext(recipeId);
     const userMessage = `Framework: ${frameworkContext}\nUser prompt: "${userPrompt}"\n\nExtract the feature requirements as JSON.`;
 
-    console.log(`[ORDINEX_DEBUG] Calling LLM for feature extraction...`);
-    console.log(`[ORDINEX_DEBUG]   framework context: ${frameworkContext}`);
+    debugLog(`Calling LLM for feature extraction...`);
+    debugLog(`  framework context: ${frameworkContext}`);
 
     const response = await llmClient.createMessage({
       model: usedModel,
@@ -138,43 +139,43 @@ export async function extractFeatureRequirements(
       messages: [{ role: 'user', content: userMessage }],
     });
 
-    console.log(`[ORDINEX_DEBUG] LLM extraction response received`);
-    console.log(`[ORDINEX_DEBUG]   stop_reason: ${response.stop_reason}`);
-    console.log(`[ORDINEX_DEBUG]   usage: ${JSON.stringify(response.usage)}`);
-    console.log(`[ORDINEX_DEBUG]   content blocks: ${response.content.length}`);
+    debugLog(`LLM extraction response received`);
+    debugLog(`  stop_reason: ${response.stop_reason}`);
+    debugLog(`  usage: ${JSON.stringify(response.usage)}`);
+    debugLog(`  content blocks: ${response.content.length}`);
 
     const textBlock = response.content.find(b => b.type === 'text');
     if (!textBlock?.text) {
-      console.warn(`[ORDINEX_DEBUG] ❌ No text block in LLM response. Content types: ${response.content.map(b => b.type).join(', ')}`);
+      debugWarn(`❌ No text block in LLM response. Content types: ${response.content.map(b => b.type).join(', ')}`);
       return null;
     }
 
-    console.log(`[ORDINEX_DEBUG] Raw extraction response (${textBlock.text.length} chars):`);
-    console.log(`[ORDINEX_DEBUG] ${textBlock.text.substring(0, 2000)}`);
+    debugLog(`Raw extraction response (${textBlock.text.length} chars):`);
+    debugLog(`${textBlock.text.substring(0, 2000)}`);
 
     const parsed = parseFeatureRequirements(textBlock.text);
     if (!parsed) {
-      console.warn(`[ORDINEX_DEBUG] ❌ Failed to parse LLM response as FeatureRequirements`);
-      console.warn(`[ORDINEX_DEBUG] Full raw text: ${textBlock.text}`);
+      debugWarn(`❌ Failed to parse LLM response as FeatureRequirements`);
+      debugWarn(`Full raw text: ${textBlock.text}`);
       return null;
     }
 
-    console.log(`[ORDINEX_DEBUG] ✅ Feature extraction parsed successfully`);
-    console.log(`[ORDINEX_DEBUG]   app_type: ${parsed.app_type}`);
-    console.log(`[ORDINEX_DEBUG]   features count: ${parsed.features?.length}`);
-    console.log(`[ORDINEX_DEBUG]   features: ${JSON.stringify(parsed.features)}`);
-    console.log(`[ORDINEX_DEBUG]   pages count: ${parsed.pages?.length}`);
-    console.log(`[ORDINEX_DEBUG]   pages: ${JSON.stringify(parsed.pages)}`);
-    console.log(`[ORDINEX_DEBUG]   has_auth: ${parsed.has_auth}`);
-    console.log(`[ORDINEX_DEBUG]   has_database: ${parsed.has_database}`);
-    console.log(`[ORDINEX_DEBUG] ========== FEATURE EXTRACTION END ==========`);
+    debugLog(`✅ Feature extraction parsed successfully`);
+    debugLog(`  app_type: ${parsed.app_type}`);
+    debugLog(`  features count: ${parsed.features?.length}`);
+    debugLog(`  features: ${JSON.stringify(parsed.features)}`);
+    debugLog(`  pages count: ${parsed.pages?.length}`);
+    debugLog(`  pages: ${JSON.stringify(parsed.pages)}`);
+    debugLog(`  has_auth: ${parsed.has_auth}`);
+    debugLog(`  has_database: ${parsed.has_database}`);
+    debugLog(`========== FEATURE EXTRACTION END ==========`);
 
     return parsed;
   } catch (error) {
-    console.error(`[ORDINEX_DEBUG] ❌ Feature extraction LLM call FAILED`);
-    console.error(`[ORDINEX_DEBUG] Error type: ${error instanceof Error ? error.constructor.name : typeof error}`);
-    console.error(`[ORDINEX_DEBUG] Error message: ${error instanceof Error ? error.message : String(error)}`);
-    console.error(`[ORDINEX_DEBUG] Error stack: ${error instanceof Error ? error.stack : 'N/A'}`);
+    debugWarn(`❌ Feature extraction LLM call FAILED`);
+    debugWarn(`Error type: ${error instanceof Error ? error.constructor.name : typeof error}`);
+    debugWarn(`Error message: ${error instanceof Error ? error.message : String(error)}`);
+    debugWarn(`Error stack: ${error instanceof Error ? error.stack : 'N/A'}`);
     return null;
   }
 }

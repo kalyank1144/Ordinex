@@ -7,6 +7,7 @@
  */
 
 import type { PipelineStageContext, PipelineState } from '../pipelineTypes';
+import { debugLog, debugWarn } from '../debugLog';
 import { emitScaffoldProgress, emitDesignPackApplied } from '../pipelineEvents';
 import { getDesignPackById } from '../designPacks';
 import type { DesignPack } from '../designPacks';
@@ -91,13 +92,13 @@ export async function runDesignSystemStage(
   { ctx, projectPath, logPrefix }: PipelineStageContext,
   state: PipelineState,
 ): Promise<void> {
-  console.log(`[ORDINEX_DEBUG] ========== DESIGN SYSTEM STAGE START ==========`);
-  console.log(`[ORDINEX_DEBUG] [DS] projectPath: ${projectPath}`);
-  console.log(`[ORDINEX_DEBUG] [DS] ctx.designPackId: ${ctx.designPackId}`);
-  console.log(`[ORDINEX_DEBUG] [DS] ctx.llmClient present: ${!!ctx.llmClient}`);
-  console.log(`[ORDINEX_DEBUG] [DS] ctx.modelId: ${ctx.modelId}`);
-  console.log(`[ORDINEX_DEBUG] [DS] ctx.blueprint app_type: ${ctx.blueprint?.app_type || 'null'}`);
-  console.log(`[ORDINEX_DEBUG] [DS] ctx.styleInput: ${ctx.styleInput ? JSON.stringify(ctx.styleInput) : 'null'}`);
+  debugLog(`========== DESIGN SYSTEM STAGE START ==========`);
+  debugLog(`[DS] projectPath: ${projectPath}`);
+  debugLog(`[DS] ctx.designPackId: ${ctx.designPackId}`);
+  debugLog(`[DS] ctx.llmClient present: ${!!ctx.llmClient}`);
+  debugLog(`[DS] ctx.modelId: ${ctx.modelId}`);
+  debugLog(`[DS] ctx.blueprint app_type: ${ctx.blueprint?.app_type || 'null'}`);
+  debugLog(`[DS] ctx.styleInput: ${ctx.styleInput ? JSON.stringify(ctx.styleInput) : 'null'}`);
 
   // --- Stage 2: Style Intent Resolution ---
   await emitScaffoldProgress(ctx, 'applying_design' as any, {
@@ -108,44 +109,44 @@ export async function runDesignSystemStage(
   try {
     const designPack = getDesignPackById(ctx.designPackId);
     const appType = ctx.blueprint?.app_type;
-    console.log(`[ORDINEX_DEBUG] [DS] designPack resolved: ${designPack ? `${designPack.id} (${designPack.name})` : 'NULL — no pack selected'}`);
+    debugLog(`[DS] designPack resolved: ${designPack ? `${designPack.id} (${designPack.name})` : 'NULL — no pack selected'}`);
 
     let resolvedStyleInput: StyleInput;
 
     if (designPack) {
-      console.log(`[ORDINEX_DEBUG] [DS] Using design pack OKLCH path — seeds: primary=${designPack.tokens.colors.primary}, secondary=${designPack.tokens.colors.secondary}, accent=${designPack.tokens.colors.accent}`);
+      debugLog(`[DS] Using design pack OKLCH path — seeds: primary=${designPack.tokens.colors.primary}, secondary=${designPack.tokens.colors.secondary}, accent=${designPack.tokens.colors.accent}`);
       console.log(`${logPrefix} Using design pack "${designPack.id}" (${designPack.name}) via OKLCH engine — seeds: primary=${designPack.tokens.colors.primary}, secondary=${designPack.tokens.colors.secondary}, accent=${designPack.tokens.colors.accent}`);
       const packTheme = await designPackToTheme(designPack);
       state.designTokens = packTheme.light;
       state.darkTokens = packTheme.dark;
       state.shadcnVars = tokensToShadcnVars(state.designTokens);
-      console.log(`[ORDINEX_DEBUG] [DS] OKLCH theme generated — primary=${state.designTokens.primary}, bg=${state.designTokens.background}, accent=${state.designTokens.accent}`);
-      console.log(`[ORDINEX_DEBUG] [DS] shadcnVars count: ${Object.keys(state.shadcnVars).length}`);
-      console.log(`[ORDINEX_DEBUG] [DS] darkTokens generated: ${!!state.darkTokens}`);
+      debugLog(`[DS] OKLCH theme generated — primary=${state.designTokens.primary}, bg=${state.designTokens.background}, accent=${state.designTokens.accent}`);
+      debugLog(`[DS] shadcnVars count: ${Object.keys(state.shadcnVars).length}`);
+      debugLog(`[DS] darkTokens generated: ${!!state.darkTokens}`);
       console.log(`${logPrefix} OKLCH theme generated — light: bg=${state.designTokens.background}, primary=${state.designTokens.primary}, accent=${state.designTokens.accent}`);
       resolvedStyleInput = { mode: 'vibe', value: designPack.vibe };
     } else {
       resolvedStyleInput = ctx.styleInput
         || (appType ? getAppTypeDefaultStyle(appType) : undefined)
         || { mode: 'vibe', value: 'minimal' };
-      console.log(`[ORDINEX_DEBUG] [DS] No design pack — using style resolution. mode=${resolvedStyleInput.mode}, value="${resolvedStyleInput.value}"`);
+      debugLog(`[DS] No design pack — using style resolution. mode=${resolvedStyleInput.mode}, value="${resolvedStyleInput.value}"`);
       console.log(`${logPrefix} No design pack — style input: mode=${resolvedStyleInput.mode}, value="${resolvedStyleInput.value}"`);
 
       let styleResult;
       if (ctx.llmClient && (resolvedStyleInput.mode === 'nl' || resolvedStyleInput.mode === 'vibe')) {
-        console.log(`[ORDINEX_DEBUG] [DS] Calling resolveStyleIntentWithLLM with modelId=${ctx.modelId}`);
+        debugLog(`[DS] Calling resolveStyleIntentWithLLM with modelId=${ctx.modelId}`);
         styleResult = await resolveStyleIntentWithLLM(resolvedStyleInput, ctx.llmClient, appType, ctx.modelId);
-        console.log(`[ORDINEX_DEBUG] [DS] LLM style result: primary=${styleResult.tokens.primary}, bg=${styleResult.tokens.background}, accent=${styleResult.tokens.accent}`);
+        debugLog(`[DS] LLM style result: primary=${styleResult.tokens.primary}, bg=${styleResult.tokens.background}, accent=${styleResult.tokens.accent}`);
       } else {
-        console.log(`[ORDINEX_DEBUG] [DS] Using static resolveStyleIntent (no LLM client or non-vibe mode)`);
+        debugLog(`[DS] Using static resolveStyleIntent (no LLM client or non-vibe mode)`);
         styleResult = resolveStyleIntent(resolvedStyleInput);
-        console.log(`[ORDINEX_DEBUG] [DS] Static style result: primary=${styleResult.tokens.primary}, bg=${styleResult.tokens.background}`);
+        debugLog(`[DS] Static style result: primary=${styleResult.tokens.primary}, bg=${styleResult.tokens.background}`);
       }
       state.designTokens = styleResult.tokens;
       state.shadcnVars = styleResult.shadcnVars;
     }
 
-    console.log(`[ORDINEX_DEBUG] [DS] ✓ Style resolution done — primary=${state.designTokens.primary}, shadcnVars=${Object.keys(state.shadcnVars).length}`);
+    debugLog(`[DS] ✓ Style resolution done — primary=${state.designTokens.primary}, shadcnVars=${Object.keys(state.shadcnVars).length}`);
 
     try {
       const flatTokens: Record<string, string> = {};
@@ -163,12 +164,12 @@ export async function runDesignSystemStage(
       status: 'done',
     });
   } catch (styleErr) {
-    console.error(`[ORDINEX_DEBUG] [DS] ❌ Style resolution FAILED:`, styleErr);
+    debugWarn(`[DS] ❌ Style resolution FAILED:`, styleErr);
     console.warn(`${logPrefix} Style resolution warning (non-fatal):`, styleErr);
   }
 
   // --- Stage 3: Overlay Application ---
-  console.log(`[ORDINEX_DEBUG] [DS] >>> Stage 3: Overlay Application`);
+  debugLog(`[DS] >>> Stage 3: Overlay Application`);
   console.log(`${logPrefix} [OVERLAY] >>> Starting overlay stage`);
   await emitScaffoldProgress(ctx, 'applying_design' as any, {
     message: 'Applying premium shell overlays...',
@@ -176,7 +177,7 @@ export async function runDesignSystemStage(
   });
 
   state.tailwindVersion = detectTailwindVersion(projectPath);
-  console.log(`[ORDINEX_DEBUG] [DS] Tailwind version detected: ${state.tailwindVersion}`);
+  debugLog(`[DS] Tailwind version detected: ${state.tailwindVersion}`);
   console.log(`${logPrefix} Detected Tailwind CSS v${state.tailwindVersion} for project at ${projectPath}`);
 
   try {
@@ -188,11 +189,11 @@ export async function runDesignSystemStage(
     let darkTokens: DesignTokens | undefined = state.darkTokens;
     let darkOklchVars: Record<string, string> | undefined;
     try {
-      console.log(`[ORDINEX_DEBUG] [DS] Generating OKLCH vars from tokens...`);
+      debugLog(`[DS] Generating OKLCH vars from tokens...`);
       oklchVars = await tokensToOklchVars(state.designTokens as unknown as Record<string, string | undefined>);
-      console.log(`[ORDINEX_DEBUG] [DS] OKLCH light vars: ${Object.keys(oklchVars).length} keys. Sample --primary=${oklchVars['--primary'] || 'MISSING'}, --background=${oklchVars['--background'] || 'MISSING'}`);
+      debugLog(`[DS] OKLCH light vars: ${Object.keys(oklchVars).length} keys. Sample --primary=${oklchVars['--primary'] || 'MISSING'}, --background=${oklchVars['--background'] || 'MISSING'}`);
       if (!darkTokens) {
-        console.log(`[ORDINEX_DEBUG] [DS] No dark tokens yet, generating via OKLCH engine...`);
+        debugLog(`[DS] No dark tokens yet, generating via OKLCH engine...`);
         const theme = await generateFullTheme(
           state.designTokens.primary, state.designTokens.secondary, state.designTokens.accent,
           { radius: state.designTokens.radius },
@@ -201,10 +202,10 @@ export async function runDesignSystemStage(
         state.darkTokens = darkTokens;
       }
       darkOklchVars = await tokensToOklchVars(darkTokens as unknown as Record<string, string | undefined>);
-      console.log(`[ORDINEX_DEBUG] [DS] OKLCH dark vars: ${Object.keys(darkOklchVars).length} keys`);
+      debugLog(`[DS] OKLCH dark vars: ${Object.keys(darkOklchVars).length} keys`);
       console.log(`${logPrefix} [OKLCH] Generated ${Object.keys(oklchVars).length} OKLCH vars + dark mode`);
     } catch (oklchErr) {
-      console.error(`[ORDINEX_DEBUG] [DS] ❌ OKLCH generation FAILED:`, oklchErr);
+      debugWarn(`[DS] ❌ OKLCH generation FAILED:`, oklchErr);
       console.warn(`${logPrefix} [OKLCH] Non-fatal: ${oklchErr instanceof Error ? oklchErr.message : String(oklchErr)}`);
     }
 
@@ -221,9 +222,9 @@ export async function runDesignSystemStage(
       darkOklchVars,
     };
 
-    console.log(`[ORDINEX_DEBUG] [DS] Applying overlay — layout=${primaryLayout}, vibe=${designPackForOverlay?.vibe || 'none'}, oklchVars=${oklchVars ? Object.keys(oklchVars).length : 0}`);
+    debugLog(`[DS] Applying overlay — layout=${primaryLayout}, vibe=${designPackForOverlay?.vibe || 'none'}, oklchVars=${oklchVars ? Object.keys(oklchVars).length : 0}`);
     const overlayResult = await applyOverlay(projectPath, overlayConfig);
-    console.log(`[ORDINEX_DEBUG] [DS] Overlay result: ${overlayResult.filesCreated.length} created, ${overlayResult.filesModified.length} modified`);
+    debugLog(`[DS] Overlay result: ${overlayResult.filesCreated.length} created, ${overlayResult.filesModified.length} modified`);
     console.log(`${logPrefix} [OVERLAY] ✓ Applied: ${overlayResult.filesCreated.length} created, ${overlayResult.filesModified.length} modified`);
 
     await emitScaffoldProgress(ctx, 'applying_design' as any, {
@@ -244,7 +245,7 @@ export async function runDesignSystemStage(
       if (cr.success) state.lastCommitHash = cr.commitHash;
     } catch { /* non-fatal */ }
   } catch (overlayErr) {
-    console.error(`[ORDINEX_DEBUG] [DS] ❌ Overlay FAILED:`, overlayErr);
+    debugWarn(`[DS] ❌ Overlay FAILED:`, overlayErr);
     console.error(`${logPrefix} [OVERLAY] FAILED:`, overlayErr);
     await emitScaffoldProgress(ctx, 'applying_design' as any, {
       message: `Overlay failed: ${overlayErr instanceof Error ? overlayErr.message : String(overlayErr)}`,
@@ -253,13 +254,13 @@ export async function runDesignSystemStage(
     });
   }
 
-  console.log(`[ORDINEX_DEBUG] [DS] <<< Stage 3: Overlay complete`);
+  debugLog(`[DS] <<< Stage 3: Overlay complete`);
 
   const designPack = getDesignPackById(ctx.designPackId);
   await emitDesignPackApplied(ctx, designPack || { id: ctx.designPackId, name: ctx.designPackId } as any, []);
 
   // --- Stage 4: shadcn/ui Init + CSS Tokens ---
-  console.log(`[ORDINEX_DEBUG] [DS] >>> Stage 4: shadcn/ui Init + CSS Rewrite`);
+  debugLog(`[DS] >>> Stage 4: shadcn/ui Init + CSS Rewrite`);
   console.log(`${logPrefix} [SHADCN] >>> Starting shadcn/ui stage`);
   await emitScaffoldProgress(ctx, 'applying_design' as any, {
     message: 'Setting up shadcn/ui components...',
@@ -269,28 +270,28 @@ export async function runDesignSystemStage(
   const shadcnComponents = getShadcnComponents(ctx.recipeId);
 
   try {
-    console.log(`[ORDINEX_DEBUG] [DS] shadcn: initializing ${shadcnComponents.length} components...`);
+    debugLog(`[DS] shadcn: initializing ${shadcnComponents.length} components...`);
     console.log(`${logPrefix} [SHADCN] Initializing ${shadcnComponents.length} components...`);
     const shadcnResult = await initShadcn(projectPath, shadcnComponents);
-    console.log(`[ORDINEX_DEBUG] [DS] shadcn: ${shadcnResult.componentsInstalled.length} installed, ${shadcnResult.errors.length} errors`);
+    debugLog(`[DS] shadcn: ${shadcnResult.componentsInstalled.length} installed, ${shadcnResult.errors.length} errors`);
     console.log(`${logPrefix} [SHADCN] ✓ Init result: ${shadcnResult.componentsInstalled.length} installed, ${shadcnResult.errors.length} errors`);
     if (shadcnResult.errors.length > 0) {
       console.warn(`${logPrefix} [SHADCN] Component errors:`, shadcnResult.errors);
     }
 
-    console.log(`[ORDINEX_DEBUG] [DS] >>> CSS Rewrite — design tokens: primary=${state.designTokens.primary}, bg=${state.designTokens.background}, accent=${state.designTokens.accent}`);
+    debugLog(`[DS] >>> CSS Rewrite — design tokens: primary=${state.designTokens.primary}, bg=${state.designTokens.background}, accent=${state.designTokens.accent}`);
     console.log(`${logPrefix} [SHADCN] >>> Rewriting globals.css with OKLCH tokens after shadcn init`);
     console.log(`${logPrefix} [SHADCN] Design tokens snapshot: primary=${state.designTokens.primary}, bg=${state.designTokens.background}, accent=${state.designTokens.accent}, sidebar=${state.designTokens.sidebar}`);
     {
       const designPackForRewrite = getDesignPackById(ctx.designPackId);
-      console.log(`[ORDINEX_DEBUG] [DS] Design pack for CSS rewrite: ${designPackForRewrite?.id || 'NONE'}`);
+      debugLog(`[DS] Design pack for CSS rewrite: ${designPackForRewrite?.id || 'NONE'}`);
       console.log(`${logPrefix} [SHADCN] Design pack for rewrite: ${designPackForRewrite?.id || '(none)'}, vibe=${designPackForRewrite?.vibe || '(none)'}`);
 
       let oklchVarsRewrite: Record<string, string> | undefined;
       let darkOklchVarsRewrite: Record<string, string> | undefined;
       try {
         oklchVarsRewrite = await tokensToOklchVars(state.designTokens as unknown as Record<string, string | undefined>);
-        console.log(`[ORDINEX_DEBUG] [DS] OKLCH rewrite light vars: ${Object.keys(oklchVarsRewrite).length}. --primary=${oklchVarsRewrite['--primary'] || 'MISSING'}, --background=${oklchVarsRewrite['--background'] || 'MISSING'}, --accent=${oklchVarsRewrite['--accent'] || 'MISSING'}`);
+        debugLog(`[DS] OKLCH rewrite light vars: ${Object.keys(oklchVarsRewrite).length}. --primary=${oklchVarsRewrite['--primary'] || 'MISSING'}, --background=${oklchVarsRewrite['--background'] || 'MISSING'}, --accent=${oklchVarsRewrite['--accent'] || 'MISSING'}`);
         console.log(`${logPrefix} [OKLCH-REWRITE] Light vars: ${Object.keys(oklchVarsRewrite).length} keys`);
         const sampleKeys = ['--primary', '--background', '--accent', '--sidebar-background'];
         for (const k of sampleKeys) {
@@ -298,15 +299,15 @@ export async function runDesignSystemStage(
         }
         if (state.darkTokens) {
           darkOklchVarsRewrite = await tokensToOklchVars(state.darkTokens as unknown as Record<string, string | undefined>);
-          console.log(`[ORDINEX_DEBUG] [DS] OKLCH rewrite dark vars: ${Object.keys(darkOklchVarsRewrite).length}`);
+          debugLog(`[DS] OKLCH rewrite dark vars: ${Object.keys(darkOklchVarsRewrite).length}`);
           console.log(`${logPrefix} [OKLCH-REWRITE] Dark vars: ${Object.keys(darkOklchVarsRewrite).length} keys`);
         }
       } catch (oklchErr) {
-        console.error(`[ORDINEX_DEBUG] [DS] ❌ OKLCH rewrite FAILED:`, oklchErr);
+        debugWarn(`[DS] ❌ OKLCH rewrite FAILED:`, oklchErr);
         console.error(`${logPrefix} [OKLCH-REWRITE] ❌ Failed to generate OKLCH vars:`, oklchErr);
       }
 
-      console.log(`[ORDINEX_DEBUG] [DS] Calling rewriteGlobalsCss — twVersion=${state.tailwindVersion}`);
+      debugLog(`[DS] Calling rewriteGlobalsCss — twVersion=${state.tailwindVersion}`);
       console.log(`${logPrefix} [SHADCN] Calling rewriteGlobalsCss with twVersion=${state.tailwindVersion}`);
       const rewrote = await rewriteGlobalsCss(projectPath, {
         tokens: state.designTokens,
@@ -318,7 +319,7 @@ export async function runDesignSystemStage(
       });
 
       if (rewrote) {
-        console.log(`[ORDINEX_DEBUG] [DS] ✅ rewriteGlobalsCss returned TRUE — CSS was rewritten`);
+        debugLog(`[DS] ✅ rewriteGlobalsCss returned TRUE — CSS was rewritten`);
         console.log(`${logPrefix} [SHADCN] ✅ globals.css fully rewritten with ${oklchVarsRewrite ? Object.keys(oklchVarsRewrite).length : 0} OKLCH vars + dark mode`);
 
         try {
@@ -331,12 +332,12 @@ export async function runDesignSystemStage(
           for (const vp of verifyPaths) {
             try {
               const content = await fsp.readFile(vp, 'utf-8');
-              console.log(`[ORDINEX_DEBUG] [DS] [CSS_VERIFY] globals.css at ${vp}: ${content.length} chars`);
-              console.log(`[ORDINEX_DEBUG] [DS] [CSS_VERIFY]   has oklch(): ${content.includes('oklch(')}`);
-              console.log(`[ORDINEX_DEBUG] [DS] [CSS_VERIFY]   has :root: ${content.includes(':root')}`);
-              console.log(`[ORDINEX_DEBUG] [DS] [CSS_VERIFY]   has .dark: ${content.includes('.dark')}`);
-              console.log(`[ORDINEX_DEBUG] [DS] [CSS_VERIFY]   has @theme inline: ${content.includes('@theme inline')}`);
-              console.log(`[ORDINEX_DEBUG] [DS] [CSS_VERIFY]   first 3 lines: ${content.split('\n').slice(0, 3).join(' | ')}`);
+              debugLog(`[DS] [CSS_VERIFY] globals.css at ${vp}: ${content.length} chars`);
+              debugLog(`[DS] [CSS_VERIFY]   has oklch(): ${content.includes('oklch(')}`);
+              debugLog(`[DS] [CSS_VERIFY]   has :root: ${content.includes(':root')}`);
+              debugLog(`[DS] [CSS_VERIFY]   has .dark: ${content.includes('.dark')}`);
+              debugLog(`[DS] [CSS_VERIFY]   has @theme inline: ${content.includes('@theme inline')}`);
+              debugLog(`[DS] [CSS_VERIFY]   first 3 lines: ${content.split('\n').slice(0, 3).join(' | ')}`);
               console.log(`${logPrefix} [VERIFY] globals.css at ${vp}: ${content.length} chars`);
               console.log(`${logPrefix} [VERIFY]   has @import tailwindcss: ${content.includes('@import "tailwindcss"')}`);
               console.log(`${logPrefix} [VERIFY]   has @theme inline: ${content.includes('@theme inline')}`);
@@ -351,13 +352,13 @@ export async function runDesignSystemStage(
           }
         } catch { /* non-fatal */ }
       } else {
-        console.error(`[ORDINEX_DEBUG] [DS] ❌ rewriteGlobalsCss returned FALSE — CSS was NOT rewritten!`);
+        debugWarn(`[DS] ❌ rewriteGlobalsCss returned FALSE — CSS was NOT rewritten!`);
         console.warn(`${logPrefix} [SHADCN] ⚠️ globals.css rewrite FAILED, falling back to partial update`);
         if (Object.keys(state.shadcnVars).length > 0) {
           const fallbackOk = await updateGlobalsCssTokens(projectPath, state.designTokens);
-          console.log(`[ORDINEX_DEBUG] [DS] Fallback updateGlobalsCssTokens result: ${fallbackOk}`);
+          debugLog(`[DS] Fallback updateGlobalsCssTokens result: ${fallbackOk}`);
           if (!fallbackOk) {
-            console.error(`[ORDINEX_DEBUG] [DS] ❌ BOTH CSS rewrite AND fallback FAILED — design tokens NOT applied!`);
+            debugWarn(`[DS] ❌ BOTH CSS rewrite AND fallback FAILED — design tokens NOT applied!`);
             console.error(`${logPrefix} [SHADCN] ❌ Fallback updateGlobalsCssTokens also failed — design tokens NOT applied!`);
           }
         }
@@ -386,7 +387,7 @@ export async function runDesignSystemStage(
       if (cr.success) state.lastCommitHash = cr.commitHash;
     } catch { /* non-fatal */ }
   } catch (shadcnErr) {
-    console.error(`[ORDINEX_DEBUG] [DS] ❌ shadcn stage FAILED:`, shadcnErr);
+    debugWarn(`[DS] ❌ shadcn stage FAILED:`, shadcnErr);
     console.error(`${logPrefix} [SHADCN] FAILED:`, shadcnErr);
     await emitScaffoldProgress(ctx, 'applying_design' as any, {
       message: `shadcn/ui init failed: ${shadcnErr instanceof Error ? shadcnErr.message : String(shadcnErr)}`,
@@ -394,5 +395,5 @@ export async function runDesignSystemStage(
       status: 'error',
     });
   }
-  console.log(`[ORDINEX_DEBUG] ========== DESIGN SYSTEM STAGE END ==========`);
+  debugLog(`========== DESIGN SYSTEM STAGE END ==========`);
 }

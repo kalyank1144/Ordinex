@@ -32,6 +32,7 @@ import { DEFAULT_POLLING_CONFIG } from './pipelineTypes';
 
 import { emitScaffoldProgress } from './pipelineEvents';
 import { runEnhancedPipeline } from './pipelineRunner';
+import { debugLog } from './debugLog';
 
 // ============================================================================
 // POLLING LOGIC
@@ -146,9 +147,9 @@ export async function startPostScaffoldOrchestration(
     }
 
     console.log(`${LOG_PREFIX} ✓ Project created successfully`);
-    console.log(`[ORDINEX_DEBUG] ========== ENTERING runEnhancedPipeline ==========`);
-    console.log(`[ORDINEX_DEBUG] projectPath: ${projectPath}`);
-    console.log(`[ORDINEX_DEBUG] modelId: ${ctx.modelId}`);
+    debugLog(`========== ENTERING runEnhancedPipeline ==========`);
+    debugLog(`projectPath: ${projectPath}`);
+    debugLog(`modelId: ${ctx.modelId}`);
 
     // Delegate to pipeline runner
     return await runEnhancedPipeline(ctx, projectPath, LOG_PREFIX);

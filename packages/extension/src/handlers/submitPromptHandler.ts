@@ -256,9 +256,10 @@ export async function handleSubmitPrompt(
             messages: [{ role: 'user', content: classificationPrompt }],
           });
 
-          const text = (response.content?.[0] as any)?.text?.toUpperCase() ?? '';
-          console.log('[Router] LLM classification raw response:', text);
-          return text.includes('BUILD') ? 'BUILD' : 'QUESTION';
+          const raw = (response.content?.[0] as any)?.text ?? '';
+          const token = raw.trim().toUpperCase().replace(/[^A-Z]/g, '').slice(0, 10);
+          console.log('[Router] LLM classification raw response:', raw, '→ token:', token);
+          return token.startsWith('BUILD') ? 'BUILD' : 'QUESTION';
         };
       }
     }

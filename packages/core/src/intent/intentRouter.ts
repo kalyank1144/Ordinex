@@ -93,24 +93,28 @@ export async function routeIntent(
     // 3. Empty workspace — use LLM classification if available
     if (ws.fileCount <= 3 && context.llmClassify) {
       console.log(`${LOG} Empty workspace — calling LLM to classify intent...`);
-      const classification = await context.llmClassify(text);
-      console.log(`${LOG} LLM classification: ${classification}`);
+      try {
+        const classification = await context.llmClassify(text);
+        console.log(`${LOG} LLM classification: ${classification}`);
 
-      if (classification === 'BUILD') {
+        if (classification === 'BUILD') {
+          return {
+            intent: 'SCAFFOLD',
+            source: 'llm',
+            confidence: 1.0,
+            reasoning: 'LLM classified empty-workspace prompt as BUILD → scaffold',
+          };
+        }
+
         return {
-          intent: 'SCAFFOLD',
+          intent: 'AGENT',
           source: 'llm',
           confidence: 1.0,
-          reasoning: 'LLM classified empty-workspace prompt as BUILD → scaffold',
+          reasoning: 'LLM classified empty-workspace prompt as QUESTION → agent',
         };
+      } catch (err) {
+        console.warn(`${LOG} LLM classification failed, falling through to heuristic:`, err);
       }
-
-      return {
-        intent: 'AGENT',
-        source: 'llm',
-        confidence: 1.0,
-        reasoning: 'LLM classified empty-workspace prompt as QUESTION → agent',
-      };
     }
 
     // 4. Empty workspace — heuristic fallback (no LLM client, e.g. tests)
