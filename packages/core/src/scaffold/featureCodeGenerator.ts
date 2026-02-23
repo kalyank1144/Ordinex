@@ -1006,9 +1006,12 @@ function extractFilesViaRegex(text: string): { files: GeneratedFile[]; modified_
   const files: GeneratedFile[] = [];
   const modifiedFiles: ModifiedFileEntry[] = [];
 
-  // Locate the "modified_files" section boundary so entries found after it
-  // are treated as modifications, not new files.
-  const modifiedSectionStart = text.indexOf('"modified_files"');
+  // Match the JSON key `"modified_files" : [` to find the real section boundary.
+  // Plain indexOf('"modified_files"') is too fragile — the string can appear
+  // inside quoted code content. Requiring the `: [` suffix ensures we match
+  // the actual JSON key, not an incidental mention in generated source code.
+  const sectionMatch = text.match(/"modified_files"\s*:\s*\[/);
+  const modifiedSectionStart = sectionMatch ? sectionMatch.index! : -1;
 
   const fileRegex = /"path"\s*:\s*"([^"]+)"\s*,\s*"content"\s*:\s*"((?:[^"\\]|\\.)*)"/g;
   let match;

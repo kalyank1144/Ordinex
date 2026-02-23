@@ -154,6 +154,18 @@ describe('routeIntent with LLM client', () => {
     expect(result.source).toBe('passthrough');
   });
 
+  it('quick-rejects large non-Node workspace (no package.json, many files)', async () => {
+    const pythonProject: WorkspaceState = { fileCount: 40, hasPackageJson: false, hasGitRepo: true };
+    const client = createMockLLMClient('SCAFFOLD');
+    const result = await routeIntent('Build me a dashboard', {
+      workspace: pythonProject,
+      llmClient: client,
+      modelId: 'claude-sonnet-4-20250514',
+    });
+    expect(result.intent).toBe('AGENT');
+    expect(result.source).toBe('passthrough');
+  });
+
   it('slash override wins over LLM', async () => {
     const client = createMockLLMClient('AGENT');
     const result = await routeIntent('/scaffold my app', {

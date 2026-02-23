@@ -79,10 +79,13 @@ export async function routeIntent(
     };
   }
 
-  // 2. Filesystem quick-reject — package.json means an existing project
+  // 2. Filesystem quick-reject — existing project detection
+  //    Triggers on: package.json present (Node/JS), OR high file count (any language).
+  //    Non-Node repos (Python, Go, Rust, etc.) won't have package.json but will
+  //    have many files. Users can always use /scaffold to override.
   const ws = context.workspace;
-  if (ws && ws.hasPackageJson) {
-    console.log(`${LOG} Quick-reject → AGENT (hasPackageJson=true, fileCount=${ws.fileCount})`);
+  if (ws && (ws.hasPackageJson || ws.fileCount > 10)) {
+    console.log(`${LOG} Quick-reject → AGENT (hasPackageJson=${ws.hasPackageJson}, fileCount=${ws.fileCount})`);
     return {
       intent: 'AGENT',
       source: 'passthrough',
@@ -113,18 +116,26 @@ export async function routeIntent(
     }
   }
 
-  // 4. Heuristic fallback — offline / no API key / LLM failure
-  const greenfield = detectGreenfieldIntent(text);
-  console.log(`${LOG} Heuristic fallback:`, { isMatch: greenfield.isMatch, confidence: greenfield.confidence });
+  // 4. Heuristic fallback — only for empty/unknown workspaces when offline or LLM unavailable.
+  //    If the workspace has files (even below the quick-reject threshold), default to AGENT
+  //    rather than risk misrouting via the regex heuristic.
+  const isEmptyOrUnknown = !ws || (ws.fileCount <= 3 && !ws.hasPackageJson);
 
-  if (greenfield.isMatch && greenfield.confidence >= 0.6) {
-    console.log(`${LOG} Heuristic → SCAFFOLD`);
-    return {
-      intent: 'SCAFFOLD',
-      source: 'heuristic',
-      confidence: greenfield.confidence,
-      reasoning: `Heuristic fallback: ${greenfield.reason}`,
-    };
+  if (isEmptyOrUnknown) {
+    const greenfield = detectGreenfieldIntent(text);
+    console.log(`${LOG} Heuristic fallback (empty/unknown workspace):`, { isMatch: greenfield.isMatch, confidence: greenfield.confidence });
+
+    if (greenfield.isMatch && greenfield.confidence >= 0.6) {
+      console.log(`${LOG} Heuristic → SCAFFOLD`);
+      return {
+        intent: 'SCAFFOLD',
+        source: 'heuristic',
+        confidence: greenfield.confidence,
+        reasoning: `Heuristic fallback: ${greenfield.reason}`,
+      };
+    }
+  } else {
+    console.log(`${LOG} Skipping heuristic — workspace has ${ws!.fileCount} files (not empty)`);
   }
 
   // 5. Default — pass through to user's selected mode

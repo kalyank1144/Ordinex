@@ -99,9 +99,18 @@ export async function classifyIntentWithLLM(
   }
 
   const input = toolBlock.input as Record<string, unknown>;
-  return {
-    intent: input.intent as 'SCAFFOLD' | 'AGENT',
-    confidence: (input.confidence as number) ?? 1.0,
-    reasoning: (input.reasoning as string) ?? '',
-  };
+
+  const intent = input.intent;
+  if (intent !== 'SCAFFOLD' && intent !== 'AGENT') {
+    throw new Error(`Intent classification: invalid intent value "${String(intent)}"`);
+  }
+
+  const rawConfidence = input.confidence;
+  const confidence = typeof rawConfidence === 'number' && isFinite(rawConfidence)
+    ? Math.max(0, Math.min(1, rawConfidence))
+    : 1.0;
+
+  const reasoning = typeof input.reasoning === 'string' ? input.reasoning : '';
+
+  return { intent, confidence, reasoning };
 }
