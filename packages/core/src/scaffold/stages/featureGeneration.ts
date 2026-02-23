@@ -26,6 +26,11 @@ import { debugLog, debugWarn } from '../debugLog';
 
 const execAsync = promisify(exec);
 
+function pipelineLog(ctx: { logger?: (msg: string) => void }, msg: string): void {
+  debugLog(msg);
+  ctx.logger?.(msg);
+}
+
 const FEATURE_EXTRACTION_TIMEOUT_MS = 120_000; // 2 min — lightweight extraction call (small response)
 
 function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
@@ -96,6 +101,18 @@ export async function runFeatureGenerationStage(
   }
 
   // Feature generation
+  pipelineLog(ctx, `[COLOR_PIPELINE] ========== STEP 7: PASSING TOKENS TO LLM (FEATURE GENERATION) ==========`);
+  pipelineLog(ctx, `[COLOR_PIPELINE] Tokens being passed to LLM for code generation:`);
+  pipelineLog(ctx, `[COLOR_PIPELINE]   primary: ${state.designTokens.primary}`);
+  pipelineLog(ctx, `[COLOR_PIPELINE]   background: ${state.designTokens.background}`);
+  pipelineLog(ctx, `[COLOR_PIPELINE]   accent: ${state.designTokens.accent}`);
+  pipelineLog(ctx, `[COLOR_PIPELINE]   secondary: ${state.designTokens.secondary}`);
+  pipelineLog(ctx, `[COLOR_PIPELINE]   card: ${state.designTokens.card}`);
+  pipelineLog(ctx, `[COLOR_PIPELINE]   foreground: ${state.designTokens.foreground}`);
+  pipelineLog(ctx, `[COLOR_PIPELINE]   border: ${state.designTokens.border}`);
+  pipelineLog(ctx, `[COLOR_PIPELINE]   designPack: ${ctx.designPackId || '(none — tokens from prompt/LLM)'}`);
+  pipelineLog(ctx, `[COLOR_PIPELINE]   generation mode: ${ctx.blueprint?.pages?.length ? `multi-pass (${ctx.blueprint.pages.length} pages)` : 'single-pass'}`);
+
   debugLog(`========== FEATURE GENERATION STAGE START ==========`);
   debugLog(`ctx.userPrompt: "${ctx.userPrompt}"`);
   debugLog(`ctx.llmClient present: ${!!ctx.llmClient}`);
@@ -321,7 +338,7 @@ async function runMultiPass(
 
   const multiResult = await executeMultiPassGeneration(
     plan, blueprint, staging.stagingPath, ctx.llmClient!,
-    designPack || null, state.designTokens,
+    designPack || null, ctx.modelId, state.designTokens,
     (pass, passIdx, total) => {
       emitScaffoldProgress(ctx, 'generating_features' as any, {
         message: `Pass ${passIdx + 1}/${total}: ${pass}...`,
@@ -329,7 +346,7 @@ async function runMultiPass(
         detail: `Generating ${pass}`,
       });
     },
-    projectPath, state.hasSrcDir, state.tailwindVersion, ctx.modelId,
+    projectPath, state.hasSrcDir, state.tailwindVersion,
   );
 
   // Remove any protected files the LLM may have generated
@@ -375,9 +392,10 @@ async function runSinglePass(
   });
 
   debugLog(`Calling generateFeatureCode (heartbeat-based timeout, model: ${ctx.modelId || 'not set'})...`);
+  debugLog(`Passing designTokens to generateFeatureCode: primary=${state.designTokens.primary}, bg=${state.designTokens.background}`);
   const generationResult = await generateFeatureCode(
     requirements, ctx.recipeId, designPack || null, ctx.llmClient!,
-    ctx.modelId, projectContext, state.hasSrcDir,
+    ctx.modelId, projectContext, state.hasSrcDir, state.designTokens,
   );
 
   debugLog(`generateFeatureCode returned: ${generationResult ? `${generationResult.files.length} files` : 'null'}`);

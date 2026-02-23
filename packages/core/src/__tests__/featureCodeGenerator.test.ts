@@ -101,7 +101,7 @@ describe('getRecipeConstraints', () => {
     const constraints = getRecipeConstraints('nextjs_app_router');
     expect(constraints.framework).toContain('Next.js');
     expect(constraints.homePagePath).toBe('app/page.tsx');
-    expect(constraints.componentDir).toBe('src/components');
+    expect(constraints.componentDir).toBe('components');
   });
 
   it('returns Vite constraints', () => {
@@ -148,7 +148,7 @@ describe('buildGenerationSystemPrompt', () => {
   it('includes visual quality rules', () => {
     const prompt = buildGenerationSystemPrompt('nextjs_app_router', MOCK_DESIGN_PACK);
     expect(prompt).toContain('COMPLETELY replace default template content');
-    expect(prompt).toContain('max-w-4xl mx-auto');
+    expect(prompt).toContain('max-w-5xl');
     expect(prompt).toContain('empty states');
   });
 
@@ -197,7 +197,7 @@ describe('buildGenerationSystemPrompt', () => {
     const prompt = buildGenerationSystemPrompt('nextjs_app_router', MOCK_DESIGN_PACK);
     expect(prompt).toContain('EXAMPLE COMPONENT');
     expect(prompt).toContain('bg-primary text-primary-foreground');
-    expect(prompt).toContain('border border-border');
+    expect(prompt).toContain('border-border');
     expect(prompt).toContain('text-muted-foreground');
     expect(prompt).toContain('font-heading');
   });
@@ -606,8 +606,8 @@ describe('buildGenerationUserMessage visual quality', () => {
   it('includes visual quality section', () => {
     const message = buildGenerationUserMessage(TODO_REQUIREMENTS, 'nextjs_app_router');
     expect(message).toContain('VISUAL QUALITY');
-    expect(message).toContain('visible <label>');
-    expect(message).toContain('card-based');
+    expect(message).toContain('shadcn/ui');
+    expect(message).toContain('<Card>');
     expect(message).toContain('empty state');
   });
 

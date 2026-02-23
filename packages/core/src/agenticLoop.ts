@@ -60,6 +60,7 @@ export interface LLMClient {
     system?: string;
     messages: ConversationMessage[];
     tools?: ToolSchema[];
+    tool_choice?: import('./toolSchemas').ToolChoice;
   }): Promise<LLMClientResponse>;
 
   /**
@@ -73,6 +74,7 @@ export interface LLMClient {
     system?: string;
     messages: ConversationMessage[];
     tools?: ToolSchema[];
+    tool_choice?: import('./toolSchemas').ToolChoice;
     onDelta: (delta: string) => void;
   }): Promise<LLMClientResponse>;
 }

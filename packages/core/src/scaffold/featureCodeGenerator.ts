@@ -320,6 +320,19 @@ function reduceFeatureScope(requirements: FeatureRequirements): FeatureRequireme
 
 function buildGenerationSystemPrompt(recipeId: RecipeId, designPack: DesignPack | null, projectContext?: ProjectContext, hasSrcDir?: boolean, tokens?: DesignTokens): string {
   const recipeConstraints = getRecipeConstraints(recipeId, hasSrcDir);
+
+  const tokenSource = designPack ? 'designPack' : tokens ? 'designTokens' : 'fallback (no tokens!)';
+  debugLog(`[COLOR_PIPELINE] buildGenerationSystemPrompt — token source: ${tokenSource}`);
+  if (tokens) {
+    debugLog(`[COLOR_PIPELINE]   tokens.primary: ${tokens.primary}, tokens.background: ${tokens.background}, tokens.accent: ${tokens.accent}`);
+  }
+  if (designPack) {
+    debugLog(`[COLOR_PIPELINE]   designPack: ${designPack.id} (${designPack.name})`);
+  }
+  if (!designPack && !tokens) {
+    debugWarn(`[COLOR_PIPELINE]   ⚠️ WARNING: No tokens passed — LLM will use generic semantic class fallback`);
+  }
+
   const designTokensStr = designPack
     ? getDesignTokenString(designPack)
     : tokens
@@ -900,16 +913,17 @@ function parseGenerationResult(text: string, _recipeId: RecipeId): FeatureGenera
     }
   }
 
-  // Strategy 3: Extract files individually using regex
+  // Strategy 3: Extract files individually using regex (preserves modified_files semantics)
   if (!parsed) {
     console.log(`${LOG_PREFIX} JSON repair failed, attempting regex file extraction...`);
     const extracted = extractFilesViaRegex(text);
-    if (extracted && extracted.length > 0) {
-      console.log(`${LOG_PREFIX} Regex extraction found ${extracted.length} files`);
+    if (extracted && (extracted.files.length > 0 || extracted.modified_files.length > 0)) {
+      const totalCount = extracted.files.length + extracted.modified_files.length;
+      console.log(`${LOG_PREFIX} Regex extraction found ${extracted.files.length} new files, ${extracted.modified_files.length} modified files`);
       return {
-        files: extracted,
-        modified_files: [],
-        summary: `Generated ${extracted.length} files (extracted via fallback parser)`,
+        files: extracted.files,
+        modified_files: extracted.modified_files,
+        summary: `Generated ${totalCount} files (extracted via fallback parser)`,
       };
     }
   }
@@ -988,10 +1002,18 @@ function repairJsonString(str: string): string {
   return result;
 }
 
-function extractFilesViaRegex(text: string): GeneratedFile[] | null {
-  // Extract file entries by matching "path": "..." and "content": "..." patterns
-  const fileRegex = /"path"\s*:\s*"([^"]+)"\s*,\s*"content"\s*:\s*"((?:[^"\\]|\\.)*)"/g;
+function extractFilesViaRegex(text: string): { files: GeneratedFile[]; modified_files: ModifiedFileEntry[] } | null {
   const files: GeneratedFile[] = [];
+  const modifiedFiles: ModifiedFileEntry[] = [];
+
+  // Match the JSON key `"modified_files" : [` to find the real section boundary.
+  // Plain indexOf('"modified_files"') is too fragile — the string can appear
+  // inside quoted code content. Requiring the `: [` suffix ensures we match
+  // the actual JSON key, not an incidental mention in generated source code.
+  const sectionMatch = text.match(/"modified_files"\s*:\s*\[/);
+  const modifiedSectionStart = sectionMatch ? sectionMatch.index! : -1;
+
+  const fileRegex = /"path"\s*:\s*"([^"]+)"\s*,\s*"content"\s*:\s*"((?:[^"\\]|\\.)*)"/g;
   let match;
 
   while ((match = fileRegex.exec(text)) !== null) {
@@ -1002,7 +1024,13 @@ function extractFilesViaRegex(text: string): GeneratedFile[] | null {
     } catch {
       content = match[2].replace(/\\n/g, '\n').replace(/\\t/g, '\t').replace(/\\"/g, '"');
     }
-    if (filePath && content && content.length > 0) {
+    if (!filePath || !content || content.length === 0) continue;
+
+    const isModified = modifiedSectionStart !== -1 && match.index > modifiedSectionStart;
+
+    if (isModified) {
+      modifiedFiles.push({ path: filePath, content, description: '' });
+    } else {
       files.push({
         path: filePath,
         content,
@@ -1012,7 +1040,9 @@ function extractFilesViaRegex(text: string): GeneratedFile[] | null {
     }
   }
 
-  return files.length > 0 ? files : null;
+  return (files.length > 0 || modifiedFiles.length > 0)
+    ? { files, modified_files: modifiedFiles }
+    : null;
 }
 
 function validateParsedResult(parsed: any): FeatureGenerationResult | null {

@@ -15,12 +15,19 @@
 export interface ToolSchema {
   name: string;
   description: string;
+  /** When true, Anthropic constrains decoding to guarantee schema-valid output. */
+  strict?: boolean;
   input_schema: {
     type: 'object';
     properties: Record<string, unknown>;
     required: string[];
   };
 }
+
+export type ToolChoice =
+  | { type: 'auto' }
+  | { type: 'any' }
+  | { type: 'tool'; name: string };
 
 // ---------------------------------------------------------------------------
 // Individual tool definitions

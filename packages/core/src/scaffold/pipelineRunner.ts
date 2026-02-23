@@ -50,55 +50,55 @@ export async function runEnhancedPipeline(
 
   const stageCtx = { ctx, projectPath, logPrefix };
 
-  debugLog(`========== PIPELINE RUNNER START ==========`);
-  debugLog(`projectPath: ${projectPath}`);
-  debugLog(`hasSrcDir: ${hasSrcDir}`);
-  debugLog(`twVersion: ${twVersion}`);
-  debugLog(`ctx.modelId: ${ctx.modelId}`);
-  debugLog(`ctx.llmClient: ${!!ctx.llmClient}`);
-  debugLog(`ctx.designPackId: ${ctx.designPackId}`);
-  debugLog(`ctx.blueprint: ${ctx.blueprint ? JSON.stringify({ app_type: ctx.blueprint.app_type, pages: ctx.blueprint.pages.length }) : 'null'}`);
+  const log = (msg: string) => { debugLog(msg); ctx.logger?.(msg); };
+
+  log(`[COLOR_PIPELINE] ========== PIPELINE RUNNER START ==========`);
+  log(`[COLOR_PIPELINE] projectPath: ${projectPath}`);
+  log(`[COLOR_PIPELINE] hasSrcDir: ${hasSrcDir}, twVersion: ${twVersion}`);
+  log(`[COLOR_PIPELINE] modelId: ${ctx.modelId}, llmClient: ${!!ctx.llmClient}`);
+  log(`[COLOR_PIPELINE] designPackId: ${ctx.designPackId}`);
+  log(`[COLOR_PIPELINE] userPrompt: "${ctx.userPrompt?.slice(0, 100) || '(none)'}"`);
+  log(`[COLOR_PIPELINE] styleInput: ${ctx.styleInput ? `mode=${ctx.styleInput.mode}, value="${ctx.styleInput.value}"` : '(none)'}`);
+  log(`[COLOR_PIPELINE] blueprint: ${ctx.blueprint ? `app_type=${ctx.blueprint.app_type}, pages=${ctx.blueprint.pages.length}` : 'null'}`);
 
   // Stage 1: Git Init + Project Context
-  debugLog(`>>> Stage 1: Init`);
+  log(`[COLOR_PIPELINE] >>> Stage 1: Init`);
   await runInitStage(stageCtx, state);
-  debugLog(`<<< Stage 1: Init complete`);
+  log(`[COLOR_PIPELINE] <<< Stage 1: Init complete`);
 
   // Correct app_type if it conflicts with the recipe (e.g. LLM says "mobile_app" but recipe is Next.js)
   if (ctx.blueprint) {
     const corrected = correctAppTypeForRecipe(ctx.blueprint, ctx.recipeId);
     if (corrected.app_type !== ctx.blueprint.app_type) {
-      console.log(`${logPrefix} [BLUEPRINT] Corrected app_type: "${ctx.blueprint.app_type}" → "${corrected.app_type}" (recipe=${ctx.recipeId})`);
+      debugLog(`${logPrefix} [BLUEPRINT] Corrected app_type: "${ctx.blueprint.app_type}" → "${corrected.app_type}" (recipe=${ctx.recipeId})`);
       ctx.blueprint = corrected;
     }
   }
 
   // Stage 2-4: Design System (style, overlay, shadcn)
-  debugLog(`>>> Stage 2-4: Design System`);
+  log(`[COLOR_PIPELINE] >>> Stage 2-4: Design System`);
   await runDesignSystemStage(stageCtx, state);
-  debugLog(`<<< Stage 2-4: Design System complete`);
-  debugLog(`After design system — designTokens.primary: ${state.designTokens.primary}, background: ${state.designTokens.background}, accent: ${state.designTokens.accent}`);
-  debugLog(`After design system — shadcnVars count: ${Object.keys(state.shadcnVars).length}`);
-  debugLog(`After design system — darkTokens present: ${!!state.darkTokens}`);
+  log(`[COLOR_PIPELINE] <<< Stage 2-4: Design System complete`);
+  log(`[COLOR_PIPELINE] After design system — primary: ${state.designTokens.primary}, bg: ${state.designTokens.background}, accent: ${state.designTokens.accent}`);
+  log(`[COLOR_PIPELINE] After design system — shadcnVars: ${Object.keys(state.shadcnVars).length}, darkTokens: ${!!state.darkTokens}`);
 
   // Stage 5-6: Feature Generation + CSS verify + pre-QG fixes + deps
-  debugLog(`>>> Stage 5-6: Feature Generation`);
+  log(`[COLOR_PIPELINE] >>> Stage 5-6: Feature Generation`);
   await runFeatureGenerationStage(stageCtx, state);
-  debugLog(`<<< Stage 5-6: Feature Generation complete`);
-  debugLog(`After features — featureCodeApplied: ${state.featureCodeApplied}`);
+  log(`[COLOR_PIPELINE] <<< Stage 5-6: Feature Generation complete (featureCodeApplied=${state.featureCodeApplied})`);
 
   // Stage 7: Quality Gates (non-blocking diagnostics)
-  debugLog(`>>> Stage 7: Quality Gates`);
+  log(`[COLOR_PIPELINE] >>> Stage 7: Quality Gates`);
   await runQualityGateStage(stageCtx, state);
-  debugLog(`<<< Stage 7: Quality Gates complete`);
+  log(`[COLOR_PIPELINE] <<< Stage 7: Quality Gates complete`);
 
   // Stage 8-9: Verification + Summary
-  debugLog(`>>> Stage 8-9: Summary`);
+  log(`[COLOR_PIPELINE] >>> Stage 8-9: Summary`);
   const { verificationOutcome, verificationSteps } = await runSummaryStage(stageCtx, state);
-  debugLog(`<<< Stage 8-9: Summary complete`);
-  debugLog(`========== PIPELINE RUNNER END ==========`);
+  log(`[COLOR_PIPELINE] <<< Stage 8-9: Summary complete`);
+  log(`[COLOR_PIPELINE] ========== PIPELINE RUNNER END ==========`);
 
-  console.log(`${logPrefix} ✅ Enhanced post-scaffold pipeline complete`);
+  debugLog(`${logPrefix} ✅ Enhanced post-scaffold pipeline complete`);
 
   return {
     success: true,

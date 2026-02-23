@@ -12,6 +12,7 @@ import type {
   LLMClientResponse,
   ConversationMessage,
   ToolSchema,
+  ToolChoice,
 } from 'core';
 import { getMaxOutputTokens, getContextWindow } from 'core';
 
@@ -34,6 +35,7 @@ export class AnthropicLLMClient implements LLMClient {
     system?: string;
     messages: ConversationMessage[];
     tools?: ToolSchema[];
+    tool_choice?: ToolChoice;
   }): Promise<LLMClientResponse> {
     const Anthropic = await this.loadSDK();
     const client = new Anthropic({ apiKey: this.apiKey });
@@ -51,6 +53,10 @@ export class AnthropicLLMClient implements LLMClient {
 
     if (params.tools && params.tools.length > 0) {
       request.tools = params.tools;
+    }
+
+    if (params.tool_choice) {
+      request.tool_choice = params.tool_choice;
     }
 
     let response: any;
@@ -106,6 +112,7 @@ export class AnthropicLLMClient implements LLMClient {
     system?: string;
     messages: import('core').ConversationMessage[];
     tools?: import('core').ToolSchema[];
+    tool_choice?: ToolChoice;
     onDelta: (delta: string) => void;
   }): Promise<LLMClientResponse> {
     const Anthropic = await this.loadSDK();
@@ -122,6 +129,9 @@ export class AnthropicLLMClient implements LLMClient {
     }
     if (params.tools && params.tools.length > 0) {
       request.tools = params.tools;
+    }
+    if (params.tool_choice) {
+      request.tool_choice = params.tool_choice;
     }
 
     let stream: any;

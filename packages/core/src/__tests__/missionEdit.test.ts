@@ -1,12 +1,11 @@
 /**
  * MISSION EDIT Implementation Tests
  * 
- * Tests for the spec-compliant unified diff flow:
+ * Tests for:
  * - Unified diff parsing and validation
  * - SHA computation and staleness detection
- * - Excerpt selection strategy
  * - Atomic apply with rollback
- * - Evidence persistence
+ * - ID generation
  */
 
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
@@ -14,7 +13,6 @@ import * as fs from 'fs/promises';
 import * as path from 'path';
 import * as os from 'os';
 
-// Import modules to test
 import {
   parseUnifiedDiff,
   validateDiff,
@@ -31,19 +29,10 @@ import {
 } from '../shaUtils';
 
 import {
-  selectEditContext,
-  buildBaseShaMap,
-} from '../excerptSelector';
-
-import {
   AtomicDiffApplier,
   createDiffId,
   createCheckpointId,
 } from '../atomicDiffApply';
-
-import {
-  EditEvidenceManager,
-} from '../editEvidenceManager';
 
 // ============================================================
 // TEST 1: UNIFIED DIFF PARSER
@@ -301,81 +290,7 @@ describe('ShaUtils', () => {
 });
 
 // ============================================================
-// TEST 3: EXCERPT SELECTOR
-// ============================================================
-describe('ExcerptSelector', () => {
-  describe('selectEditContext', () => {
-    it('should select files from retrieval results', async () => {
-      const readFile = async (p: string) => {
-        if (p === 'src/a.ts') return 'const a = 1;\n'.repeat(50);
-        if (p === 'src/b.ts') return 'const b = 2;\n'.repeat(50);
-        throw new Error('Not found');
-      };
-
-      const result = await selectEditContext(
-        {
-          retrievalResults: [
-            { path: 'src/a.ts', score: 0.9 },
-            { path: 'src/b.ts', score: 0.8 },
-          ],
-        },
-        'modify const a',
-        readFile,
-        { maxFiles: 6, maxTotalLines: 400 }
-      );
-
-      expect(result.file_context.length).toBe(2);
-      expect(result.selection_method).toBe('retrieval');
-    });
-
-    it('should include base_sha for each file', async () => {
-      const content = 'export const x = 1;\n';
-      const readFile = async () => content;
-
-      const result = await selectEditContext(
-        { fallbackFiles: ['test.ts'] },
-        'update export',
-        readFile,
-        { maxFiles: 1, maxTotalLines: 100 }
-      );
-
-      expect(result.file_context.length).toBe(1);
-      expect(result.file_context[0].base_sha.length).toBe(12);
-    });
-
-    it('should respect line budget', async () => {
-      // Create file with 500 lines
-      const bigContent = 'line\n'.repeat(500);
-      const readFile = async () => bigContent;
-
-      const result = await selectEditContext(
-        { fallbackFiles: ['big.ts'] },
-        'test',
-        readFile,
-        { maxFiles: 6, maxTotalLines: 100 }
-      );
-
-      expect(result.total_lines).toBeLessThanOrEqual(100);
-    });
-  });
-
-  describe('buildBaseShaMap', () => {
-    it('should build map from file context', () => {
-      const fileContext = [
-        { path: 'a.ts', content: '', base_sha: 'abc123456789', line_start: 1, line_end: 10, is_full_file: true },
-        { path: 'b.ts', content: '', base_sha: 'def789012345', line_start: 1, line_end: 20, is_full_file: true },
-      ];
-
-      const map = buildBaseShaMap(fileContext);
-      
-      expect(map.get('a.ts')).toBe('abc123456789');
-      expect(map.get('b.ts')).toBe('def789012345');
-    });
-  });
-});
-
-// ============================================================
-// TEST 4: ATOMIC DIFF APPLIER
+// TEST 3: ATOMIC DIFF APPLIER
 // ============================================================
 describe('AtomicDiffApplier', () => {
   let tempDir: string;
@@ -502,110 +417,7 @@ describe('AtomicDiffApplier', () => {
 });
 
 // ============================================================
-// TEST 5: EVIDENCE MANAGER
-// ============================================================
-describe('EditEvidenceManager', () => {
-  let tempDir: string;
-  let manager: EditEvidenceManager;
-
-  beforeEach(async () => {
-    tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'ordinex-evidence-'));
-    manager = new EditEvidenceManager(tempDir);
-  });
-
-  afterEach(async () => {
-    await fs.rm(tempDir, { recursive: true, force: true });
-  });
-
-  describe('persistProposedDiff', () => {
-    it('should create .diff and .manifest.json files', async () => {
-      const diffId = createDiffId('task1', 'step1');
-      
-      const { diffPath, manifestPath } = await manager.persistProposedDiff({
-        diff_id: diffId,
-        task_id: 'task1',
-        step_id: 'step1',
-        unified_diff: '--- a/test.ts\n+++ b/test.ts\n@@ -1 +1 @@\n-old\n+new',
-        parsed_diff: {
-          files: [{
-            oldPath: 'test.ts',
-            newPath: 'test.ts',
-            additions: 1,
-            deletions: 1,
-            hunks: [],
-            isCreate: false,
-            isDelete: false,
-            isRename: false,
-            hasModeChange: false,
-          }],
-          totalAdditions: 1,
-          totalDeletions: 1,
-          totalChangedLines: 2,
-        },
-        source_context: [{
-          path: 'test.ts',
-          base_sha: 'abc123def456',
-          lines_included: 10,
-          is_full_file: true,
-          ranges: [[1, 10]],
-        }],
-        total_lines_sent: 10,
-        llm_output: {
-          unified_diff: '...',
-          touched_files: [],
-          confidence: 'high',
-          notes: 'Test change',
-          validation_status: 'ok',
-        },
-      });
-
-      // Verify files exist
-      const diffExists = await fs.access(diffPath).then(() => true).catch(() => false);
-      const manifestExists = await fs.access(manifestPath).then(() => true).catch(() => false);
-      
-      expect(diffExists).toBe(true);
-      expect(manifestExists).toBe(true);
-    });
-  });
-
-  describe('readManifest', () => {
-    it('should read persisted manifest', async () => {
-      const diffId = createDiffId('task1', 'step1');
-      
-      await manager.persistProposedDiff({
-        diff_id: diffId,
-        task_id: 'task1',
-        step_id: 'step1',
-        unified_diff: 'test diff',
-        parsed_diff: {
-          files: [],
-          totalAdditions: 5,
-          totalDeletions: 3,
-          totalChangedLines: 8,
-        },
-        source_context: [],
-        total_lines_sent: 50,
-        llm_output: {
-          unified_diff: 'test diff',
-          touched_files: [],
-          confidence: 'medium',
-          notes: 'Test',
-          validation_status: 'ok',
-        },
-      });
-
-      const manifest = await manager.readManifest(diffId);
-      
-      expect(manifest).not.toBeNull();
-      expect(manifest?.diff_id).toBe(diffId);
-      expect(manifest?.stats.additions).toBe(5);
-      expect(manifest?.stats.deletions).toBe(3);
-    });
-  });
-});
-
-// ============================================================
-// TEST 6: ID GENERATION
+// TEST 4: ID GENERATION
 // ============================================================
 describe('ID Generation', () => {
   describe('createDiffId', () => {

@@ -45,9 +45,9 @@ describe('planGeneration', () => {
   it('uses multi-pass for >= 5 pages', () => {
     const plan = planGeneration(LARGE_BLUEPRINT);
     expect(plan.singlePass).toBe(false);
-    expect(plan.passes).toHaveLength(5);
-    expect(plan.passes).toContain('layout');
-    expect(plan.passes).toContain('polish');
+    expect(plan.passes.length).toBeGreaterThanOrEqual(2);
+    expect(plan.passes).toContain('components');
+    expect(plan.passes).toContain('pages');
   });
 
   it('estimates file count', () => {

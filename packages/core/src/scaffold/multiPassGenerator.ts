@@ -551,12 +551,12 @@ export async function executeMultiPassGeneration(
   writeDir: string,
   llmClient: FeatureLLMClient,
   designPack: DesignPack | null,
+  modelId: string,
   designTokens?: DesignTokens,
   onProgress?: PassProgressCallback,
   manifestDir?: string,
   hasSrcDir?: boolean,
   tailwindVersion?: 3 | 4,
-  modelId: string,
 ): Promise<MultiPassExecutionResult> {
   const systemPrompt = buildMultiPassSystemPrompt(blueprint, designPack, designTokens, hasSrcDir, tailwindVersion);
   const passResults: PassResult[] = [];

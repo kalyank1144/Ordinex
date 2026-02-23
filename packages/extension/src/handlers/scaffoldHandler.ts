@@ -45,6 +45,14 @@ import {
 import { handleSubmitPrompt } from './submitPromptHandler';
 import { AnthropicLLMClient } from '../anthropicLLMClient';
 
+let _pipelineOutputChannel: vscode.OutputChannel | null = null;
+function getPipelineOutputChannel(): vscode.OutputChannel {
+  if (!_pipelineOutputChannel) {
+    _pipelineOutputChannel = vscode.window.createOutputChannel('Ordinex: Pipeline');
+  }
+  return _pipelineOutputChannel;
+}
+
 // ---------------------------------------------------------------------------
 // handleScaffoldFlow
 // ---------------------------------------------------------------------------
@@ -545,6 +553,17 @@ export async function handlePreflightProceed(
         console.log(`${LOG_PREFIX} [BLUEPRINT_WIRING] blueprint result: ${blueprint ? `app_type=${blueprint.app_type}, pages=${blueprint.pages?.length}` : 'undefined'}`);
         console.log(`${LOG_PREFIX} [BLUEPRINT_WIRING] userStyleInput: ${userStyleInput ? `mode=${userStyleInput.mode}, value=${userStyleInput.value}` : 'undefined'}`);
 
+        const pipelineChannel = getPipelineOutputChannel();
+        pipelineChannel.show(true);
+        pipelineChannel.appendLine(`[${new Date().toISOString()}] ========== SCAFFOLD PIPELINE STARTED ==========`);
+        pipelineChannel.appendLine(`Prompt: ${scaffoldPrompt}`);
+        pipelineChannel.appendLine(`Recipe: ${recipeSelection.recipe_id}, App: ${appName}`);
+        pipelineChannel.appendLine(`Design Pack: ${designPackIdForPost}`);
+        pipelineChannel.appendLine(`Model: ${resolvedModelId}`);
+        pipelineChannel.appendLine(`Style Input: ${userStyleInput ? `mode=${userStyleInput.mode}, value=${userStyleInput.value}` : '(none)'}`);
+        pipelineChannel.appendLine(`Blueprint: ${blueprint ? `app_type=${blueprint.app_type}, pages=${blueprint.pages?.length}` : '(none)'}`);
+        pipelineChannel.appendLine(`---`);
+
         const postScaffoldCtx = {
           taskId: taskId,
           scaffoldId: scaffoldId,
@@ -560,6 +579,9 @@ export async function handlePreflightProceed(
           styleInput: userStyleInput,
           modelId: resolvedModelId,
           useEnhancedPipeline: true,
+          logger: (msg: string) => {
+            pipelineChannel.appendLine(`[${new Date().toISOString().slice(11, 19)}] ${msg}`);
+          },
         };
 
         console.log(`${LOG_PREFIX} Starting post-scaffold orchestration with userPrompt: "${scaffoldPrompt}"`);

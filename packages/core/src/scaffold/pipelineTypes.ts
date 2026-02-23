@@ -43,6 +43,8 @@ export interface PostScaffoldContext {
   modelId: string;
   /** @deprecated Enhanced pipeline is now the only path. */
   useEnhancedPipeline?: boolean;
+  /** Optional logger callback — when provided, pipeline stages write structured logs to this function (e.g. VS Code Output Channel). */
+  logger?: (msg: string) => void;
 }
 
 // ============================================================================

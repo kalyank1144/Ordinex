@@ -35,6 +35,9 @@ export type {
   WorkspaceState,
 } from './intent/intentRouter';
 
+export { classifyIntentWithLLM } from './intent/intentClassifier';
+export type { ClassificationResult as IntentClassificationResult } from './intent/intentClassifier';
+
 // Export event-sourcing components
 export { EventStore } from './eventStore';
 export { EventBus, EventSubscriber, PrimitiveEventInput, createPrimitiveInput } from './eventBus';
@@ -291,7 +294,7 @@ export {
   buildToolsParam,
 } from './toolSchemas';
 
-export type { ToolSchema } from './toolSchemas';
+export type { ToolSchema, ToolChoice } from './toolSchemas';
 
 // Export LLM service
 export {
@@ -450,39 +453,12 @@ export {
 } from './shaUtils';
 
 export {
-  selectEditContext,
-  buildBaseShaMap,
-  FileContextEntry,
-  FileSelectionEvidence,
-  EditContextSelectionResult,
-  FileSelectionSource,
-  ExcerptSelectionConfig
-} from './excerptSelector';
-
-export {
   AtomicDiffApplier,
   createDiffId,
   createCheckpointId,
   AtomicApplyResult,
   CheckpointInfo
 } from './atomicDiffApply';
-
-export {
-  LLMEditTool,
-  DEFAULT_EDIT_CONSTRAINTS,
-  DEFAULT_PRECONDITIONS,
-  LLMEditStepInput,
-  LLMEditStepOutput,
-  LLMEditStepResult
-} from './llmEditTool';
-
-export {
-  EditEvidenceManager,
-  buildDiffProposedPayload,
-  buildDiffAppliedPayload,
-  DiffManifest,
-  ApplyEvidence
-} from './editEvidenceManager';
 
 // Export Create Path Fence (SAFE file creation validation)
 export {
@@ -541,30 +517,6 @@ export type {
   JsonRepairResult,
 } from './jsonRepair';
 
-// Export Edit Attempt Ledger (Truncation-Safe Execution)
-export {
-  EditAttemptLedger,
-} from './editAttemptLedger';
-
-export type {
-  FileEditStatus,
-  FileEditAttempt,
-  EditAttemptLedgerState,
-} from './editAttemptLedger';
-
-// Export Truncation-Safe Executor (Production-Hardened Edit Execution)
-export {
-  TruncationSafeExecutor,
-  createTruncationSafeExecutor,
-} from './truncationSafeExecutor';
-
-export type {
-  TruncationDetectionResult,
-  SingleFileEditOutput,
-  PreflightResult,
-  TruncationSafeResult,
-  TruncationSafeConfig,
-} from './truncationSafeExecutor';
 
 // Export Event Normalizer (Enterprise-Grade Event Contract Stabilization)
 export {
@@ -1214,6 +1166,7 @@ export {
   tokensFromHex,
   listVibePresets,
   getAppTypeDefaultStyle,
+  extractStyleFromPrompt,
 } from './scaffold/styleIntentResolver';
 
 export type {

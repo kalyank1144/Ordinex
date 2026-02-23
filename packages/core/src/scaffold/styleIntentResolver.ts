@@ -381,12 +381,15 @@ RULES:
 - For light themes: pick colors that look good on white backgrounds`;
 }
 
-function buildSeedUserMessage(input: StyleInput, appType?: string): string {
+function buildSeedUserMessage(input: StyleInput, appType?: string, userPrompt?: string): string {
   const appLabel = appType ? ` for a ${appType.replace(/_/g, ' ')} application` : '';
+  const promptContext = userPrompt
+    ? `\n\nUser's full request: "${userPrompt.slice(0, 300)}"\nUse this context to inform your color choices. If the user mentions specific colors or vibes, prioritize those.`
+    : '';
 
   switch (input.mode) {
     case 'nl':
-      return `Pick 3 seed colors${appLabel} with this style: "${input.value}"`;
+      return `Pick 3 seed colors${appLabel} with this style: "${input.value}"${promptContext}`;
     case 'vibe': {
       const vibeDescriptions: Record<string, string> = {
         minimal: 'clean, monochrome, content-first with neutral tones',
@@ -398,10 +401,10 @@ function buildSeedUserMessage(input: StyleInput, appType?: string): string {
         dark_modern: 'sleek dark theme like Linear/Vercel with zinc tones',
       };
       const desc = vibeDescriptions[input.value] || input.value;
-      return `Pick 3 seed colors${appLabel} with a ${desc} style. Be creative and unique.`;
+      return `Pick 3 seed colors${appLabel} with a ${desc} style. Be creative and unique.${promptContext}`;
     }
     default:
-      return `Pick 3 seed colors${appLabel} with a modern, clean style.`;
+      return `Pick 3 seed colors${appLabel} with a modern, clean style.${promptContext}`;
   }
 }
 
@@ -477,21 +480,22 @@ function semanticTokensToDesignTokens(st: SemanticTokens): DesignTokens {
 export async function resolveStyleIntentWithLLM(
   input: StyleInput,
   llmClient: FeatureLLMClient,
-  appType?: string,
   modelId: string,
+  appType?: string,
+  userPrompt?: string,
 ): Promise<StyleResolutionResult> {
   if (input.mode === 'hex') {
     return resolveStyleIntent(input);
   }
 
   try {
-    console.log(`${STYLE_LOG} LLM seed-color resolution: mode=${input.mode}, value="${input.value}", appType=${appType || 'none'}`);
+    console.log(`${STYLE_LOG} LLM seed-color resolution: mode=${input.mode}, value="${input.value}", appType=${appType || 'none'}, hasUserPrompt=${!!userPrompt}`);
 
     const response = await llmClient.createMessage({
       model: modelId,
       max_tokens: 256,
       system: buildSeedSystemPrompt(appType),
-      messages: [{ role: 'user', content: buildSeedUserMessage(input, appType) }],
+      messages: [{ role: 'user', content: buildSeedUserMessage(input, appType, userPrompt) }],
     });
 
     const textContent = response.content.find((c: any) => c.type === 'text' && 'text' in c);
@@ -526,6 +530,161 @@ export async function resolveStyleIntentWithLLM(
     console.warn(`${STYLE_LOG} LLM/OKLCH style resolution failed, falling back to sync:`, err);
     return resolveStyleIntent(input);
   }
+}
+
+// ============================================================================
+// PROMPT-TO-STYLE EXTRACTION
+// ============================================================================
+
+interface ExtractedColor {
+  hex: string;
+  role: string;
+  label: string;
+}
+
+const ROLE_PATTERNS: [RegExp, string][] = [
+  [/\bbackground\b/i, 'background'],
+  [/\bsurface\s*cards?\b/i, 'card'],
+  [/\bcard\b/i, 'card'],
+  [/\bprimary\s*(?:accent|color)?\b/i, 'primary'],
+  [/\bsecondary\s*(?:accent|color)?\b/i, 'secondary'],
+  [/\baccent\b/i, 'accent'],
+  [/\btext\b(?!\s*#)/i, 'foreground'],
+  [/\bforeground\b/i, 'foreground'],
+  [/\bmuted\s*text\b/i, 'muted_foreground'],
+  [/\bmuted\b/i, 'muted'],
+  [/\bborders?\b/i, 'border'],
+  [/\bdestructive\b/i, 'destructive'],
+  [/\berror\b/i, 'destructive'],
+  [/\bdanger\b/i, 'destructive'],
+  [/\bsuccess\b/i, 'success'],
+  [/\bring\b/i, 'ring'],
+  [/\binput\b/i, 'input'],
+  [/\bpopover\b/i, 'popover'],
+];
+
+function extractColorEntries(prompt: string): ExtractedColor[] {
+  const results: ExtractedColor[] = [];
+  const hexRegex = /#([0-9a-fA-F]{3,8})\b/g;
+  let match: RegExpExecArray | null;
+
+  while ((match = hexRegex.exec(prompt)) !== null) {
+    let hex = match[0];
+    const raw = match[1];
+    if (raw.length === 3) hex = '#' + raw.split('').map(c => c + c).join('');
+    else if (raw.length === 6) hex = '#' + raw;
+    else continue;
+
+    const contextStart = Math.max(0, match.index - 40);
+    const label = prompt.substring(contextStart, match.index).trim();
+
+    let role = 'unknown';
+    for (const [pattern, tokenRole] of ROLE_PATTERNS) {
+      if (pattern.test(label)) {
+        role = tokenRole;
+        break;
+      }
+    }
+
+    results.push({ hex: hex.toLowerCase(), role, label });
+  }
+
+  return results;
+}
+
+/**
+ * Extract color specifications from the user's prompt text and build DesignTokens.
+ *
+ * Handles prompts like:
+ *   "Use this color system: Background #0D1117, primary accent #58A6FF, ..."
+ *
+ * Returns null if no meaningful color specifications are found.
+ */
+export function extractStyleFromPrompt(prompt: string): StyleResolutionResult | null {
+  const entries = extractColorEntries(prompt);
+  if (entries.length === 0) return null;
+
+  const mapped = entries.filter(e => e.role !== 'unknown');
+  const hexes = entries.map(e => e.hex);
+
+  console.log(`${STYLE_LOG} [PROMPT_EXTRACT] Found ${entries.length} hex colors, ${mapped.length} with semantic roles`);
+  for (const e of entries) {
+    console.log(`${STYLE_LOG} [PROMPT_EXTRACT]   ${e.role}: ${e.hex} (context: "${e.label}")`);
+  }
+
+  if (mapped.length >= 2) {
+    const tokenMap: Record<string, string> = {};
+    for (const e of mapped) {
+      tokenMap[e.role] = e.hex;
+    }
+
+    const bgHex = tokenMap['background'] || hexes[0];
+    const fgHex = tokenMap['foreground'] || tokenMap['text'];
+    const primaryHex = tokenMap['primary'] || hexes.find(h => h !== bgHex) || hexes[0];
+
+    const isDark = (() => {
+      const clean = bgHex.replace('#', '');
+      const r = parseInt(clean.substring(0, 2), 16);
+      const g = parseInt(clean.substring(2, 4), 16);
+      const b = parseInt(clean.substring(4, 6), 16);
+      return (r * 0.299 + g * 0.587 + b * 0.114) < 128;
+    })();
+
+    const defaultFg = isDark ? '#f0f6fc' : '#0a0a0a';
+    const defaultMutedFg = isDark ? '#8b949e' : '#656d76';
+    const defaultMuted = isDark ? '#21262d' : '#f6f8fa';
+    const defaultBorder = isDark ? '#30363d' : '#d0d7de';
+    const defaultCard = isDark ? '#161b22' : '#ffffff';
+
+    const tokens: DesignTokens = {
+      background: tokenMap['background'] || bgHex,
+      foreground: fgHex || defaultFg,
+      primary: primaryHex,
+      primary_foreground: isDark ? '#ffffff' : '#ffffff',
+      secondary: tokenMap['secondary'] || tokenMap['accent'] || primaryHex,
+      secondary_foreground: isDark ? '#ffffff' : '#ffffff',
+      muted: tokenMap['muted'] || defaultMuted,
+      muted_foreground: tokenMap['muted_foreground'] || defaultMutedFg,
+      destructive: tokenMap['destructive'] || '#f85149',
+      destructive_foreground: '#ffffff',
+      accent: tokenMap['accent'] || tokenMap['secondary'] || primaryHex,
+      accent_foreground: fgHex || defaultFg,
+      card: tokenMap['card'] || defaultCard,
+      card_foreground: fgHex || defaultFg,
+      popover: tokenMap['popover'] || tokenMap['card'] || defaultCard,
+      popover_foreground: fgHex || defaultFg,
+      border: tokenMap['border'] || defaultBorder,
+      input: tokenMap['input'] || tokenMap['border'] || defaultBorder,
+      ring: tokenMap['ring'] || primaryHex,
+    };
+
+    const { corrected, corrections } = validateAndCorrectTokens(tokens);
+    const shadcnVars = tokensToShadcnVars(corrected);
+
+    console.log(`${STYLE_LOG} [PROMPT_EXTRACT] Built tokens from ${mapped.length} mapped colors: primary=${corrected.primary}, bg=${corrected.background}, accent=${corrected.accent}`);
+
+    return {
+      input: { mode: 'hex', value: primaryHex },
+      tokens: corrected,
+      shadcnVars,
+      corrections,
+    };
+  }
+
+  if (hexes.length >= 1) {
+    console.log(`${STYLE_LOG} [PROMPT_EXTRACT] Found ${hexes.length} hex color(s) without clear roles, using tokensFromHex with first color: ${hexes[0]}`);
+    const rawTokens = tokensFromHex(hexes[0]);
+    const { corrected, corrections } = validateAndCorrectTokens(rawTokens);
+    const shadcnVars = tokensToShadcnVars(corrected);
+    return {
+      input: { mode: 'hex', value: hexes[0] },
+      tokens: corrected,
+      shadcnVars,
+      corrections,
+    };
+  }
+
+  return null;
 }
 
 // ============================================================================
