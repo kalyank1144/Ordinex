@@ -27,7 +27,7 @@ import { debugLog, debugWarn } from '../debugLog';
 const execAsync = promisify(exec);
 
 function pipelineLog(ctx: { logger?: (msg: string) => void }, msg: string): void {
-  console.log(msg);
+  debugLog(msg);
   ctx.logger?.(msg);
 }
 

@@ -79,10 +79,10 @@ export async function routeIntent(
     };
   }
 
-  // 2. Filesystem quick-reject — existing project with many files
+  // 2. Filesystem quick-reject — package.json means an existing project
   const ws = context.workspace;
-  if (ws && ws.hasPackageJson && ws.fileCount > 10) {
-    console.log(`${LOG} Quick-reject → AGENT (hasPackageJson=${ws.hasPackageJson}, fileCount=${ws.fileCount})`);
+  if (ws && ws.hasPackageJson) {
+    console.log(`${LOG} Quick-reject → AGENT (hasPackageJson=true, fileCount=${ws.fileCount})`);
     return {
       intent: 'AGENT',
       source: 'passthrough',

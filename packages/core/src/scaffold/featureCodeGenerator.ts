@@ -322,15 +322,15 @@ function buildGenerationSystemPrompt(recipeId: RecipeId, designPack: DesignPack 
   const recipeConstraints = getRecipeConstraints(recipeId, hasSrcDir);
 
   const tokenSource = designPack ? 'designPack' : tokens ? 'designTokens' : 'fallback (no tokens!)';
-  console.log(`[COLOR_PIPELINE] buildGenerationSystemPrompt — token source: ${tokenSource}`);
+  debugLog(`[COLOR_PIPELINE] buildGenerationSystemPrompt — token source: ${tokenSource}`);
   if (tokens) {
-    console.log(`[COLOR_PIPELINE]   tokens.primary: ${tokens.primary}, tokens.background: ${tokens.background}, tokens.accent: ${tokens.accent}`);
+    debugLog(`[COLOR_PIPELINE]   tokens.primary: ${tokens.primary}, tokens.background: ${tokens.background}, tokens.accent: ${tokens.accent}`);
   }
   if (designPack) {
-    console.log(`[COLOR_PIPELINE]   designPack: ${designPack.id} (${designPack.name})`);
+    debugLog(`[COLOR_PIPELINE]   designPack: ${designPack.id} (${designPack.name})`);
   }
   if (!designPack && !tokens) {
-    console.log(`[COLOR_PIPELINE]   ⚠️ WARNING: No tokens passed — LLM will use generic semantic class fallback`);
+    debugWarn(`[COLOR_PIPELINE]   ⚠️ WARNING: No tokens passed — LLM will use generic semantic class fallback`);
   }
 
   const designTokensStr = designPack

@@ -50,7 +50,7 @@ export async function runEnhancedPipeline(
 
   const stageCtx = { ctx, projectPath, logPrefix };
 
-  const log = (msg: string) => { console.log(msg); ctx.logger?.(msg); };
+  const log = (msg: string) => { debugLog(msg); ctx.logger?.(msg); };
 
   log(`[COLOR_PIPELINE] ========== PIPELINE RUNNER START ==========`);
   log(`[COLOR_PIPELINE] projectPath: ${projectPath}`);
@@ -60,7 +60,6 @@ export async function runEnhancedPipeline(
   log(`[COLOR_PIPELINE] userPrompt: "${ctx.userPrompt?.slice(0, 100) || '(none)'}"`);
   log(`[COLOR_PIPELINE] styleInput: ${ctx.styleInput ? `mode=${ctx.styleInput.mode}, value="${ctx.styleInput.value}"` : '(none)'}`);
   log(`[COLOR_PIPELINE] blueprint: ${ctx.blueprint ? `app_type=${ctx.blueprint.app_type}, pages=${ctx.blueprint.pages.length}` : 'null'}`);
-  debugLog(`========== PIPELINE RUNNER START ==========`);
 
   // Stage 1: Git Init + Project Context
   log(`[COLOR_PIPELINE] >>> Stage 1: Init`);
@@ -71,7 +70,7 @@ export async function runEnhancedPipeline(
   if (ctx.blueprint) {
     const corrected = correctAppTypeForRecipe(ctx.blueprint, ctx.recipeId);
     if (corrected.app_type !== ctx.blueprint.app_type) {
-      console.log(`${logPrefix} [BLUEPRINT] Corrected app_type: "${ctx.blueprint.app_type}" → "${corrected.app_type}" (recipe=${ctx.recipeId})`);
+      debugLog(`${logPrefix} [BLUEPRINT] Corrected app_type: "${ctx.blueprint.app_type}" → "${corrected.app_type}" (recipe=${ctx.recipeId})`);
       ctx.blueprint = corrected;
     }
   }
@@ -99,7 +98,7 @@ export async function runEnhancedPipeline(
   log(`[COLOR_PIPELINE] <<< Stage 8-9: Summary complete`);
   log(`[COLOR_PIPELINE] ========== PIPELINE RUNNER END ==========`);
 
-  console.log(`${logPrefix} ✅ Enhanced post-scaffold pipeline complete`);
+  debugLog(`${logPrefix} ✅ Enhanced post-scaffold pipeline complete`);
 
   return {
     success: true,

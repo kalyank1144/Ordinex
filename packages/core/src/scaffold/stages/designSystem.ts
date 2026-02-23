@@ -51,7 +51,7 @@ function semanticToDesign(st: SemanticTokens): DesignTokens {
 const RADIUS_MAP: Record<string, string> = { sm: '0.25rem', md: '0.5rem', lg: '1rem' };
 
 function pipelineLog(ctx: { logger?: (msg: string) => void }, msg: string): void {
-  console.log(msg);
+  debugLog(msg);
   ctx.logger?.(msg);
 }
 
