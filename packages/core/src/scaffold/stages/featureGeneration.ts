@@ -22,11 +22,11 @@ import { initStagingWorkspace, stageFile, publishStaged, cleanupStaging } from '
 import { commitStage } from '../gitCommitter';
 import { runDeterministicAutofix } from '../deterministicAutofix';
 import { detectPackageManager as detectPM } from '../postVerify';
+import { debugLog, debugWarn } from '../debugLog';
 
 const execAsync = promisify(exec);
 
-const FEATURE_EXTRACTION_TIMEOUT_MS = 60_000;
-const FEATURE_GENERATION_TIMEOUT_MS = 180_000;
+const FEATURE_EXTRACTION_TIMEOUT_MS = 120_000; // 2 min — lightweight extraction call (small response)
 
 function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
   return new Promise<T>((resolve, reject) => {
@@ -96,17 +96,54 @@ export async function runFeatureGenerationStage(
   }
 
   // Feature generation
+  debugLog(`========== FEATURE GENERATION STAGE START ==========`);
+  debugLog(`ctx.userPrompt: "${ctx.userPrompt}"`);
+  debugLog(`ctx.llmClient present: ${!!ctx.llmClient}`);
+  debugLog(`ctx.blueprint: ${ctx.blueprint ? `${ctx.blueprint.pages.length} pages` : 'null'}`);
+  debugLog(`ctx.recipeId: ${ctx.recipeId}`);
+  debugLog(`ctx.scaffoldId: ${ctx.scaffoldId}`);
+  debugLog(`ctx.designPackId: ${ctx.designPackId}`);
+  debugLog(`ctx.modelId: ${ctx.modelId}`);
+  debugLog(`state.hasSrcDir: ${state.hasSrcDir}`);
+  debugLog(`state.featureCodeApplied: ${state.featureCodeApplied}`);
+  debugLog(`state.designTokens.primary: ${state.designTokens.primary}`);
+  debugLog(`state.designTokens.background: ${state.designTokens.background}`);
+  debugLog(`state.designTokens.accent: ${state.designTokens.accent}`);
+
+  // Check CSS state BEFORE feature generation
+  try {
+    const cssPrePaths = [
+      path.join(projectPath, 'src', 'app', 'globals.css'),
+      path.join(projectPath, 'app', 'globals.css'),
+    ];
+    for (const cp of cssPrePaths) {
+      if (fs.existsSync(cp)) {
+        const preCss = fs.readFileSync(cp, 'utf-8');
+        debugLog(`[PRE-FEATURE] globals.css at ${cp}: ${preCss.length} chars`);
+        debugLog(`[PRE-FEATURE]   has oklch: ${preCss.includes('oklch(')}`);
+        debugLog(`[PRE-FEATURE]   has --primary: ${preCss.includes('--primary')}`);
+        debugLog(`[PRE-FEATURE]   has :root: ${preCss.includes(':root')}`);
+        break;
+      }
+    }
+  } catch { /* non-fatal */ }
+
+  const hasFeatureIntent = ctx.userPrompt ? hasSpecificFeature(ctx.userPrompt) : false;
+  const blueprintPages = ctx.blueprint?.pages?.length || 0;
+  debugLog(`hasSpecificFeature("${ctx.userPrompt}"): ${hasFeatureIntent}`);
+  debugLog(`blueprint pages: ${blueprintPages}`);
+
   const shouldGenerateFeatures = ctx.userPrompt
     && ctx.llmClient
-    && (hasSpecificFeature(ctx.userPrompt) || (ctx.blueprint && ctx.blueprint.pages.length > 0));
+    && (hasFeatureIntent || blueprintPages > 0);
+
+  debugLog(`shouldGenerateFeatures: ${!!shouldGenerateFeatures}`);
 
   if (!shouldGenerateFeatures) {
-    const hasFeatureIntent = ctx.userPrompt ? hasSpecificFeature(ctx.userPrompt) : false;
-    const blueprintPages = ctx.blueprint?.pages?.length || 0;
     const skipReason = !ctx.userPrompt ? 'No user prompt' :
       !ctx.llmClient ? 'No LLM client (API key missing or SDK failed)' :
       `Prompt feature check=${hasFeatureIntent}, blueprint pages=${blueprintPages} (both false)`;
-    console.warn(`${logPrefix} Feature generation SKIPPED: ${skipReason}`);
+    debugWarn(`❌ Feature generation SKIPPED: ${skipReason}`);
     await emitScaffoldProgress(ctx, 'generating_features' as any, {
       message: `Feature generation skipped: ${skipReason}`,
       stage: 'features',
@@ -128,14 +165,26 @@ export async function runFeatureGenerationStage(
   console.log(`${logPrefix} Staging workspace initialized at ${staging.stagingPath}`);
 
   try {
+    debugLog(`Calling extractFeatureRequirements (timeout: ${FEATURE_EXTRACTION_TIMEOUT_MS}ms, model: ${ctx.modelId || 'not set'})...`);
     const requirements = await withTimeout(
-      extractFeatureRequirements(ctx.userPrompt!, ctx.recipeId, ctx.llmClient!),
+      extractFeatureRequirements(ctx.userPrompt!, ctx.recipeId, ctx.llmClient!, ctx.modelId),
       FEATURE_EXTRACTION_TIMEOUT_MS,
       'Feature extraction',
     );
 
-    if (requirements && requirements.app_type !== 'generic') {
-      state.featureRequirements = requirements;
+    debugLog(`extractFeatureRequirements returned: ${requirements ? 'object' : 'null'}`);
+    if (requirements) {
+      debugLog(`  app_type: "${requirements.app_type}"`);
+      debugLog(`  features: ${requirements.features?.length}`);
+      debugLog(`  pages: ${requirements.pages?.length}`);
+    }
+
+    const hasContent = requirements
+      && ((requirements.features?.length || 0) > 0 || (requirements.pages?.length || 0) > 0);
+
+    if (hasContent) {
+      debugLog(`✅ Requirements have content (features or pages) — proceeding to code generation`);
+      state.featureRequirements = requirements!;
 
       await emitFeatureEvent(ctx, 'feature_extraction_completed', {
         scaffold_id: ctx.scaffoldId,
@@ -147,15 +196,30 @@ export async function runFeatureGenerationStage(
       const designPack = getDesignPackById(ctx.designPackId);
       const useMultiPass = ctx.blueprint && ctx.blueprint.pages.length >= 5;
 
+      debugLog(`Generation path: ${useMultiPass ? 'MULTI-PASS' : 'SINGLE-PASS'}`);
+      debugLog(`  blueprint pages: ${ctx.blueprint?.pages?.length || 0} (threshold for multi-pass: 5)`);
+      debugLog(`  designPack: ${designPack ? designPack.id : 'null'}`);
+      debugLog(`  projectContext.existingFiles: ${projectContext.existingFiles?.length || 0}`);
+
       if (useMultiPass && ctx.blueprint) {
+        debugLog(`Starting MULTI-PASS generation...`);
         await runMultiPass(ctx, state, projectPath, logPrefix, staging, designPack, projectContext);
       } else {
+        debugLog(`Starting SINGLE-PASS generation...`);
         await runSinglePass(ctx, state, projectPath, logPrefix, staging, designPack, projectContext, requirements);
       }
+
+      debugLog(`Generation pass complete. state.featureCodeApplied: ${state.featureCodeApplied}`);
+    } else {
+      debugWarn(`⚠️ Skipping code generation: requirements=${requirements ? 'present' : 'null'}, features=${requirements?.features?.length || 0}, pages=${requirements?.pages?.length || 0}`);
+      debugWarn(`No features or pages to generate`);
     }
   } catch (featureErr) {
     const errMsg = featureErr instanceof Error ? featureErr.message : String(featureErr);
-    console.error(`${logPrefix} Feature generation FAILED: ${errMsg}`);
+    debugWarn(`❌ Feature generation stage CATCH block`);
+    debugWarn(`Error type: ${featureErr instanceof Error ? featureErr.constructor.name : typeof featureErr}`);
+    debugWarn(`Error message: ${errMsg}`);
+    debugWarn(`Error stack: ${featureErr instanceof Error ? (featureErr as Error).stack : 'N/A'}`);
     await emitFeatureEvent(ctx, 'feature_code_error', {
       scaffold_id: ctx.scaffoldId,
       error: errMsg,
@@ -180,13 +244,17 @@ export async function runFeatureGenerationStage(
     }
   }
 
+  debugLog(`Final status check: featureCodeApplied=${state.featureCodeApplied}`);
   if (state.featureCodeApplied) {
+    debugLog(`✅ Emitting: Features generated (success)`);
     await emitScaffoldProgress(ctx, 'generating_features' as any, {
       message: 'Features generated',
       stage: 'features',
       status: 'done',
     });
   } else {
+    debugWarn(`❌ Emitting: Partial generation (featureCodeApplied is still false)`);
+    debugWarn(`This means code generation either: returned null, threw an error, or produced 0 files`);
     await emitScaffoldProgress(ctx, 'generating_features' as any, {
       message: 'Feature generation had issues — stub pages created',
       stage: 'features',
@@ -194,9 +262,38 @@ export async function runFeatureGenerationStage(
       detail: 'Partial generation',
     });
   }
+  debugLog(`========== FEATURE GENERATION STAGE END ==========`);
 
   // Post-generation CSS verification
   await verifyCss(ctx, state, projectPath, logPrefix);
+
+  // Final CSS state dump
+  try {
+    const cssCheckPaths = [
+      path.join(projectPath, 'src', 'app', 'globals.css'),
+      path.join(projectPath, 'app', 'globals.css'),
+    ];
+    for (const cp of cssCheckPaths) {
+      if (fs.existsSync(cp)) {
+        const finalCss = fs.readFileSync(cp, 'utf-8');
+        debugLog(`========== FINAL CSS STATE ==========`);
+        debugLog(`globals.css at: ${cp}`);
+        debugLog(`Length: ${finalCss.length} chars`);
+        debugLog(`Has oklch(): ${finalCss.includes('oklch(')}`);
+        debugLog(`Has --primary: ${finalCss.includes('--primary')}`);
+        debugLog(`Has --background: ${finalCss.includes('--background')}`);
+        debugLog(`Has --accent: ${finalCss.includes('--accent')}`);
+        debugLog(`Has :root: ${finalCss.includes(':root')}`);
+        debugLog(`Has .dark: ${finalCss.includes('.dark')}`);
+        debugLog(`Has @import tailwindcss: ${finalCss.includes('@import "tailwindcss"')}`);
+        debugLog(`Has @tailwind base: ${finalCss.includes('@tailwind base')}`);
+        debugLog(`Has @theme inline: ${finalCss.includes('@theme inline')}`);
+        debugLog(`First 1000 chars:\n${finalCss.substring(0, 1000)}`);
+        debugLog(`========== END FINAL CSS STATE ==========`);
+        break;
+      }
+    }
+  } catch { /* non-fatal */ }
 
   // Pre-quality-gate fixes
   await runPreQualityGateFixes(projectPath, logPrefix);
@@ -232,7 +329,7 @@ async function runMultiPass(
         detail: `Generating ${pass}`,
       });
     },
-    projectPath, state.hasSrcDir, state.tailwindVersion,
+    projectPath, state.hasSrcDir, state.tailwindVersion, ctx.modelId,
   );
 
   // Remove any protected files the LLM may have generated
@@ -271,24 +368,39 @@ async function runSinglePass(
   staging: any, designPack: any, projectContext: ProjectContext,
   requirements: FeatureRequirements,
 ): Promise<void> {
+  debugLog(`runSinglePass entered`);
   await emitFeatureEvent(ctx, 'feature_code_generating', {
     scaffold_id: ctx.scaffoldId,
     message: 'Generating feature code via LLM...',
   });
 
-  const generationResult = await withTimeout(
-    generateFeatureCode(
-      requirements, ctx.recipeId, designPack || null, ctx.llmClient!,
-      undefined, projectContext, state.hasSrcDir,
-    ),
-    FEATURE_GENERATION_TIMEOUT_MS,
-    'Single-pass feature generation',
+  debugLog(`Calling generateFeatureCode (heartbeat-based timeout, model: ${ctx.modelId || 'not set'})...`);
+  const generationResult = await generateFeatureCode(
+    requirements, ctx.recipeId, designPack || null, ctx.llmClient!,
+    ctx.modelId, projectContext, state.hasSrcDir,
   );
 
-  if (!generationResult) return;
+  debugLog(`generateFeatureCode returned: ${generationResult ? `${generationResult.files.length} files` : 'null'}`);
+  if (!generationResult) {
+    debugWarn(`❌ generateFeatureCode returned null — no files to apply`);
+    return;
+  }
 
   const protectedPaths = ['layout.tsx', 'globals.css', 'lib/utils.ts'];
   const isProtected = (filePath: string) => protectedPaths.some(p => filePath.endsWith(p));
+
+  debugLog(`[SINGLE_PASS] All generated files (${generationResult.files.length}):`);
+  for (const file of generationResult.files) {
+    const prot = isProtected(file.path);
+    debugLog(`  ${prot ? '🛑 PROTECTED' : '✅'} ${file.path} (${file.content.length} chars)`);
+  }
+  if (generationResult.modified_files?.length) {
+    debugLog(`[SINGLE_PASS] Modified files (${generationResult.modified_files.length}):`);
+    for (const mod of generationResult.modified_files) {
+      const prot = isProtected(mod.path);
+      debugLog(`  ${prot ? '🛑 PROTECTED' : '✅'} ${mod.path} (${mod.content.length} chars)`);
+    }
+  }
 
   let stagedCount = 0;
   for (const file of generationResult.files) {
@@ -305,7 +417,7 @@ async function runSinglePass(
   }
 
   const published = publishStaged(staging);
-  console.log(`${logPrefix} Published ${published.length} staged files`);
+  debugLog(`Published ${published.length} staged files (${stagedCount} staged, ${generationResult.files.length - stagedCount} protected/skipped)`);
   state.featureCodeApplied = true;
 
   await emitFeatureEvent(ctx, 'feature_code_applied', {
@@ -337,7 +449,13 @@ async function runSinglePass(
 async function verifyCss(
   ctx: any, state: PipelineState, projectPath: string, logPrefix: string,
 ): Promise<void> {
+  debugLog(`========== CSS VERIFY START ==========`);
   const twVersion = detectTailwindVersion(projectPath);
+  debugLog(`[CSS_VERIFY] Tailwind version: ${twVersion}`);
+  debugLog(`[CSS_VERIFY] state.designTokens.primary: ${state.designTokens.primary}`);
+  debugLog(`[CSS_VERIFY] state.designTokens.background: ${state.designTokens.background}`);
+  debugLog(`[CSS_VERIFY] state.designTokens.accent: ${state.designTokens.accent}`);
+  debugLog(`[CSS_VERIFY] state.darkTokens present: ${!!state.darkTokens}`);
   try {
     const hasSrcDir = state.hasSrcDir;
     const cssCandidates = hasSrcDir
@@ -349,6 +467,7 @@ async function verifyCss(
     );
 
     const globalsCssPath = cssCandidates.find(p => fs.existsSync(p));
+    debugLog(`[CSS_VERIFY] globals.css found at: ${globalsCssPath || 'NOT FOUND'}`);
     if (globalsCssPath) {
       const cssContent = fs.readFileSync(globalsCssPath, 'utf-8');
       const hasV4Import = cssContent.includes('@import "tailwindcss"') || cssContent.includes("@import 'tailwindcss'");
@@ -358,10 +477,19 @@ async function verifyCss(
       const hasOklch = cssContent.includes('oklch(');
       const hasMismatch = twVersion === 4 && hasV3Directives && !hasV4Import;
 
-      // If CSS already has OKLCH tokens and proper setup, never overwrite — the
-      // overlayApplier already generated correct OKLCH CSS.
+      debugLog(`[CSS_VERIFY] CSS analysis:`);
+      debugLog(`  length: ${cssContent.length} chars`);
+      debugLog(`  hasV4Import: ${hasV4Import}`);
+      debugLog(`  hasV3Directives: ${hasV3Directives}`);
+      debugLog(`  hasTailwindSetup: ${hasTailwindSetup}`);
+      debugLog(`  hasRootVars (--primary:): ${hasRootVars}`);
+      debugLog(`  hasOklch: ${hasOklch}`);
+      debugLog(`  hasMismatch: ${hasMismatch}`);
+      debugLog(`  First 500 chars: ${cssContent.substring(0, 500)}`);
+
       if (hasOklch && hasRootVars && hasTailwindSetup) {
-        console.log(`${logPrefix} [CSS_VERIFY] globals.css has valid OKLCH tokens — skipping regeneration`);
+        debugLog(`[CSS_VERIFY] ✅ globals.css has valid OKLCH tokens — skipping regeneration`);
+        debugLog(`========== CSS VERIFY END ==========`);
         return;
       }
 

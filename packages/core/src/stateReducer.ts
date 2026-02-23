@@ -15,7 +15,6 @@
 import { Event, TaskState, Mode, Stage, TaskStatus } from './types';
 import { ScopeManager, DEFAULT_SCOPE_CONTRACT } from './scopeManager';
 import { derivePlanState, CurrentPlanState } from './planVersionManager';
-import { MissionRunStage } from './missionRunner';
 
 /**
  * Initial task state

@@ -30,16 +30,7 @@ import {
   NextStepsContext,
 } from '../nextSteps';
 import { detectPackageManager } from './helpers';
-
-function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
-  return new Promise<T>((resolve, reject) => {
-    const timer = setTimeout(() => reject(new Error(`${label} timed out after ${ms / 1000}s`)), ms);
-    promise.then(
-      (val) => { clearTimeout(timer); resolve(val); },
-      (err) => { clearTimeout(timer); reject(err); },
-    );
-  });
-}
+import { callLLMWithHeartbeat } from '../featureCodeGenerator';
 
 function collectProjectFiles(dir: string, maxDepth: number, currentDepth: number = 0): string[] {
   if (currentDepth >= maxDepth) return [];
@@ -146,15 +137,9 @@ Return ONLY valid JSON with this structure:
 }`;
 
   try {
-    const response = await withTimeout(
-      ctx.llmClient.createMessage({
-        model: 'claude-sonnet-4-20250514',
-        max_tokens: 2048,
-        system: 'You are a helpful project summary assistant. Return ONLY valid JSON, no markdown or explanation.',
-        messages: [{ role: 'user', content: summaryPrompt }],
-      }),
-      60_000,
-      'Project summary generation',
+    const summarySystem = 'You are a helpful project summary assistant. Return ONLY valid JSON, no markdown or explanation.';
+    const response = await callLLMWithHeartbeat(
+      ctx.llmClient, ctx.modelId, 2048, summarySystem, summaryPrompt, 1,
     );
 
     const text = (response as any)?.content

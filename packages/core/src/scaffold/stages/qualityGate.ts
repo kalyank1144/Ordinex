@@ -16,18 +16,9 @@ import { pipelineToDoctorStatus, buildDoctorCardPayload } from '../doctorCard';
 import { runDeterministicAutofix } from '../deterministicAutofix';
 import { commitStage } from '../gitCommitter';
 import { updateDoctorStatus as persistDoctorStatus } from '../projectContext';
+import { callLLMWithHeartbeat } from '../featureCodeGenerator';
 
 const MAX_REPAIR_ATTEMPTS = 2;
-
-function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
-  return new Promise<T>((resolve, reject) => {
-    const timer = setTimeout(() => reject(new Error(`${label} timed out after ${ms / 1000}s`)), ms);
-    promise.then(
-      (val) => { clearTimeout(timer); resolve(val); },
-      (err) => { clearTimeout(timer); reject(err); },
-    );
-  });
-}
 
 export async function runQualityGateStage(
   { ctx, projectPath, logPrefix }: PipelineStageContext,
@@ -267,15 +258,9 @@ async function attemptLLMRepair(
   const repairPrompt = buildRepairPrompt(errorSummaries, fileContents, attempt, projectPath);
 
   try {
-    const response = await withTimeout(
-      ctx.llmClient.createMessage({
-        model: 'claude-sonnet-4-20250514',
-        max_tokens: 16384,
-        system: 'You are an expert code repair assistant. You fix TypeScript, React, and Next.js build errors. Return ONLY a JSON array of file fixes. Each fix has "file" (relative path) and "content" (complete corrected file content). No markdown fences, no explanation — just the JSON array.',
-        messages: [{ role: 'user', content: repairPrompt }],
-      }),
-      180_000,
-      `LLM repair attempt ${attempt}`,
+    const repairSystem = 'You are an expert code repair assistant. You fix TypeScript, React, and Next.js build errors. Return ONLY a JSON array of file fixes. Each fix has "file" (relative path) and "content" (complete corrected file content). No markdown fences, no explanation — just the JSON array.';
+    const response = await callLLMWithHeartbeat(
+      ctx.llmClient, ctx.modelId, 16384, repairSystem, repairPrompt, attempt,
     );
 
     const stopReason = (response as any)?.stop_reason;

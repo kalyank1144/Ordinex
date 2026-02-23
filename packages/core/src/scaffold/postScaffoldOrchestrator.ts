@@ -32,6 +32,7 @@ import { DEFAULT_POLLING_CONFIG } from './pipelineTypes';
 
 import { emitScaffoldProgress } from './pipelineEvents';
 import { runEnhancedPipeline } from './pipelineRunner';
+import { debugLog } from './debugLog';
 
 // ============================================================================
 // POLLING LOGIC
@@ -79,7 +80,12 @@ export async function startPostScaffoldOrchestration(
   console.log(`${LOG_PREFIX} Recipe: ${ctx.recipeId}, Design Pack: ${ctx.designPackId}`);
   console.log(`${LOG_PREFIX} Blueprint: ${ctx.blueprint ? `app_type=${ctx.blueprint.app_type}, pages=${ctx.blueprint.pages.length}` : 'NOT PROVIDED'}`);
   console.log(`${LOG_PREFIX} LLM client: ${ctx.llmClient ? 'available' : 'NOT available'}`);
+  console.log(`${LOG_PREFIX} Model: ${ctx.modelId || 'NOT PROVIDED'}`);
   console.log(`${LOG_PREFIX} User prompt: "${ctx.userPrompt?.slice(0, 100) || 'none'}"`);
+
+  if (!ctx.modelId) {
+    throw new Error(`${LOG_PREFIX} modelId is required — the user's selected model was not passed to the pipeline. This is a wiring bug.`);
+  }
 
   try {
     await emitScaffoldProgress(ctx, 'creating', {
@@ -141,6 +147,9 @@ export async function startPostScaffoldOrchestration(
     }
 
     console.log(`${LOG_PREFIX} ✓ Project created successfully`);
+    debugLog(`========== ENTERING runEnhancedPipeline ==========`);
+    debugLog(`projectPath: ${projectPath}`);
+    debugLog(`modelId: ${ctx.modelId}`);
 
     // Delegate to pipeline runner
     return await runEnhancedPipeline(ctx, projectPath, LOG_PREFIX);

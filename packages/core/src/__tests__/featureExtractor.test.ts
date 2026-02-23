@@ -240,7 +240,7 @@ describe('extractFeatureRequirements', () => {
     });
 
     const client = createMockLLMClient(mockResponse);
-    const result = await extractFeatureRequirements('create a todo app', 'nextjs_app_router', client);
+    const result = await extractFeatureRequirements('create a todo app', 'nextjs_app_router', client, 'claude-haiku-4-5-20251001');
 
     expect(result).not.toBeNull();
     expect(result!.app_type).toBe('todo');
@@ -250,7 +250,7 @@ describe('extractFeatureRequirements', () => {
 
   it('returns null when LLM fails', async () => {
     const client = createFailingLLMClient();
-    const result = await extractFeatureRequirements('create a todo app', 'nextjs_app_router', client);
+    const result = await extractFeatureRequirements('create a todo app', 'nextjs_app_router', client, 'claude-haiku-4-5-20251001');
     expect(result).toBeNull();
   });
 
@@ -260,13 +260,13 @@ describe('extractFeatureRequirements', () => {
         return { content: [] };
       },
     };
-    const result = await extractFeatureRequirements('create a todo app', 'nextjs_app_router', client);
+    const result = await extractFeatureRequirements('create a todo app', 'nextjs_app_router', client, 'claude-haiku-4-5-20251001');
     expect(result).toBeNull();
   });
 
   it('returns null when LLM returns invalid JSON', async () => {
     const client = createMockLLMClient('This is not JSON');
-    const result = await extractFeatureRequirements('create a todo app', 'nextjs_app_router', client);
+    const result = await extractFeatureRequirements('create a todo app', 'nextjs_app_router', client, 'claude-haiku-4-5-20251001');
     expect(result).toBeNull();
   });
 
@@ -281,7 +281,7 @@ describe('extractFeatureRequirements', () => {
       },
     };
 
-    await extractFeatureRequirements('create a todo app', 'vite_react', client);
+    await extractFeatureRequirements('create a todo app', 'vite_react', client, 'claude-haiku-4-5-20251001');
     expect(capturedMessages[0].content).toContain('Vite');
   });
 });

@@ -197,13 +197,13 @@ function extractAppNameFromPrompt(prompt: string): string {
 // ============================================================================
 
 export function buildExtractionPrompt(userPrompt: string): string {
-  return `You are an expert full-stack app architect. Given a user's app description, design a comprehensive, production-quality app blueprint as structured JSON.
+  return `You are an expert full-stack app architect. A user wants to build something. Read their description carefully and design a blueprint that faithfully represents what they asked for — nothing more, nothing less.
 
 USER PROMPT: "${userPrompt}"
 
-IMPORTANT: Even if the prompt is brief (e.g. "todo app"), you must design a COMPLETE, feature-rich application with multiple pages, data models, and components — like a real production app a senior engineer would build. Think about what pages, features, and data models a real version of this app needs.
+Your job is to translate the user's intent into a structured JSON blueprint. The scope, complexity, and size of the blueprint should be driven entirely by what the user described. A request for a simple landing page produces a simple blueprint. A request for a full fitness app produces a comprehensive one. You are the architect — use your judgment.
 
-Return ONLY valid JSON matching this exact schema (no markdown, no explanation):
+Return ONLY valid JSON matching this schema (no markdown, no explanation):
 
 {
   "app_type": "dashboard_saas" | "ecommerce" | "blog_portfolio" | "social_community" | "landing_page" | "admin_panel" | "mobile_app" | "documentation" | "marketplace" | "custom",
@@ -228,17 +228,11 @@ Return ONLY valid JSON matching this exact schema (no markdown, no explanation):
   ]
 }
 
-Rules:
-- Design AT LEAST 4-8 pages for any real app (Dashboard, List view, Detail view, Settings, etc.)
-- Extract all pages the user described AND infer pages they would reasonably need
-- Each page must have 2-5 key_components (PascalCase names like TodoList, FilterBar, StatsCard)
-- data_models must have 3+ fields each and reflect all domain objects the app needs
-- shadcn_components should list ALL shadcn/ui components the pages would use (aim for 8+)
-- features should include 3+ features with appropriate complexity ratings
-- For "todo" apps: include Dashboard, All Todos, Todo Detail, Categories, Calendar View, Settings pages
-- For "blog" apps: include Home, Posts, Post Detail, Categories, About, Contact pages
-- For generic "app" requests: design a dashboard_saas with comprehensive pages
-- Always set app_name to something specific (never "My App")
+Quality guidelines:
+- Each page should have 2-5 key_components (PascalCase names like HeroBanner, FilterBar, StatsCard)
+- data_models should have meaningful fields that reflect the domain
+- shadcn_components should list the shadcn/ui components the pages would actually use
+- Always set app_name to something specific and descriptive
 - Every page must have is_auth_required set based on context`;
 }
 
@@ -256,7 +250,6 @@ export function computeConfidence(bp: AppBlueprint, promptLength: number): { con
 
   if (!bp.app_name || bp.app_name === 'My App') { score -= 0.1; missing.push('app_name'); }
   if (bp.pages.length === 0) { score -= 0.3; missing.push('pages'); }
-  if (bp.pages.length === 1 && promptLength > 80) { score -= 0.1; missing.push('pages (only 1 for detailed prompt)'); }
   if (bp.data_models.length === 0 && bp.app_type !== 'landing_page') { score -= 0.1; missing.push('data_models'); }
   if (bp.features.length === 0) { score -= 0.1; missing.push('features'); }
   if (bp.shadcn_components.length < 3) { score -= 0.05; missing.push('shadcn_components'); }

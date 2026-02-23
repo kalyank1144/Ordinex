@@ -2,7 +2,7 @@
  * Step 34.5: Shared Verify Phase Service (Refactored)
  * 
  * Single implementation of verification phase execution.
- * Called by both missionExecutor and missionRunner (no divergence).
+ * Called by missionExecutor.
  * 
  * REFACTORED IN STEP 34.5:
  * - Now uses shared runCommandPhase() for command execution
@@ -41,7 +41,7 @@ import { resolveCommandPolicy } from './commandPolicy';
 
 /**
  * Context for running verify phase
- * Provided by caller (missionExecutor or missionRunner)
+ * Provided by caller (missionExecutor)
  */
 export interface VerifyPhaseContext {
   /** Current run/task ID */
@@ -86,7 +86,6 @@ export interface VerifyPhaseContext {
  * Run verify phase
  * 
  * This is the single source of truth for verification execution.
- * Both missionExecutor and missionRunner call this.
  * 
  * @param ctx - Verify phase context
  * @returns Verify phase result

@@ -38,6 +38,7 @@ import {
   getKeyFiles,
   getDevCommand,
   createScaffoldSession,
+  resolveModel,
 } from 'core';
 
 // Cross-handler imports
@@ -135,7 +136,7 @@ export async function handleScaffoldFlow(
 
           const llmClient = new AnthropicLLMClient(apiKey);
           const llmResponse = await llmClient.createMessage({
-            model: modelId || 'claude-sonnet-4-20250514',
+            model: resolveModel(modelId),
             max_tokens: 4096,
             system: 'You are an expert full-stack app architect. You design comprehensive, production-quality app blueprints. Return ONLY valid JSON, no explanation or markdown.',
             messages: [{ role: 'user', content: extractionPrompt }],
@@ -355,6 +356,8 @@ export async function handlePreflightProceed(
     const events = ctx.eventStore.getEventsByTaskId(taskId);
     const intentEvent = events.find((e: Event) => e.type === 'intent_received');
     const scaffoldPrompt = (intentEvent?.payload.prompt as string) || 'Create a new project';
+    const userModelId = (intentEvent?.payload?.model_id as string) || '';
+    const resolvedModelId = resolveModel(userModelId);
 
     // Extract app name from user prompt
     const appName = extractAppNameFromPrompt(scaffoldPrompt);
@@ -555,6 +558,7 @@ export async function handlePreflightProceed(
           llmClient: featureLLMClient,
           blueprint: blueprint || undefined,
           styleInput: userStyleInput,
+          modelId: resolvedModelId,
           useEnhancedPipeline: true,
         };
 

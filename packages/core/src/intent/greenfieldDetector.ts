@@ -70,7 +70,7 @@ const STRONG_PATTERNS: Array<{ pattern: RegExp; description: string }> = [
   },
   // Specific app type patterns (all verb conjugations)
   {
-    pattern: /\b(new|creat(?:e|ed|es|ing)|build(?:s|ing)?|built|mak(?:e|es|ing)|made)\b.*\b(fitness|todo|to-do|workout|tracker|ecommerce|e-commerce|blog|chat|social|mobile|web)\b.*\b(app|application|project)?\b/i,
+    pattern: /\b(new|creat(?:e|ed|es|ing)|build(?:s|ing)?|built|mak(?:e|es|ing)|made)\b.*\b(fitness|todo|to-do|workout|tracker|ecommerce|e-commerce|blog|chat|social|mobile|web)\b.*\b(app|application|project|page|site)?\b/i,
     description: 'creation verb + app type',
   },
 ];

@@ -15,13 +15,14 @@
 import type { FeatureRequirements, DataEntity, PageRequirement } from '../types';
 import type { RecipeId } from './recipeTypes';
 import type { LLMConfig } from '../llmService';
+import { debugLog, debugWarn } from './debugLog';
 
 // ============================================================================
 // LLM CLIENT INTERFACE (adapter pattern for testability)
 // ============================================================================
 
 /**
- * Minimal LLM client interface for feature extraction.
+ * Minimal LLM client interface for feature extraction and generation.
  * Matches the subset of Anthropic SDK we need — allows easy mocking in tests.
  */
 export interface FeatureLLMClient {
@@ -30,6 +31,19 @@ export interface FeatureLLMClient {
     max_tokens: number;
     system: string;
     messages: Array<{ role: 'user' | 'assistant'; content: string }>;
+  }): Promise<{
+    content: Array<{ type: string; text?: string }>;
+    stop_reason?: string;
+    usage?: { input_tokens: number; output_tokens: number };
+  }>;
+
+  /** Streaming variant — enables heartbeat-based timeout for long generations. */
+  createMessageStream?(params: {
+    model: string;
+    max_tokens: number;
+    system?: string;
+    messages: Array<{ role: 'user' | 'assistant'; content: string }>;
+    onDelta: (delta: string) => void;
   }): Promise<{
     content: Array<{ type: string; text?: string }>;
     stop_reason?: string;
@@ -77,9 +91,8 @@ Rules:
 - Set has_database=false for simple apps (use local state)
 - Component names should be PascalCase React component names
 - styling_preference should be "minimal", "modern", or "colorful"
-- If the prompt is too vague or generic (just "an app", "a website"), set app_type to "generic"`;
+- Set app_type to a descriptive label that best fits the user's request (e.g., "landing_page", "portfolio", "todo", "blog", "ecommerce", "dashboard", "chat", "fitness", "social"). Only set app_type to "generic" if the prompt is truly empty or meaningless (e.g., just "an app" or "a website" with zero specifics). If the user asks for a landing page, that's app_type "landing_page", not "generic".`;
 
-const DEFAULT_MODEL = 'claude-haiku-4-5-20251001';
 const MAX_TOKENS = 1024;
 
 // ============================================================================
@@ -92,43 +105,77 @@ const MAX_TOKENS = 1024;
  * @param userPrompt - Original user prompt (e.g., "create a todo app")
  * @param recipeId - Selected recipe (provides framework context)
  * @param llmClient - LLM client for making API calls
- * @param model - Optional model override
+ * @param model - Anthropic model ID (required — must come from user's selection)
  * @returns Structured feature requirements, or null if extraction fails
  */
 export async function extractFeatureRequirements(
   userPrompt: string,
   recipeId: RecipeId,
   llmClient: FeatureLLMClient,
-  model?: string,
+  model: string,
 ): Promise<FeatureRequirements | null> {
+  if (!model) {
+    throw new Error('[FeatureExtractor] model is required — the user\'s selected model must be passed through the pipeline');
+  }
+  const usedModel = model;
+  debugLog(`========== FEATURE EXTRACTION START ==========`);
+  debugLog(`extractFeatureRequirements called`);
+  debugLog(`  userPrompt: "${userPrompt}"`);
+  debugLog(`  recipeId: ${recipeId}`);
+  debugLog(`  model: ${usedModel}`);
+  debugLog(`  llmClient present: ${!!llmClient}`);
+
   try {
     const frameworkContext = getFrameworkContext(recipeId);
     const userMessage = `Framework: ${frameworkContext}\nUser prompt: "${userPrompt}"\n\nExtract the feature requirements as JSON.`;
 
+    debugLog(`Calling LLM for feature extraction...`);
+    debugLog(`  framework context: ${frameworkContext}`);
+
     const response = await llmClient.createMessage({
-      model: model || DEFAULT_MODEL,
+      model: usedModel,
       max_tokens: MAX_TOKENS,
       system: EXTRACTION_SYSTEM_PROMPT,
       messages: [{ role: 'user', content: userMessage }],
     });
 
-    // Extract text content from response
+    debugLog(`LLM extraction response received`);
+    debugLog(`  stop_reason: ${response.stop_reason}`);
+    debugLog(`  usage: ${JSON.stringify(response.usage)}`);
+    debugLog(`  content blocks: ${response.content.length}`);
+
     const textBlock = response.content.find(b => b.type === 'text');
     if (!textBlock?.text) {
-      console.warn('[FeatureExtractor] No text in LLM response');
+      debugWarn(`❌ No text block in LLM response. Content types: ${response.content.map(b => b.type).join(', ')}`);
       return null;
     }
 
-    // Parse JSON response
+    debugLog(`Raw extraction response (${textBlock.text.length} chars):`);
+    debugLog(`${textBlock.text.substring(0, 2000)}`);
+
     const parsed = parseFeatureRequirements(textBlock.text);
     if (!parsed) {
-      console.warn('[FeatureExtractor] Failed to parse LLM response as FeatureRequirements');
+      debugWarn(`❌ Failed to parse LLM response as FeatureRequirements`);
+      debugWarn(`Full raw text: ${textBlock.text}`);
       return null;
     }
+
+    debugLog(`✅ Feature extraction parsed successfully`);
+    debugLog(`  app_type: ${parsed.app_type}`);
+    debugLog(`  features count: ${parsed.features?.length}`);
+    debugLog(`  features: ${JSON.stringify(parsed.features)}`);
+    debugLog(`  pages count: ${parsed.pages?.length}`);
+    debugLog(`  pages: ${JSON.stringify(parsed.pages)}`);
+    debugLog(`  has_auth: ${parsed.has_auth}`);
+    debugLog(`  has_database: ${parsed.has_database}`);
+    debugLog(`========== FEATURE EXTRACTION END ==========`);
 
     return parsed;
   } catch (error) {
-    console.error('[FeatureExtractor] LLM call failed:', error);
+    debugWarn(`❌ Feature extraction LLM call FAILED`);
+    debugWarn(`Error type: ${error instanceof Error ? error.constructor.name : typeof error}`);
+    debugWarn(`Error message: ${error instanceof Error ? error.message : String(error)}`);
+    debugWarn(`Error stack: ${error instanceof Error ? error.stack : 'N/A'}`);
     return null;
   }
 }

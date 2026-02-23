@@ -478,6 +478,7 @@ export async function resolveStyleIntentWithLLM(
   input: StyleInput,
   llmClient: FeatureLLMClient,
   appType?: string,
+  modelId: string,
 ): Promise<StyleResolutionResult> {
   if (input.mode === 'hex') {
     return resolveStyleIntent(input);
@@ -487,7 +488,7 @@ export async function resolveStyleIntentWithLLM(
     console.log(`${STYLE_LOG} LLM seed-color resolution: mode=${input.mode}, value="${input.value}", appType=${appType || 'none'}`);
 
     const response = await llmClient.createMessage({
-      model: 'claude-sonnet-4-20250514',
+      model: modelId,
       max_tokens: 256,
       system: buildSeedSystemPrompt(appType),
       messages: [{ role: 'user', content: buildSeedUserMessage(input, appType) }],
