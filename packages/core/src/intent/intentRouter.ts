@@ -1,19 +1,20 @@
 /**
- * Intent Router — Workspace-Aware Scaffold Detection + Pass-Through
+ * Intent Router — Workspace-Aware Routing
  *
- * Simplified routing: only two intents exist:
+ * Two intents:
  *   SCAFFOLD — create a new project from scratch
  *   AGENT    — everything else (user's selected mode determines behavior)
  *
- * The old 10-step pipeline with LLM classification, command detection,
- * edit-scale analysis, and confidence thresholds is gone. The LLM itself,
- * guided by its system prompt, decides how to handle any non-scaffold request.
+ * Routing logic:
+ *   1. /scaffold slash override → SCAFFOLD (always)
+ *   2. Workspace has project files → AGENT (pure filesystem check)
+ *   3. Workspace is empty + llmClassify provided → LLM decides BUILD vs QUESTION
+ *   4. Workspace is empty + no llmClassify → fall back to heuristic greenfield detector
  */
 
 import {
   detectGreenfieldIntent,
   detectSlashOverride,
-  IntentSignal,
 } from './intentSignals';
 
 // ============================================================================
@@ -22,7 +23,7 @@ import {
 
 export type RoutedIntent = 'SCAFFOLD' | 'AGENT';
 
-export type RoutingSource = 'slash' | 'heuristic' | 'passthrough';
+export type RoutingSource = 'slash' | 'llm' | 'heuristic' | 'passthrough';
 
 export interface IntentRoutingResult {
   intent: RoutedIntent;
@@ -39,6 +40,8 @@ export interface WorkspaceState {
 
 export interface RoutingContext {
   workspace?: WorkspaceState;
+  /** LLM-based classifier for empty workspaces. Returns 'BUILD' or 'QUESTION'. */
+  llmClassify?: (prompt: string) => Promise<'BUILD' | 'QUESTION'>;
 }
 
 // ============================================================================
@@ -46,11 +49,13 @@ export interface RoutingContext {
 // ============================================================================
 
 /**
- * Route user intent: scaffold detection + pass-through.
+ * Route user intent.
  *
- * 1. Slash override (power users: /scaffold)
- * 2. Workspace-aware greenfield check
- * 3. Pass through to user's selected mode
+ * 1. Slash override (/scaffold)
+ * 2. Existing project quick-reject (hasPackageJson or fileCount > 10)
+ * 3. Empty workspace + LLM classification (if llmClassify provided)
+ * 4. Empty workspace + heuristic fallback (tests / no API key)
+ * 5. Pass through to user's selected mode
  */
 export async function routeIntent(
   input: string,
@@ -71,17 +76,8 @@ export async function routeIntent(
     };
   }
 
-  // 2. Workspace-aware scaffold detection
+  // 2. Existing project quick-reject (pure filesystem logic, no keywords)
   const ws = context.workspace;
-  const greenfield = detectGreenfieldIntent(text);
-
-  console.log(`${LOG} Greenfield detection:`, {
-    isMatch: greenfield.isMatch,
-    confidence: greenfield.confidence,
-    reason: greenfield.reason,
-    matchedKeywords: greenfield.matchedKeywords,
-  });
-  console.log(`${LOG} Workspace state:`, ws ?? 'undefined (no workspace info)');
 
   if (ws) {
     if (ws.hasPackageJson || ws.fileCount > 10) {
@@ -94,16 +90,47 @@ export async function routeIntent(
       };
     }
 
-    if (ws.fileCount <= 3 && greenfield.isMatch && greenfield.confidence >= 0.6) {
-      console.log(`${LOG} Empty workspace + greenfield → SCAFFOLD`);
+    // 3. Empty workspace — use LLM classification if available
+    if (ws.fileCount <= 3 && context.llmClassify) {
+      console.log(`${LOG} Empty workspace — calling LLM to classify intent...`);
+      const classification = await context.llmClassify(text);
+      console.log(`${LOG} LLM classification: ${classification}`);
+
+      if (classification === 'BUILD') {
+        return {
+          intent: 'SCAFFOLD',
+          source: 'llm',
+          confidence: 1.0,
+          reasoning: 'LLM classified empty-workspace prompt as BUILD → scaffold',
+        };
+      }
+
       return {
-        intent: 'SCAFFOLD',
-        source: 'heuristic',
-        confidence: greenfield.confidence,
-        reasoning: `Empty workspace + greenfield intent: ${greenfield.reason}`,
+        intent: 'AGENT',
+        source: 'llm',
+        confidence: 1.0,
+        reasoning: 'LLM classified empty-workspace prompt as QUESTION → agent',
       };
     }
+
+    // 4. Empty workspace — heuristic fallback (no LLM client, e.g. tests)
+    if (ws.fileCount <= 3) {
+      const greenfield = detectGreenfieldIntent(text);
+      console.log(`${LOG} Heuristic fallback:`, { isMatch: greenfield.isMatch, confidence: greenfield.confidence });
+
+      if (greenfield.isMatch && greenfield.confidence >= 0.6) {
+        console.log(`${LOG} Empty workspace + greenfield heuristic → SCAFFOLD`);
+        return {
+          intent: 'SCAFFOLD',
+          source: 'heuristic',
+          confidence: greenfield.confidence,
+          reasoning: `Empty workspace + greenfield intent: ${greenfield.reason}`,
+        };
+      }
+    }
   } else {
+    // No workspace info — heuristic only (edge case)
+    const greenfield = detectGreenfieldIntent(text);
     if (greenfield.isMatch && greenfield.confidence >= 0.8) {
       console.log(`${LOG} No workspace info + high confidence greenfield → SCAFFOLD`);
       return {
@@ -115,7 +142,7 @@ export async function routeIntent(
     }
   }
 
-  // 3. Pass through — user's selected mode determines the handler
+  // 5. Pass through — user's selected mode determines the handler
   console.log(`${LOG} Pass through → AGENT`);
   return {
     intent: 'AGENT',

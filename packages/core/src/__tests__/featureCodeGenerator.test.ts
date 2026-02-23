@@ -367,7 +367,7 @@ describe('generateFeatureCode', () => {
     });
 
     const client = createMockLLMClient(mockResponse);
-    const result = await generateFeatureCode(TODO_REQUIREMENTS, 'nextjs_app_router', MOCK_DESIGN_PACK, client);
+    const result = await generateFeatureCode(TODO_REQUIREMENTS, 'nextjs_app_router', MOCK_DESIGN_PACK, client, 'claude-sonnet-4-5-20250929');
 
     expect(result).not.toBeNull();
     expect(result!.files).toHaveLength(2);
@@ -381,7 +381,7 @@ describe('generateFeatureCode', () => {
       },
     };
 
-    const result = await generateFeatureCode(TODO_REQUIREMENTS, 'nextjs_app_router', MOCK_DESIGN_PACK, client);
+    const result = await generateFeatureCode(TODO_REQUIREMENTS, 'nextjs_app_router', MOCK_DESIGN_PACK, client, 'claude-sonnet-4-5-20250929');
     expect(result).toBeNull();
   });
 
@@ -392,7 +392,7 @@ describe('generateFeatureCode', () => {
       },
     };
 
-    const result = await generateFeatureCode(TODO_REQUIREMENTS, 'nextjs_app_router', MOCK_DESIGN_PACK, client);
+    const result = await generateFeatureCode(TODO_REQUIREMENTS, 'nextjs_app_router', MOCK_DESIGN_PACK, client, 'claude-sonnet-4-5-20250929');
     expect(result).toBeNull();
   });
 
@@ -404,7 +404,7 @@ describe('generateFeatureCode', () => {
     });
 
     const client = createMockLLMClient(mockResponse);
-    const result = await generateFeatureCode(TODO_REQUIREMENTS, 'nextjs_app_router', null, client);
+    const result = await generateFeatureCode(TODO_REQUIREMENTS, 'nextjs_app_router', null, client, 'claude-sonnet-4-5-20250929');
     expect(result).not.toBeNull();
   });
 });
@@ -425,7 +425,7 @@ describe('generateFeatureCode truncation handling', () => {
       },
     };
 
-    const result = await generateFeatureCode(TODO_REQUIREMENTS, 'nextjs_app_router', MOCK_DESIGN_PACK, client);
+    const result = await generateFeatureCode(TODO_REQUIREMENTS, 'nextjs_app_router', MOCK_DESIGN_PACK, client, 'claude-sonnet-4-5-20250929');
     expect(result).toBeNull();
   });
 
@@ -457,7 +457,7 @@ describe('generateFeatureCode truncation handling', () => {
       },
     };
 
-    const result = await generateFeatureCode(TODO_REQUIREMENTS, 'nextjs_app_router', MOCK_DESIGN_PACK, client);
+    const result = await generateFeatureCode(TODO_REQUIREMENTS, 'nextjs_app_router', MOCK_DESIGN_PACK, client, 'claude-sonnet-4-5-20250929');
     expect(result).not.toBeNull();
     expect(callCount).toBe(2);
   });
@@ -500,7 +500,7 @@ describe('generateFeatureCode truncation handling', () => {
       },
     };
 
-    const result = await generateFeatureCode(complexRequirements, 'nextjs_app_router', MOCK_DESIGN_PACK, client);
+    const result = await generateFeatureCode(complexRequirements, 'nextjs_app_router', MOCK_DESIGN_PACK, client, 'claude-sonnet-4-5-20250929');
     expect(result).not.toBeNull();
     expect(callCount).toBe(3);
     expect(result!.summary).toContain('reduced scope');

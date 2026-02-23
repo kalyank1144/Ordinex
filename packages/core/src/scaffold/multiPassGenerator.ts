@@ -21,6 +21,7 @@ import type { AppBlueprint, ScaffoldStage, PassManifest, ManifestEntry } from '.
 import type { FeatureLLMClient } from './featureExtractor';
 import type { DesignPack } from './designPacks';
 import type { DesignTokens } from './tokenValidator';
+import { callLLMWithHeartbeat, HEARTBEAT_TIMEOUT_MS } from './featureCodeGenerator';
 
 // ============================================================================
 // TYPES
@@ -437,19 +438,7 @@ export function passToStage(pass: PassType): ScaffoldStage {
 // ============================================================================
 
 const MULTI_PASS_LOG = '[MultiPass]';
-const MULTI_PASS_MODEL = 'claude-sonnet-4-20250514';
 const MULTI_PASS_MAX_TOKENS = 16384;
-const MULTI_PASS_TIMEOUT_MS = 180_000; // 3 minutes per pass
-
-function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
-  return new Promise<T>((resolve, reject) => {
-    const timer = setTimeout(() => reject(new Error(`${label} timed out after ${ms / 1000}s`)), ms);
-    promise.then(
-      (val) => { clearTimeout(timer); resolve(val); },
-      (err) => { clearTimeout(timer); reject(err); },
-    );
-  });
-}
 
 function getPassPrompt(pass: PassType, blueprint: AppBlueprint, hasSrcDir?: boolean): string {
   const prefix = hasSrcDir ? 'src/' : '';
@@ -567,7 +556,11 @@ export async function executeMultiPassGeneration(
   manifestDir?: string,
   hasSrcDir?: boolean,
   tailwindVersion?: 3 | 4,
+  modelId?: string,
 ): Promise<MultiPassExecutionResult> {
+  if (!modelId) {
+    throw new Error('[MultiPass] modelId is required — the user\'s selected model must be passed through the pipeline');
+  }
   const systemPrompt = buildMultiPassSystemPrompt(blueprint, designPack, designTokens, hasSrcDir, tailwindVersion);
   const passResults: PassResult[] = [];
   let totalFiles = 0;
@@ -606,16 +599,9 @@ export async function executeMultiPassGeneration(
     }
 
     try {
-      console.log(`${MULTI_PASS_LOG} Calling LLM for ${batchLabel} (timeout: ${MULTI_PASS_TIMEOUT_MS / 1000}s)...`);
-      const response = await withTimeout(
-        llmClient.createMessage({
-          model: MULTI_PASS_MODEL,
-          max_tokens: MULTI_PASS_MAX_TOKENS,
-          system: systemPrompt,
-          messages: [{ role: 'user', content: userPrompt }],
-        }),
-        MULTI_PASS_TIMEOUT_MS,
-        `LLM pass "${batchLabel}"`,
+      console.log(`${MULTI_PASS_LOG} Calling LLM for ${batchLabel} (heartbeat: ${HEARTBEAT_TIMEOUT_MS / 1000}s inactivity threshold)...`);
+      const response = await callLLMWithHeartbeat(
+        llmClient, modelId, MULTI_PASS_MAX_TOKENS, systemPrompt, userPrompt, i + 1,
       );
 
       const textContent = response.content.find(c => c.type === 'text');

@@ -13,7 +13,6 @@ import type {
   Mode,
   ApprovalManager,
   RepairOrchestrator,
-  MissionRunner,
   MissionExecutor,
   ProjectMemoryManager,
   GeneratedToolManager,
@@ -46,7 +45,6 @@ export interface IProvider {
 
   // ─── Active Orchestrators ───
   activeApprovalManager: ApprovalManager | null;
-  activeMissionRunner: MissionRunner | null;
   activeMissionExecutor: MissionExecutor | null;
   repairOrchestrator: RepairOrchestrator | null;
   activeScaffoldCoordinator: ScaffoldFlowCoordinator | null;

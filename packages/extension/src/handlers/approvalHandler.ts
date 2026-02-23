@@ -23,6 +23,7 @@ import {
   runPreflightChecksWithEvents,
   extractAppNameFromPrompt,
   createScaffoldSession,
+  resolveModel,
 } from 'core';
 import * as path from 'path';
 import * as vscode from 'vscode';
@@ -685,6 +686,8 @@ export async function handleResolveDecisionPoint(
               // Extract user prompt from scaffold events
               const scaffoldIntentEvt = ctx.eventStore?.getEventsByTaskId(task_id)?.find((e: Event) => e.type === 'intent_received');
               const scaffoldUserPrompt = (scaffoldIntentEvt?.payload?.prompt as string) || '';
+              const userModelId = (scaffoldIntentEvt?.payload?.model_id as string) || '';
+              const resolvedModelId = resolveModel(userModelId);
               console.log(
                 `[handleResolveDecisionPoint] User prompt for feature generation: "${scaffoldUserPrompt}" (found event: ${!!scaffoldIntentEvt})`,
               );
@@ -710,6 +713,7 @@ export async function handleResolveDecisionPoint(
                 llmClient: featureLLMClient,
                 blueprint: savedBlueprint || undefined,
                 styleInput: savedStyleInput,
+                modelId: resolvedModelId,
               };
 
               // Subscribe to post-scaffold events for UI updates + capture project path + build session

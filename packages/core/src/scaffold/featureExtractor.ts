@@ -21,7 +21,7 @@ import type { LLMConfig } from '../llmService';
 // ============================================================================
 
 /**
- * Minimal LLM client interface for feature extraction.
+ * Minimal LLM client interface for feature extraction and generation.
  * Matches the subset of Anthropic SDK we need — allows easy mocking in tests.
  */
 export interface FeatureLLMClient {
@@ -30,6 +30,19 @@ export interface FeatureLLMClient {
     max_tokens: number;
     system: string;
     messages: Array<{ role: 'user' | 'assistant'; content: string }>;
+  }): Promise<{
+    content: Array<{ type: string; text?: string }>;
+    stop_reason?: string;
+    usage?: { input_tokens: number; output_tokens: number };
+  }>;
+
+  /** Streaming variant — enables heartbeat-based timeout for long generations. */
+  createMessageStream?(params: {
+    model: string;
+    max_tokens: number;
+    system?: string;
+    messages: Array<{ role: 'user' | 'assistant'; content: string }>;
+    onDelta: (delta: string) => void;
   }): Promise<{
     content: Array<{ type: string; text?: string }>;
     stop_reason?: string;
@@ -77,9 +90,8 @@ Rules:
 - Set has_database=false for simple apps (use local state)
 - Component names should be PascalCase React component names
 - styling_preference should be "minimal", "modern", or "colorful"
-- If the prompt is too vague or generic (just "an app", "a website"), set app_type to "generic"`;
+- Set app_type to a descriptive label that best fits the user's request (e.g., "landing_page", "portfolio", "todo", "blog", "ecommerce", "dashboard", "chat", "fitness", "social"). Only set app_type to "generic" if the prompt is truly empty or meaningless (e.g., just "an app" or "a website" with zero specifics). If the user asks for a landing page, that's app_type "landing_page", not "generic".`;
 
-const DEFAULT_MODEL = 'claude-haiku-4-5-20251001';
 const MAX_TOKENS = 1024;
 
 // ============================================================================
@@ -92,43 +104,77 @@ const MAX_TOKENS = 1024;
  * @param userPrompt - Original user prompt (e.g., "create a todo app")
  * @param recipeId - Selected recipe (provides framework context)
  * @param llmClient - LLM client for making API calls
- * @param model - Optional model override
+ * @param model - Anthropic model ID (required — must come from user's selection)
  * @returns Structured feature requirements, or null if extraction fails
  */
 export async function extractFeatureRequirements(
   userPrompt: string,
   recipeId: RecipeId,
   llmClient: FeatureLLMClient,
-  model?: string,
+  model: string,
 ): Promise<FeatureRequirements | null> {
+  if (!model) {
+    throw new Error('[FeatureExtractor] model is required — the user\'s selected model must be passed through the pipeline');
+  }
+  const usedModel = model;
+  console.log(`[ORDINEX_DEBUG] ========== FEATURE EXTRACTION START ==========`);
+  console.log(`[ORDINEX_DEBUG] extractFeatureRequirements called`);
+  console.log(`[ORDINEX_DEBUG]   userPrompt: "${userPrompt}"`);
+  console.log(`[ORDINEX_DEBUG]   recipeId: ${recipeId}`);
+  console.log(`[ORDINEX_DEBUG]   model: ${usedModel}`);
+  console.log(`[ORDINEX_DEBUG]   llmClient present: ${!!llmClient}`);
+
   try {
     const frameworkContext = getFrameworkContext(recipeId);
     const userMessage = `Framework: ${frameworkContext}\nUser prompt: "${userPrompt}"\n\nExtract the feature requirements as JSON.`;
 
+    console.log(`[ORDINEX_DEBUG] Calling LLM for feature extraction...`);
+    console.log(`[ORDINEX_DEBUG]   framework context: ${frameworkContext}`);
+
     const response = await llmClient.createMessage({
-      model: model || DEFAULT_MODEL,
+      model: usedModel,
       max_tokens: MAX_TOKENS,
       system: EXTRACTION_SYSTEM_PROMPT,
       messages: [{ role: 'user', content: userMessage }],
     });
 
-    // Extract text content from response
+    console.log(`[ORDINEX_DEBUG] LLM extraction response received`);
+    console.log(`[ORDINEX_DEBUG]   stop_reason: ${response.stop_reason}`);
+    console.log(`[ORDINEX_DEBUG]   usage: ${JSON.stringify(response.usage)}`);
+    console.log(`[ORDINEX_DEBUG]   content blocks: ${response.content.length}`);
+
     const textBlock = response.content.find(b => b.type === 'text');
     if (!textBlock?.text) {
-      console.warn('[FeatureExtractor] No text in LLM response');
+      console.warn(`[ORDINEX_DEBUG] ❌ No text block in LLM response. Content types: ${response.content.map(b => b.type).join(', ')}`);
       return null;
     }
 
-    // Parse JSON response
+    console.log(`[ORDINEX_DEBUG] Raw extraction response (${textBlock.text.length} chars):`);
+    console.log(`[ORDINEX_DEBUG] ${textBlock.text.substring(0, 2000)}`);
+
     const parsed = parseFeatureRequirements(textBlock.text);
     if (!parsed) {
-      console.warn('[FeatureExtractor] Failed to parse LLM response as FeatureRequirements');
+      console.warn(`[ORDINEX_DEBUG] ❌ Failed to parse LLM response as FeatureRequirements`);
+      console.warn(`[ORDINEX_DEBUG] Full raw text: ${textBlock.text}`);
       return null;
     }
+
+    console.log(`[ORDINEX_DEBUG] ✅ Feature extraction parsed successfully`);
+    console.log(`[ORDINEX_DEBUG]   app_type: ${parsed.app_type}`);
+    console.log(`[ORDINEX_DEBUG]   features count: ${parsed.features?.length}`);
+    console.log(`[ORDINEX_DEBUG]   features: ${JSON.stringify(parsed.features)}`);
+    console.log(`[ORDINEX_DEBUG]   pages count: ${parsed.pages?.length}`);
+    console.log(`[ORDINEX_DEBUG]   pages: ${JSON.stringify(parsed.pages)}`);
+    console.log(`[ORDINEX_DEBUG]   has_auth: ${parsed.has_auth}`);
+    console.log(`[ORDINEX_DEBUG]   has_database: ${parsed.has_database}`);
+    console.log(`[ORDINEX_DEBUG] ========== FEATURE EXTRACTION END ==========`);
 
     return parsed;
   } catch (error) {
-    console.error('[FeatureExtractor] LLM call failed:', error);
+    console.error(`[ORDINEX_DEBUG] ❌ Feature extraction LLM call FAILED`);
+    console.error(`[ORDINEX_DEBUG] Error type: ${error instanceof Error ? error.constructor.name : typeof error}`);
+    console.error(`[ORDINEX_DEBUG] Error message: ${error instanceof Error ? error.message : String(error)}`);
+    console.error(`[ORDINEX_DEBUG] Error stack: ${error instanceof Error ? error.stack : 'N/A'}`);
     return null;
   }
 }

@@ -280,6 +280,7 @@ function createTestContext(overrides?: Partial<PostScaffoldContext>): PostScaffo
     eventBus: createMockEventBus(),
     mode: 'PLAN',
     userPrompt: 'Create a task management app',
+    modelId: 'claude-sonnet-4-5-20250929',
     ...overrides,
   };
 }

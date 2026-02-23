@@ -41,11 +41,11 @@ export interface ProjectContext {
 // CONSTANTS
 // ============================================================================
 
-const GENERATION_MODEL = 'claude-sonnet-4-20250514';
 const GENERATION_MAX_TOKENS = 32768;
 const GENERATION_RETRY_MAX_TOKENS = 65536;
 const MAX_GENERATION_ATTEMPTS = 2;
 const LOG_PREFIX = '[FeatureCodeGenerator]';
+const HEARTBEAT_TIMEOUT_MS = 90_000; // Kill if no streamed tokens for 90s
 
 // ============================================================================
 // CODE GENERATION
@@ -63,7 +63,7 @@ const LOG_PREFIX = '[FeatureCodeGenerator]';
  * @param recipeId - Recipe type (determines file conventions)
  * @param designPack - Design pack for color/font tokens
  * @param llmClient - LLM client for API calls
- * @param model - Optional model override
+ * @param model - Anthropic model ID (required — must come from user's selection)
  * @returns Generated files and modifications, or null if generation fails
  */
 export async function generateFeatureCode(
@@ -71,107 +71,222 @@ export async function generateFeatureCode(
   recipeId: RecipeId,
   designPack: DesignPack | null,
   llmClient: FeatureLLMClient,
-  model?: string,
+  model: string,
   projectContext?: ProjectContext,
   hasSrcDir?: boolean,
   designTokens?: DesignTokens,
 ): Promise<FeatureGenerationResult | null> {
-  const systemPrompt = buildGenerationSystemPrompt(recipeId, designPack, projectContext, hasSrcDir, designTokens);
+  if (!model) {
+    throw new Error('[FeatureCodeGenerator] model is required — the user\'s selected model must be passed through the pipeline');
+  }
+  console.log(`[ORDINEX_DEBUG] ========== FEATURE CODE GENERATION START ==========`);
+  console.log(`[ORDINEX_DEBUG] generateFeatureCode called`);
+  console.log(`[ORDINEX_DEBUG]   app_type: ${requirements.app_type}`);
+  console.log(`[ORDINEX_DEBUG]   features: ${requirements.features.length} → ${JSON.stringify(requirements.features)}`);
+  console.log(`[ORDINEX_DEBUG]   pages: ${requirements.pages.length} → ${JSON.stringify(requirements.pages.map(p => p.path))}`);
+  console.log(`[ORDINEX_DEBUG]   recipeId: ${recipeId}`);
+  console.log(`[ORDINEX_DEBUG]   model: ${model}`);
+  console.log(`[ORDINEX_DEBUG]   designPack: ${designPack ? designPack.id : 'null'}`);
+  console.log(`[ORDINEX_DEBUG]   hasSrcDir: ${hasSrcDir}`);
+  console.log(`[ORDINEX_DEBUG]   projectContext keys: ${projectContext ? Object.keys(projectContext).join(', ') : 'none'}`);
 
-  // Attempt 1: Full requirements with standard token budget
+  const systemPrompt = buildGenerationSystemPrompt(recipeId, designPack, projectContext, hasSrcDir, designTokens);
+  console.log(`[ORDINEX_DEBUG] System prompt length: ${systemPrompt.length} chars`);
+
+  console.log(`[ORDINEX_DEBUG] --- Attempt 1: maxTokens=${GENERATION_MAX_TOKENS} ---`);
   const attempt1 = await callGenerationLLM(
     llmClient, systemPrompt, requirements, recipeId, model, GENERATION_MAX_TOKENS, 1, hasSrcDir,
   );
-  if (attempt1.result) return attempt1.result;
+  if (attempt1.result) {
+    console.log(`[ORDINEX_DEBUG] ✅ Attempt 1 succeeded: ${attempt1.result.files.length} files, ${attempt1.result.modified_files?.length || 0} modified`);
+    console.log(`[ORDINEX_DEBUG] ========== FEATURE CODE GENERATION END ==========`);
+    return attempt1.result;
+  }
+  console.log(`[ORDINEX_DEBUG] ❌ Attempt 1 failed. truncated=${attempt1.truncated}`);
 
-  // If truncated, retry with increased token budget
   if (attempt1.truncated) {
-    console.log(`${LOG_PREFIX} Output truncated at ${GENERATION_MAX_TOKENS} tokens, retrying with ${GENERATION_RETRY_MAX_TOKENS}...`);
+    console.log(`[ORDINEX_DEBUG] --- Attempt 2: maxTokens=${GENERATION_RETRY_MAX_TOKENS} (retry after truncation) ---`);
     const attempt2 = await callGenerationLLM(
       llmClient, systemPrompt, requirements, recipeId, model, GENERATION_RETRY_MAX_TOKENS, 2, hasSrcDir,
     );
-    if (attempt2.result) return attempt2.result;
+    if (attempt2.result) {
+      console.log(`[ORDINEX_DEBUG] ✅ Attempt 2 succeeded: ${attempt2.result.files.length} files`);
+      console.log(`[ORDINEX_DEBUG] ========== FEATURE CODE GENERATION END ==========`);
+      return attempt2.result;
+    }
+    console.log(`[ORDINEX_DEBUG] ❌ Attempt 2 failed. truncated=${attempt2.truncated}`);
 
-    // If still truncated, reduce scope to core features only and retry
     if (attempt2.truncated && requirements.features.length > 4) {
-      console.log(`${LOG_PREFIX} Still truncated, reducing scope to core features...`);
+      console.log(`[ORDINEX_DEBUG] --- Attempt 3: Reducing scope from ${requirements.features.length} features ---`);
       const reducedRequirements = reduceFeatureScope(requirements);
-      console.log(`${LOG_PREFIX} Reduced from ${requirements.features.length} to ${reducedRequirements.features.length} features, ${requirements.pages.length} to ${reducedRequirements.pages.length} pages`);
+      console.log(`[ORDINEX_DEBUG] Reduced to ${reducedRequirements.features.length} features, ${reducedRequirements.pages.length} pages`);
 
       const attempt3 = await callGenerationLLM(
         llmClient, systemPrompt, reducedRequirements, recipeId, model, GENERATION_RETRY_MAX_TOKENS, 3, hasSrcDir,
       );
-      if (attempt3.result) return attempt3.result;
+      if (attempt3.result) {
+        console.log(`[ORDINEX_DEBUG] ✅ Attempt 3 succeeded: ${attempt3.result.files.length} files`);
+        console.log(`[ORDINEX_DEBUG] ========== FEATURE CODE GENERATION END ==========`);
+        return attempt3.result;
+      }
+      console.log(`[ORDINEX_DEBUG] ❌ Attempt 3 also failed.`);
     }
   }
 
-  // All attempts failed
-  console.error(`${LOG_PREFIX} All generation attempts failed for "${requirements.app_type}" (${requirements.features.length} features, ${requirements.pages.length} pages)`);
+  console.error(`[ORDINEX_DEBUG] ❌ ALL generation attempts failed for "${requirements.app_type}" (${requirements.features.length} features, ${requirements.pages.length} pages)`);
+  console.log(`[ORDINEX_DEBUG] ========== FEATURE CODE GENERATION END ==========`);
   return null;
 }
 
 /**
+ * Call the LLM with heartbeat-based timeout.
+ * Uses streaming when available: as long as tokens keep arriving, the call stays alive.
+ * Only kills the call if no tokens arrive for HEARTBEAT_TIMEOUT_MS (90s).
+ * Falls back to non-streaming createMessage for test mocks.
+ */
+async function callLLMWithHeartbeat(
+  llmClient: FeatureLLMClient,
+  model: string,
+  maxTokens: number,
+  systemPrompt: string,
+  userMessage: string,
+  attemptNumber: number,
+): Promise<{
+  content: Array<{ type: string; text?: string }>;
+  stop_reason?: string;
+  usage?: { input_tokens: number; output_tokens: number };
+}> {
+  if (llmClient.createMessageStream) {
+    console.log(`[ORDINEX_DEBUG] Using STREAMING mode with heartbeat (${HEARTBEAT_TIMEOUT_MS / 1000}s inactivity threshold)`);
+    let heartbeatTimer: ReturnType<typeof setTimeout>;
+    let rejectHeartbeat: (err: Error) => void;
+    let chunkCount = 0;
+
+    const heartbeatPromise = new Promise<never>((_, reject) => {
+      rejectHeartbeat = reject;
+    });
+
+    const resetHeartbeat = () => {
+      if (heartbeatTimer) clearTimeout(heartbeatTimer);
+      heartbeatTimer = setTimeout(() => {
+        rejectHeartbeat(new Error(
+          `LLM generation stalled — no response for ${HEARTBEAT_TIMEOUT_MS / 1000}s ` +
+          `(attempt ${attemptNumber}, received ${chunkCount} chunks before stall)`
+        ));
+      }, HEARTBEAT_TIMEOUT_MS);
+    };
+
+    resetHeartbeat();
+
+    const streamPromise = llmClient.createMessageStream({
+      model,
+      max_tokens: maxTokens,
+      system: systemPrompt,
+      messages: [{ role: 'user', content: userMessage }],
+      onDelta: (_delta: string) => {
+        chunkCount++;
+        resetHeartbeat();
+        if (chunkCount % 200 === 0) {
+          console.log(`[ORDINEX_DEBUG] [HEARTBEAT] ${chunkCount} chunks received, still streaming...`);
+        }
+      },
+    });
+
+    try {
+      const response = await Promise.race([streamPromise, heartbeatPromise]);
+      clearTimeout(heartbeatTimer!);
+      console.log(`[ORDINEX_DEBUG] Stream complete: ${chunkCount} total chunks`);
+      return response;
+    } catch (err) {
+      clearTimeout(heartbeatTimer!);
+      throw err;
+    }
+  }
+
+  console.log(`[ORDINEX_DEBUG] No streaming available — using non-streaming createMessage`);
+  return llmClient.createMessage({
+    model,
+    max_tokens: maxTokens,
+    system: systemPrompt,
+    messages: [{ role: 'user', content: userMessage }],
+  });
+}
+
+/**
  * Single LLM call attempt with truncation detection and structured error reporting.
+ * Uses heartbeat-based streaming timeout — no fixed deadline.
  */
 async function callGenerationLLM(
   llmClient: FeatureLLMClient,
   systemPrompt: string,
   requirements: FeatureRequirements,
   recipeId: RecipeId,
-  model: string | undefined,
+  model: string,
   maxTokens: number,
   attemptNumber: number,
   hasSrcDir?: boolean,
 ): Promise<{ result: FeatureGenerationResult | null; truncated: boolean }> {
+  console.log(`[ORDINEX_DEBUG] callGenerationLLM attempt ${attemptNumber}`);
+  console.log(`[ORDINEX_DEBUG]   model: ${model}`);
+  console.log(`[ORDINEX_DEBUG]   maxTokens: ${maxTokens}`);
+
   try {
     const userMessage = buildGenerationUserMessage(requirements, recipeId, hasSrcDir);
+    console.log(`[ORDINEX_DEBUG]   user message length: ${userMessage.length} chars`);
+    console.log(`[ORDINEX_DEBUG]   user message (first 500 chars): ${userMessage.substring(0, 500)}`);
 
-    const response = await llmClient.createMessage({
-      model: model || GENERATION_MODEL,
-      max_tokens: maxTokens,
-      system: systemPrompt,
-      messages: [{ role: 'user', content: userMessage }],
-    });
+    console.log(`[ORDINEX_DEBUG] Calling LLM for code generation...`);
+    const response = await callLLMWithHeartbeat(
+      llmClient, model, maxTokens, systemPrompt, userMessage, attemptNumber,
+    );
+    console.log(`[ORDINEX_DEBUG] LLM code generation response received`);
 
-    // Log token usage for debugging
     const stopReason = response.stop_reason || 'unknown';
     const usage = response.usage;
-    if (usage) {
-      console.log(`${LOG_PREFIX} Attempt ${attemptNumber}: stop_reason=${stopReason}, input=${usage.input_tokens}, output=${usage.output_tokens}, max=${maxTokens}`);
-    } else {
-      console.log(`${LOG_PREFIX} Attempt ${attemptNumber}: stop_reason=${stopReason}, max=${maxTokens}`);
-    }
+    console.log(`[ORDINEX_DEBUG]   stop_reason: ${stopReason}`);
+    console.log(`[ORDINEX_DEBUG]   usage: ${JSON.stringify(usage)}`);
+    console.log(`[ORDINEX_DEBUG]   content blocks: ${response.content.length}, types: ${response.content.map(b => b.type).join(', ')}`);
 
-    // Detect truncation BEFORE attempting to parse
     if (stopReason === 'max_tokens') {
-      console.warn(`${LOG_PREFIX} ========== OUTPUT TRUNCATED (attempt ${attemptNumber}) ==========`);
-      console.warn(`${LOG_PREFIX} Response truncated at max_tokens=${maxTokens} for "${requirements.app_type}" (${requirements.features.length} features, ${requirements.pages.length} pages)`);
+      console.warn(`[ORDINEX_DEBUG] ❌ OUTPUT TRUNCATED (attempt ${attemptNumber}) at max_tokens=${maxTokens}`);
       return { result: null, truncated: true };
     }
 
     const textBlock = response.content.find(b => b.type === 'text');
     if (!textBlock?.text) {
-      console.warn(`${LOG_PREFIX} Attempt ${attemptNumber}: No text in LLM response`);
+      console.warn(`[ORDINEX_DEBUG] ❌ Attempt ${attemptNumber}: No text block in LLM response`);
       return { result: null, truncated: false };
     }
 
-    console.log(`${LOG_PREFIX} Attempt ${attemptNumber}: Received ${textBlock.text.length} chars, parsing...`);
+    console.log(`[ORDINEX_DEBUG] Raw generation response: ${textBlock.text.length} chars`);
+    console.log(`[ORDINEX_DEBUG] Response first 1000 chars: ${textBlock.text.substring(0, 1000)}`);
+    console.log(`[ORDINEX_DEBUG] Response last 500 chars: ${textBlock.text.substring(Math.max(0, textBlock.text.length - 500))}`);
+
+    console.log(`[ORDINEX_DEBUG] Parsing generation result...`);
     const result = parseGenerationResult(textBlock.text, recipeId);
 
     if (!result) {
-      // Check if the text looks like truncated JSON (missing closing braces)
       const openBraces = (textBlock.text.match(/\{/g) || []).length;
       const closeBraces = (textBlock.text.match(/\}/g) || []).length;
+      console.warn(`[ORDINEX_DEBUG] ❌ Attempt ${attemptNumber}: Parse failed. openBraces=${openBraces}, closeBraces=${closeBraces}`);
       if (openBraces > closeBraces + 2) {
-        console.warn(`${LOG_PREFIX} Attempt ${attemptNumber}: Parse failed — likely truncated JSON (open={${openBraces}}, close={${closeBraces}})`);
+        console.warn(`[ORDINEX_DEBUG] Likely truncated JSON — treating as truncated`);
         return { result: null, truncated: true };
       }
-      console.warn(`${LOG_PREFIX} Attempt ${attemptNumber}: Parse failed — response was not valid JSON`);
+      console.warn(`[ORDINEX_DEBUG] Response was NOT valid JSON. Full response dumped above.`);
+      return { result: null, truncated: false };
     }
+
+    console.log(`[ORDINEX_DEBUG] ✅ Attempt ${attemptNumber} parse succeeded`);
+    console.log(`[ORDINEX_DEBUG]   files: ${result.files.length} → ${result.files.map(f => f.path).join(', ')}`);
+    console.log(`[ORDINEX_DEBUG]   modified_files: ${result.modified_files?.length || 0}`);
 
     return { result, truncated: false };
   } catch (error) {
-    console.error(`${LOG_PREFIX} Attempt ${attemptNumber} LLM call failed:`, error);
+    console.error(`[ORDINEX_DEBUG] ❌ Attempt ${attemptNumber} LLM call EXCEPTION`);
+    console.error(`[ORDINEX_DEBUG] Error type: ${error instanceof Error ? error.constructor.name : typeof error}`);
+    console.error(`[ORDINEX_DEBUG] Error message: ${error instanceof Error ? error.message : String(error)}`);
+    console.error(`[ORDINEX_DEBUG] Error stack: ${error instanceof Error ? error.stack : 'N/A'}`);
     return { result: null, truncated: false };
   }
 }
@@ -301,13 +416,19 @@ VISUAL QUALITY RULES:
 - Use <Separator> between sections
 
 OUTPUT FORMAT:
-Respond with ONLY valid JSON matching this schema (no markdown, no explanation):
+Respond with ONLY valid JSON matching this schema (no markdown, no explanation).
+CRITICAL: The "content" field contains code as a JSON string. You MUST properly escape all special characters:
+- Newlines → \\n
+- Tabs → \\t  
+- Double quotes inside code → \\"
+- Backslashes → \\\\
+The JSON must be parseable by JSON.parse(). Do NOT use literal newlines inside string values.
 
 {
   "files": [
     {
       "path": "relative/path/to/File.tsx",
-      "content": "full file content as string",
+      "content": "'use client';\\nimport { useState } from 'react';\\n...",
       "description": "what this file does",
       "kind": "component|page|type|hook|util|api|config"
     }
@@ -315,7 +436,7 @@ Respond with ONLY valid JSON matching this schema (no markdown, no explanation):
   "modified_files": [
     {
       "path": "relative/path/to/existing/file",
-      "content": "complete new file content",
+      "content": "complete new file content with \\n for newlines",
       "description": "what was changed"
     }
   ],
@@ -750,60 +871,164 @@ CRITICAL RULES:
 // ============================================================================
 
 function parseGenerationResult(text: string, _recipeId: RecipeId): FeatureGenerationResult | null {
+  const jsonStr = extractJsonFromResponse(text);
+  if (!jsonStr) {
+    console.warn(`${LOG_PREFIX} Could not extract JSON from response (${text.length} chars)`);
+    return null;
+  }
+
+  // Strategy 1: Direct JSON.parse
+  let parsed = tryJsonParse(jsonStr);
+
+  // Strategy 2: Repair common JSON issues from LLM output (unescaped newlines, tabs in strings)
+  if (!parsed) {
+    console.log(`${LOG_PREFIX} Direct parse failed, attempting JSON repair...`);
+    const repaired = repairJsonString(jsonStr);
+    parsed = tryJsonParse(repaired);
+    if (parsed) {
+      console.log(`${LOG_PREFIX} JSON repair succeeded`);
+    }
+  }
+
+  // Strategy 3: Extract files individually using regex
+  if (!parsed) {
+    console.log(`${LOG_PREFIX} JSON repair failed, attempting regex file extraction...`);
+    const extracted = extractFilesViaRegex(text);
+    if (extracted && extracted.length > 0) {
+      console.log(`${LOG_PREFIX} Regex extraction found ${extracted.length} files`);
+      return {
+        files: extracted,
+        modified_files: [],
+        summary: `Generated ${extracted.length} files (extracted via fallback parser)`,
+      };
+    }
+  }
+
+  if (!parsed || typeof parsed !== 'object') {
+    console.warn(`${LOG_PREFIX} All parse strategies failed`);
+    return null;
+  }
+
+  return validateParsedResult(parsed);
+}
+
+function extractJsonFromResponse(text: string): string | null {
+  let jsonStr = text.trim();
+  if (jsonStr.startsWith('```')) {
+    jsonStr = jsonStr.replace(/^```(?:json)?\s*\n?/, '').replace(/\s*```\s*$/, '');
+  }
+  if (!jsonStr.startsWith('{')) {
+    const jsonMatch = jsonStr.match(/\{[\s\S]*\}/);
+    if (jsonMatch) {
+      jsonStr = jsonMatch[0];
+    } else {
+      return null;
+    }
+  }
+  return jsonStr;
+}
+
+function tryJsonParse(str: string): any | null {
   try {
-    // Strip markdown code block if present (handle trailing whitespace/newlines)
-    let jsonStr = text.trim();
-    if (jsonStr.startsWith('```')) {
-      jsonStr = jsonStr.replace(/^```(?:json)?\s*\n?/, '').replace(/\s*```\s*$/, '');
-    }
-    // Also try extracting JSON from within a larger response
-    if (!jsonStr.startsWith('{')) {
-      const jsonMatch = jsonStr.match(/\{[\s\S]*\}/);
-      if (jsonMatch) {
-        jsonStr = jsonMatch[0];
-      }
-    }
-
-    const parsed = JSON.parse(jsonStr);
-
-    if (!parsed || typeof parsed !== 'object') {
-      console.warn(`${LOG_PREFIX} Parsed result is not an object`);
-      return null;
-    }
-
-    const files: GeneratedFile[] = validateGeneratedFiles(parsed.files);
-    const modifiedFiles: ModifiedFileEntry[] = validateModifiedFiles(parsed.modified_files);
-
-    const rawFileCount = Array.isArray(parsed.files) ? parsed.files.length : 0;
-    const rawModifiedCount = Array.isArray(parsed.modified_files) ? parsed.modified_files.length : 0;
-
-    if (files.length === 0 && modifiedFiles.length === 0) {
-      console.warn(`${LOG_PREFIX} No valid files after validation (raw: ${rawFileCount} files, ${rawModifiedCount} modified)`);
-      if (rawFileCount > 0) {
-        console.warn(`${LOG_PREFIX} Files were filtered out during validation — likely empty content or missing paths`);
-      }
-      return null;
-    }
-
-    if (files.length < rawFileCount || modifiedFiles.length < rawModifiedCount) {
-      console.warn(`${LOG_PREFIX} Some files filtered: ${rawFileCount} → ${files.length} files, ${rawModifiedCount} → ${modifiedFiles.length} modified`);
-    }
-
-    return {
-      files,
-      modified_files: modifiedFiles,
-      summary: typeof parsed.summary === 'string' ? parsed.summary : `Generated ${files.length} files`,
-    };
+    return JSON.parse(str);
   } catch (error) {
-    const errorMsg = error instanceof Error ? error.message : String(error);
-    console.error(`${LOG_PREFIX} JSON parse failed (${text.length} chars): ${errorMsg}`);
-    // Log first 200 chars and last 200 chars for debugging
-    if (text.length > 0) {
-      console.error(`${LOG_PREFIX} Response starts with: ${text.substring(0, 200)}`);
-      console.error(`${LOG_PREFIX} Response ends with: ${text.substring(Math.max(0, text.length - 200))}`);
+    const msg = error instanceof Error ? error.message : String(error);
+    console.log(`${LOG_PREFIX} JSON.parse error: ${msg}`);
+    return null;
+  }
+}
+
+function repairJsonString(str: string): string {
+  // The LLM often puts real newlines/tabs inside JSON string values.
+  // Walk through the string and escape unescaped control chars inside string values.
+  let result = '';
+  let inString = false;
+  let escaped = false;
+
+  for (let i = 0; i < str.length; i++) {
+    const ch = str[i];
+
+    if (escaped) {
+      result += ch;
+      escaped = false;
+      continue;
+    }
+
+    if (ch === '\\') {
+      result += ch;
+      escaped = true;
+      continue;
+    }
+
+    if (ch === '"') {
+      inString = !inString;
+      result += ch;
+      continue;
+    }
+
+    if (inString) {
+      if (ch === '\n') { result += '\\n'; continue; }
+      if (ch === '\r') { result += '\\r'; continue; }
+      if (ch === '\t') { result += '\\t'; continue; }
+    }
+
+    result += ch;
+  }
+
+  return result;
+}
+
+function extractFilesViaRegex(text: string): GeneratedFile[] | null {
+  // Extract file entries by matching "path": "..." and "content": "..." patterns
+  const fileRegex = /"path"\s*:\s*"([^"]+)"\s*,\s*"content"\s*:\s*"((?:[^"\\]|\\.)*)"/g;
+  const files: GeneratedFile[] = [];
+  let match;
+
+  while ((match = fileRegex.exec(text)) !== null) {
+    const filePath = match[1];
+    let content: string;
+    try {
+      content = JSON.parse(`"${match[2]}"`);
+    } catch {
+      content = match[2].replace(/\\n/g, '\n').replace(/\\t/g, '\t').replace(/\\"/g, '"');
+    }
+    if (filePath && content && content.length > 0) {
+      files.push({
+        path: filePath,
+        content,
+        description: '',
+        kind: filePath.includes('/page') ? 'page' : 'component',
+      });
+    }
+  }
+
+  return files.length > 0 ? files : null;
+}
+
+function validateParsedResult(parsed: any): FeatureGenerationResult | null {
+  const files: GeneratedFile[] = validateGeneratedFiles(parsed.files);
+  const modifiedFiles: ModifiedFileEntry[] = validateModifiedFiles(parsed.modified_files);
+
+  const rawFileCount = Array.isArray(parsed.files) ? parsed.files.length : 0;
+  const rawModifiedCount = Array.isArray(parsed.modified_files) ? parsed.modified_files.length : 0;
+
+  if (files.length === 0 && modifiedFiles.length === 0) {
+    console.warn(`${LOG_PREFIX} No valid files after validation (raw: ${rawFileCount} files, ${rawModifiedCount} modified)`);
+    if (rawFileCount > 0) {
+      console.warn(`${LOG_PREFIX} Files were filtered out during validation — likely empty content or missing paths`);
     }
     return null;
   }
+
+  if (files.length < rawFileCount || modifiedFiles.length < rawModifiedCount) {
+    console.warn(`${LOG_PREFIX} Some files filtered: ${rawFileCount} → ${files.length} files, ${rawModifiedCount} → ${modifiedFiles.length} modified`);
+  }
+
+  return {
+    files,
+    modified_files: modifiedFiles,
+    summary: typeof parsed.summary === 'string' ? parsed.summary : `Generated ${files.length} files`,
+  };
 }
 
 function validateGeneratedFiles(raw: unknown): GeneratedFile[] {
@@ -851,10 +1076,11 @@ export {
   parseGenerationResult,
   getRecipeConstraints,
   reduceFeatureScope,
-  GENERATION_MODEL,
+  callLLMWithHeartbeat,
   GENERATION_MAX_TOKENS,
   GENERATION_RETRY_MAX_TOKENS,
   MAX_GENERATION_ATTEMPTS,
+  HEARTBEAT_TIMEOUT_MS,
 };
 
 export type { RecipeConstraints };

@@ -25,8 +25,7 @@ import { detectPackageManager as detectPM } from '../postVerify';
 
 const execAsync = promisify(exec);
 
-const FEATURE_EXTRACTION_TIMEOUT_MS = 60_000;
-const FEATURE_GENERATION_TIMEOUT_MS = 180_000;
+const FEATURE_EXTRACTION_TIMEOUT_MS = 120_000; // 2 min — lightweight extraction call (small response)
 
 function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
   return new Promise<T>((resolve, reject) => {
@@ -96,17 +95,54 @@ export async function runFeatureGenerationStage(
   }
 
   // Feature generation
+  console.log(`[ORDINEX_DEBUG] ========== FEATURE GENERATION STAGE START ==========`);
+  console.log(`[ORDINEX_DEBUG] ctx.userPrompt: "${ctx.userPrompt}"`);
+  console.log(`[ORDINEX_DEBUG] ctx.llmClient present: ${!!ctx.llmClient}`);
+  console.log(`[ORDINEX_DEBUG] ctx.blueprint: ${ctx.blueprint ? `${ctx.blueprint.pages.length} pages` : 'null'}`);
+  console.log(`[ORDINEX_DEBUG] ctx.recipeId: ${ctx.recipeId}`);
+  console.log(`[ORDINEX_DEBUG] ctx.scaffoldId: ${ctx.scaffoldId}`);
+  console.log(`[ORDINEX_DEBUG] ctx.designPackId: ${ctx.designPackId}`);
+  console.log(`[ORDINEX_DEBUG] ctx.modelId: ${ctx.modelId}`);
+  console.log(`[ORDINEX_DEBUG] state.hasSrcDir: ${state.hasSrcDir}`);
+  console.log(`[ORDINEX_DEBUG] state.featureCodeApplied: ${state.featureCodeApplied}`);
+  console.log(`[ORDINEX_DEBUG] state.designTokens.primary: ${state.designTokens.primary}`);
+  console.log(`[ORDINEX_DEBUG] state.designTokens.background: ${state.designTokens.background}`);
+  console.log(`[ORDINEX_DEBUG] state.designTokens.accent: ${state.designTokens.accent}`);
+
+  // Check CSS state BEFORE feature generation
+  try {
+    const cssPrePaths = [
+      path.join(projectPath, 'src', 'app', 'globals.css'),
+      path.join(projectPath, 'app', 'globals.css'),
+    ];
+    for (const cp of cssPrePaths) {
+      if (fs.existsSync(cp)) {
+        const preCss = fs.readFileSync(cp, 'utf-8');
+        console.log(`[ORDINEX_DEBUG] [PRE-FEATURE] globals.css at ${cp}: ${preCss.length} chars`);
+        console.log(`[ORDINEX_DEBUG] [PRE-FEATURE]   has oklch: ${preCss.includes('oklch(')}`);
+        console.log(`[ORDINEX_DEBUG] [PRE-FEATURE]   has --primary: ${preCss.includes('--primary')}`);
+        console.log(`[ORDINEX_DEBUG] [PRE-FEATURE]   has :root: ${preCss.includes(':root')}`);
+        break;
+      }
+    }
+  } catch { /* non-fatal */ }
+
+  const hasFeatureIntent = ctx.userPrompt ? hasSpecificFeature(ctx.userPrompt) : false;
+  const blueprintPages = ctx.blueprint?.pages?.length || 0;
+  console.log(`[ORDINEX_DEBUG] hasSpecificFeature("${ctx.userPrompt}"): ${hasFeatureIntent}`);
+  console.log(`[ORDINEX_DEBUG] blueprint pages: ${blueprintPages}`);
+
   const shouldGenerateFeatures = ctx.userPrompt
     && ctx.llmClient
-    && (hasSpecificFeature(ctx.userPrompt) || (ctx.blueprint && ctx.blueprint.pages.length > 0));
+    && (hasFeatureIntent || blueprintPages > 0);
+
+  console.log(`[ORDINEX_DEBUG] shouldGenerateFeatures: ${!!shouldGenerateFeatures}`);
 
   if (!shouldGenerateFeatures) {
-    const hasFeatureIntent = ctx.userPrompt ? hasSpecificFeature(ctx.userPrompt) : false;
-    const blueprintPages = ctx.blueprint?.pages?.length || 0;
     const skipReason = !ctx.userPrompt ? 'No user prompt' :
       !ctx.llmClient ? 'No LLM client (API key missing or SDK failed)' :
       `Prompt feature check=${hasFeatureIntent}, blueprint pages=${blueprintPages} (both false)`;
-    console.warn(`${logPrefix} Feature generation SKIPPED: ${skipReason}`);
+    console.warn(`[ORDINEX_DEBUG] ❌ Feature generation SKIPPED: ${skipReason}`);
     await emitScaffoldProgress(ctx, 'generating_features' as any, {
       message: `Feature generation skipped: ${skipReason}`,
       stage: 'features',
@@ -128,14 +164,26 @@ export async function runFeatureGenerationStage(
   console.log(`${logPrefix} Staging workspace initialized at ${staging.stagingPath}`);
 
   try {
+    console.log(`[ORDINEX_DEBUG] Calling extractFeatureRequirements (timeout: ${FEATURE_EXTRACTION_TIMEOUT_MS}ms, model: ${ctx.modelId || 'not set'})...`);
     const requirements = await withTimeout(
-      extractFeatureRequirements(ctx.userPrompt!, ctx.recipeId, ctx.llmClient!),
+      extractFeatureRequirements(ctx.userPrompt!, ctx.recipeId, ctx.llmClient!, ctx.modelId),
       FEATURE_EXTRACTION_TIMEOUT_MS,
       'Feature extraction',
     );
 
-    if (requirements && requirements.app_type !== 'generic') {
-      state.featureRequirements = requirements;
+    console.log(`[ORDINEX_DEBUG] extractFeatureRequirements returned: ${requirements ? 'object' : 'null'}`);
+    if (requirements) {
+      console.log(`[ORDINEX_DEBUG]   app_type: "${requirements.app_type}"`);
+      console.log(`[ORDINEX_DEBUG]   features: ${requirements.features?.length}`);
+      console.log(`[ORDINEX_DEBUG]   pages: ${requirements.pages?.length}`);
+    }
+
+    const hasContent = requirements
+      && ((requirements.features?.length || 0) > 0 || (requirements.pages?.length || 0) > 0);
+
+    if (hasContent) {
+      console.log(`[ORDINEX_DEBUG] ✅ Requirements have content (features or pages) — proceeding to code generation`);
+      state.featureRequirements = requirements!;
 
       await emitFeatureEvent(ctx, 'feature_extraction_completed', {
         scaffold_id: ctx.scaffoldId,
@@ -147,15 +195,30 @@ export async function runFeatureGenerationStage(
       const designPack = getDesignPackById(ctx.designPackId);
       const useMultiPass = ctx.blueprint && ctx.blueprint.pages.length >= 5;
 
+      console.log(`[ORDINEX_DEBUG] Generation path: ${useMultiPass ? 'MULTI-PASS' : 'SINGLE-PASS'}`);
+      console.log(`[ORDINEX_DEBUG]   blueprint pages: ${ctx.blueprint?.pages?.length || 0} (threshold for multi-pass: 5)`);
+      console.log(`[ORDINEX_DEBUG]   designPack: ${designPack ? designPack.id : 'null'}`);
+      console.log(`[ORDINEX_DEBUG]   projectContext.existingFiles: ${projectContext.existingFiles?.length || 0}`);
+
       if (useMultiPass && ctx.blueprint) {
+        console.log(`[ORDINEX_DEBUG] Starting MULTI-PASS generation...`);
         await runMultiPass(ctx, state, projectPath, logPrefix, staging, designPack, projectContext);
       } else {
+        console.log(`[ORDINEX_DEBUG] Starting SINGLE-PASS generation...`);
         await runSinglePass(ctx, state, projectPath, logPrefix, staging, designPack, projectContext, requirements);
       }
+
+      console.log(`[ORDINEX_DEBUG] Generation pass complete. state.featureCodeApplied: ${state.featureCodeApplied}`);
+    } else {
+      console.warn(`[ORDINEX_DEBUG] ⚠️ Skipping code generation: requirements=${requirements ? 'present' : 'null'}, features=${requirements?.features?.length || 0}, pages=${requirements?.pages?.length || 0}`);
+      console.warn(`[ORDINEX_DEBUG] No features or pages to generate`);
     }
   } catch (featureErr) {
     const errMsg = featureErr instanceof Error ? featureErr.message : String(featureErr);
-    console.error(`${logPrefix} Feature generation FAILED: ${errMsg}`);
+    console.error(`[ORDINEX_DEBUG] ❌ Feature generation stage CATCH block`);
+    console.error(`[ORDINEX_DEBUG] Error type: ${featureErr instanceof Error ? featureErr.constructor.name : typeof featureErr}`);
+    console.error(`[ORDINEX_DEBUG] Error message: ${errMsg}`);
+    console.error(`[ORDINEX_DEBUG] Error stack: ${featureErr instanceof Error ? (featureErr as Error).stack : 'N/A'}`);
     await emitFeatureEvent(ctx, 'feature_code_error', {
       scaffold_id: ctx.scaffoldId,
       error: errMsg,
@@ -180,13 +243,17 @@ export async function runFeatureGenerationStage(
     }
   }
 
+  console.log(`[ORDINEX_DEBUG] Final status check: featureCodeApplied=${state.featureCodeApplied}`);
   if (state.featureCodeApplied) {
+    console.log(`[ORDINEX_DEBUG] ✅ Emitting: Features generated (success)`);
     await emitScaffoldProgress(ctx, 'generating_features' as any, {
       message: 'Features generated',
       stage: 'features',
       status: 'done',
     });
   } else {
+    console.warn(`[ORDINEX_DEBUG] ❌ Emitting: Partial generation (featureCodeApplied is still false)`);
+    console.warn(`[ORDINEX_DEBUG] This means code generation either: returned null, threw an error, or produced 0 files`);
     await emitScaffoldProgress(ctx, 'generating_features' as any, {
       message: 'Feature generation had issues — stub pages created',
       stage: 'features',
@@ -194,9 +261,38 @@ export async function runFeatureGenerationStage(
       detail: 'Partial generation',
     });
   }
+  console.log(`[ORDINEX_DEBUG] ========== FEATURE GENERATION STAGE END ==========`);
 
   // Post-generation CSS verification
   await verifyCss(ctx, state, projectPath, logPrefix);
+
+  // Final CSS state dump
+  try {
+    const cssCheckPaths = [
+      path.join(projectPath, 'src', 'app', 'globals.css'),
+      path.join(projectPath, 'app', 'globals.css'),
+    ];
+    for (const cp of cssCheckPaths) {
+      if (fs.existsSync(cp)) {
+        const finalCss = fs.readFileSync(cp, 'utf-8');
+        console.log(`[ORDINEX_DEBUG] ========== FINAL CSS STATE ==========`);
+        console.log(`[ORDINEX_DEBUG] globals.css at: ${cp}`);
+        console.log(`[ORDINEX_DEBUG] Length: ${finalCss.length} chars`);
+        console.log(`[ORDINEX_DEBUG] Has oklch(): ${finalCss.includes('oklch(')}`);
+        console.log(`[ORDINEX_DEBUG] Has --primary: ${finalCss.includes('--primary')}`);
+        console.log(`[ORDINEX_DEBUG] Has --background: ${finalCss.includes('--background')}`);
+        console.log(`[ORDINEX_DEBUG] Has --accent: ${finalCss.includes('--accent')}`);
+        console.log(`[ORDINEX_DEBUG] Has :root: ${finalCss.includes(':root')}`);
+        console.log(`[ORDINEX_DEBUG] Has .dark: ${finalCss.includes('.dark')}`);
+        console.log(`[ORDINEX_DEBUG] Has @import tailwindcss: ${finalCss.includes('@import "tailwindcss"')}`);
+        console.log(`[ORDINEX_DEBUG] Has @tailwind base: ${finalCss.includes('@tailwind base')}`);
+        console.log(`[ORDINEX_DEBUG] Has @theme inline: ${finalCss.includes('@theme inline')}`);
+        console.log(`[ORDINEX_DEBUG] First 1000 chars:\n${finalCss.substring(0, 1000)}`);
+        console.log(`[ORDINEX_DEBUG] ========== END FINAL CSS STATE ==========`);
+        break;
+      }
+    }
+  } catch { /* non-fatal */ }
 
   // Pre-quality-gate fixes
   await runPreQualityGateFixes(projectPath, logPrefix);
@@ -232,7 +328,7 @@ async function runMultiPass(
         detail: `Generating ${pass}`,
       });
     },
-    projectPath, state.hasSrcDir, state.tailwindVersion,
+    projectPath, state.hasSrcDir, state.tailwindVersion, ctx.modelId,
   );
 
   // Remove any protected files the LLM may have generated
@@ -271,24 +367,39 @@ async function runSinglePass(
   staging: any, designPack: any, projectContext: ProjectContext,
   requirements: FeatureRequirements,
 ): Promise<void> {
+  console.log(`[ORDINEX_DEBUG] runSinglePass entered`);
   await emitFeatureEvent(ctx, 'feature_code_generating', {
     scaffold_id: ctx.scaffoldId,
     message: 'Generating feature code via LLM...',
   });
 
-  const generationResult = await withTimeout(
-    generateFeatureCode(
-      requirements, ctx.recipeId, designPack || null, ctx.llmClient!,
-      undefined, projectContext, state.hasSrcDir,
-    ),
-    FEATURE_GENERATION_TIMEOUT_MS,
-    'Single-pass feature generation',
+  console.log(`[ORDINEX_DEBUG] Calling generateFeatureCode (heartbeat-based timeout, model: ${ctx.modelId || 'not set'})...`);
+  const generationResult = await generateFeatureCode(
+    requirements, ctx.recipeId, designPack || null, ctx.llmClient!,
+    ctx.modelId, projectContext, state.hasSrcDir,
   );
 
-  if (!generationResult) return;
+  console.log(`[ORDINEX_DEBUG] generateFeatureCode returned: ${generationResult ? `${generationResult.files.length} files` : 'null'}`);
+  if (!generationResult) {
+    console.warn(`[ORDINEX_DEBUG] ❌ generateFeatureCode returned null — no files to apply`);
+    return;
+  }
 
   const protectedPaths = ['layout.tsx', 'globals.css', 'lib/utils.ts'];
   const isProtected = (filePath: string) => protectedPaths.some(p => filePath.endsWith(p));
+
+  console.log(`[ORDINEX_DEBUG] [SINGLE_PASS] All generated files (${generationResult.files.length}):`);
+  for (const file of generationResult.files) {
+    const prot = isProtected(file.path);
+    console.log(`[ORDINEX_DEBUG]   ${prot ? '🛑 PROTECTED' : '✅'} ${file.path} (${file.content.length} chars)`);
+  }
+  if (generationResult.modified_files?.length) {
+    console.log(`[ORDINEX_DEBUG] [SINGLE_PASS] Modified files (${generationResult.modified_files.length}):`);
+    for (const mod of generationResult.modified_files) {
+      const prot = isProtected(mod.path);
+      console.log(`[ORDINEX_DEBUG]   ${prot ? '🛑 PROTECTED' : '✅'} ${mod.path} (${mod.content.length} chars)`);
+    }
+  }
 
   let stagedCount = 0;
   for (const file of generationResult.files) {
@@ -305,7 +416,7 @@ async function runSinglePass(
   }
 
   const published = publishStaged(staging);
-  console.log(`${logPrefix} Published ${published.length} staged files`);
+  console.log(`[ORDINEX_DEBUG] Published ${published.length} staged files (${stagedCount} staged, ${generationResult.files.length - stagedCount} protected/skipped)`);
   state.featureCodeApplied = true;
 
   await emitFeatureEvent(ctx, 'feature_code_applied', {
@@ -337,7 +448,13 @@ async function runSinglePass(
 async function verifyCss(
   ctx: any, state: PipelineState, projectPath: string, logPrefix: string,
 ): Promise<void> {
+  console.log(`[ORDINEX_DEBUG] ========== CSS VERIFY START ==========`);
   const twVersion = detectTailwindVersion(projectPath);
+  console.log(`[ORDINEX_DEBUG] [CSS_VERIFY] Tailwind version: ${twVersion}`);
+  console.log(`[ORDINEX_DEBUG] [CSS_VERIFY] state.designTokens.primary: ${state.designTokens.primary}`);
+  console.log(`[ORDINEX_DEBUG] [CSS_VERIFY] state.designTokens.background: ${state.designTokens.background}`);
+  console.log(`[ORDINEX_DEBUG] [CSS_VERIFY] state.designTokens.accent: ${state.designTokens.accent}`);
+  console.log(`[ORDINEX_DEBUG] [CSS_VERIFY] state.darkTokens present: ${!!state.darkTokens}`);
   try {
     const hasSrcDir = state.hasSrcDir;
     const cssCandidates = hasSrcDir
@@ -349,6 +466,7 @@ async function verifyCss(
     );
 
     const globalsCssPath = cssCandidates.find(p => fs.existsSync(p));
+    console.log(`[ORDINEX_DEBUG] [CSS_VERIFY] globals.css found at: ${globalsCssPath || 'NOT FOUND'}`);
     if (globalsCssPath) {
       const cssContent = fs.readFileSync(globalsCssPath, 'utf-8');
       const hasV4Import = cssContent.includes('@import "tailwindcss"') || cssContent.includes("@import 'tailwindcss'");
@@ -358,10 +476,19 @@ async function verifyCss(
       const hasOklch = cssContent.includes('oklch(');
       const hasMismatch = twVersion === 4 && hasV3Directives && !hasV4Import;
 
-      // If CSS already has OKLCH tokens and proper setup, never overwrite — the
-      // overlayApplier already generated correct OKLCH CSS.
+      console.log(`[ORDINEX_DEBUG] [CSS_VERIFY] CSS analysis:`);
+      console.log(`[ORDINEX_DEBUG]   length: ${cssContent.length} chars`);
+      console.log(`[ORDINEX_DEBUG]   hasV4Import: ${hasV4Import}`);
+      console.log(`[ORDINEX_DEBUG]   hasV3Directives: ${hasV3Directives}`);
+      console.log(`[ORDINEX_DEBUG]   hasTailwindSetup: ${hasTailwindSetup}`);
+      console.log(`[ORDINEX_DEBUG]   hasRootVars (--primary:): ${hasRootVars}`);
+      console.log(`[ORDINEX_DEBUG]   hasOklch: ${hasOklch}`);
+      console.log(`[ORDINEX_DEBUG]   hasMismatch: ${hasMismatch}`);
+      console.log(`[ORDINEX_DEBUG]   First 500 chars: ${cssContent.substring(0, 500)}`);
+
       if (hasOklch && hasRootVars && hasTailwindSetup) {
-        console.log(`${logPrefix} [CSS_VERIFY] globals.css has valid OKLCH tokens — skipping regeneration`);
+        console.log(`[ORDINEX_DEBUG] [CSS_VERIFY] ✅ globals.css has valid OKLCH tokens — skipping regeneration`);
+        console.log(`[ORDINEX_DEBUG] ========== CSS VERIFY END ==========`);
         return;
       }
 

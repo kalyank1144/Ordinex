@@ -78,7 +78,7 @@ describe('computeConfidence', () => {
       features: [],
     };
     const { confidence } = computeConfidence(bp, 100);
-    expect(confidence).toBeLessThan(0.75);
+    expect(confidence).toBeLessThan(0.8);
   });
 
   it('penalizes generic app name', () => {

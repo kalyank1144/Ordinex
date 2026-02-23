@@ -19,8 +19,10 @@ import {
   enrichUserInput,
   buildFollowUpContext,
   EventBus,
+  resolveModel,
 } from 'core';
-import type { IntentRoutingResult, WorkspaceState } from 'core';
+import type { IntentRoutingResult, WorkspaceState, RoutingContext } from 'core';
+import { AnthropicLLMClient } from '../anthropicLLMClient';
 
 import { handleAgentMode } from './agentHandler';
 import { handlePlanMode } from './planHandler';
@@ -232,9 +234,36 @@ export async function handleSubmitPrompt(
       wsState,
     });
 
-    const routingResult: IntentRoutingResult = await routeIntent(text, {
-      workspace: wsState,
-    });
+    // Build routing context — add LLM classification for empty workspaces
+    const routingCtx: RoutingContext = { workspace: wsState };
+
+    const isEmptyWorkspace = wsState && !wsState.hasPackageJson && wsState.fileCount <= 3;
+    if (isEmptyWorkspace) {
+      const apiKey = await ctx._context.secrets.get('ordinex.apiKey');
+      if (apiKey) {
+        const resolvedModel = resolveModel(modelId || 'sonnet-4.5');
+        routingCtx.llmClassify = async (prompt: string): Promise<'BUILD' | 'QUESTION'> => {
+          const llmClient = new AnthropicLLMClient(apiKey, resolvedModel);
+          const classificationPrompt =
+            `The user's workspace is empty — no project files exist. They said: "${prompt}". ` +
+            `Do they want to BUILD something (a project, app, page, site, tool, etc.) ` +
+            `or are they asking a QUESTION (explanation, advice, information)? ` +
+            `Reply with one word: BUILD or QUESTION`;
+
+          const response = await llmClient.createMessage({
+            model: resolvedModel,
+            max_tokens: 10,
+            messages: [{ role: 'user', content: classificationPrompt }],
+          });
+
+          const text = (response.content?.[0] as any)?.text?.toUpperCase() ?? '';
+          console.log('[Router] LLM classification raw response:', text);
+          return text.includes('BUILD') ? 'BUILD' : 'QUESTION';
+        };
+      }
+    }
+
+    const routingResult: IntentRoutingResult = await routeIntent(text, routingCtx);
 
     console.log('[Router] Result:', {
       intent: routingResult.intent,

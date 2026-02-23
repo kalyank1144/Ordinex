@@ -39,6 +39,8 @@ export interface PostScaffoldContext {
   llmClient?: FeatureLLMClient;
   blueprint?: AppBlueprint;
   styleInput?: StyleInput;
+  /** User's selected model ID (fully-qualified Anthropic model name). All LLM calls in the pipeline use this. */
+  modelId: string;
   /** @deprecated Enhanced pipeline is now the only path. */
   useEnhancedPipeline?: boolean;
 }

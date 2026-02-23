@@ -355,18 +355,6 @@ export type {
   LoopPauseReason,
 } from './loopSessionState';
 
-// Export Mission Runner (Step 27 - Mission Execution Harness)
-export {
-  MissionRunner,
-  MissionRunStage,
-  TransitionEvent,
-  MissionRunState,
-  Mission,
-  PatchPlan,
-  convertPlanToMission,
-  MissionBreakdownItem
-} from './missionRunner';
-
 // Export Context Snapshot Manager (Step 27 - Stale Context Detection)
 export {
   ContextSnapshotManager,

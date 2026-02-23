@@ -805,7 +805,7 @@ export async function handleCancelMission(
   webview: vscode.Webview,
 ): Promise<void> {
   const { task_id, reason } = message;
-  const LOG_PREFIX = '[Ordinex:MissionRunner]';
+  const LOG_PREFIX = '[Ordinex:Mission]';
 
   if (!task_id) {
     console.error('Missing task_id in cancelMission');
@@ -815,13 +815,11 @@ export async function handleCancelMission(
   console.log(`${LOG_PREFIX} Cancelling mission...`);
 
   try {
-    // Check if we have an active mission runner
-    if (ctx.activeMissionRunner) {
-      await ctx.activeMissionRunner.cancelMission(reason || 'user_requested');
-      ctx.activeMissionRunner = null;
-      console.log(`${LOG_PREFIX} Mission cancelled via MissionRunner`);
+    if (ctx.activeMissionExecutor) {
+      await ctx.activeMissionExecutor.stop();
+      ctx.activeMissionExecutor = null;
+      console.log(`${LOG_PREFIX} Mission cancelled via MissionExecutor.stop()`);
     } else {
-      // Fallback: emit cancellation event directly
       await ctx.emitEvent({
         event_id: ctx.generateId(),
         task_id: task_id,
