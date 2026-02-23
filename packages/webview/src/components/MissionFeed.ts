@@ -657,7 +657,6 @@ export const EVENT_CARD_MAP: Record<EventType, EventCardConfig> = {
     title: 'Preflight Complete',
     color: 'var(--vscode-charts-blue)',
     getSummary: (e) => {
-      // Support both field names: shouldSplit (from TruncationSafeExecutor) and split_needed
       const splitNeeded = (e.payload.shouldSplit ?? e.payload.split_needed) as boolean;
       const targetCount = e.payload.targetFileCount as number || 0;
       const complexity = e.payload.estimatedComplexity as string || '';
@@ -686,7 +685,6 @@ export const EVENT_CARD_MAP: Record<EventType, EventCardConfig> = {
     title: 'Split Mode',
     color: 'var(--vscode-charts-purple)',
     getSummary: (e) => {
-      // Support both field names: file_count (from TruncationSafeExecutor) and files array
       const fileCount = e.payload.file_count as number;
       const files = (e.payload.files as string[]) || [];
       const count = fileCount ?? files.length;

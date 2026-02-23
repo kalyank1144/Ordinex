@@ -279,16 +279,10 @@ export async function handleExecutePlan(
     const workspaceWriter = new VSCodeWorkspaceWriter(workspaceRoot);
     const workspaceCheckpointMgr = new VSCodeCheckpointManager(workspaceRoot);
 
-    // Create LLM client and tool provider for AgenticLoop
-    let llmClient = null;
-    let toolProvider = null;
-    try {
-      llmClient = new AnthropicLLMClient(apiKey, modelId);
-      toolProvider = new VSCodeToolProvider(workspaceRoot);
-      toolProvider.setWebview(webview);
-    } catch (err) {
-      console.warn('[handleExecutePlan] Could not create LLM client/tool provider for AgenticLoop, falling back to TruncationSafeExecutor:', err);
-    }
+    // Create LLM client and tool provider for AgenticLoop (required — no fallback)
+    const llmClient = new AnthropicLLMClient(apiKey, modelId);
+    const toolProvider = new VSCodeToolProvider(workspaceRoot);
+    toolProvider.setWebview(webview);
 
     const tokenCounter = ctx.getTokenCounter() ?? null;
 

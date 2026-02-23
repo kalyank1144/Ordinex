@@ -272,7 +272,7 @@ describe('runLintStep', () => {
     const dir = await createTestDir();
     await writePackageJson(dir, { name: 'test', scripts: {} });
 
-    const result = runLintStep(dir, 'npm', 60000);
+    const result = await runLintStep(dir, 'npm', 60000);
     expect(result.status).toBe('skipped');
     expect(result.id).toBe('lint');
   });
@@ -284,7 +284,7 @@ describe('runLintStep', () => {
       scripts: { lint: 'exit 1' },
     });
 
-    const result = runLintStep(dir, 'npm', 60000);
+    const result = await runLintStep(dir, 'npm', 60000);
     // Lint failures are ALWAYS warn
     expect(result.status).toBe('warn');
     expect(result.message).toContain('non-blocking');
@@ -299,7 +299,7 @@ describe('runTypecheckStep', () => {
   it('should skip when not TypeScript', async () => {
     const dir = await createTestDir();
 
-    const result = runTypecheckStep(dir, 'npm', false, 60000);
+    const result = await runTypecheckStep(dir, 'npm', false, 60000);
     expect(result.status).toBe('skipped');
     expect(result.message).toContain('Not a TypeScript project');
   });
@@ -317,7 +317,7 @@ describe('runBuildStep', () => {
       scripts: { build: 'echo built' },
     });
 
-    const result = runBuildStep(dir, 'npm', false, 120000);
+    const result = await runBuildStep(dir, 'npm', false, 120000);
     expect(result.status).toBe('skipped');
     expect(result.message).toContain('disabled by policy');
   });
@@ -326,7 +326,7 @@ describe('runBuildStep', () => {
     const dir = await createTestDir();
     await writePackageJson(dir, { name: 'test', scripts: {} });
 
-    const result = runBuildStep(dir, 'npm', true, 120000);
+    const result = await runBuildStep(dir, 'npm', true, 120000);
     expect(result.status).toBe('skipped');
     expect(result.message).toContain('No build script');
   });
@@ -338,7 +338,7 @@ describe('runBuildStep', () => {
       scripts: { build: 'echo "done"' },
     });
 
-    const result = runBuildStep(dir, 'npm', true, 120000);
+    const result = await runBuildStep(dir, 'npm', true, 120000);
     expect(result.status).toBe('pass');
     expect(result.command).toBe('npm run build');
   });
@@ -350,7 +350,7 @@ describe('runBuildStep', () => {
       scripts: { build: 'exit 1' },
     });
 
-    const result = runBuildStep(dir, 'npm', true, 120000);
+    const result = await runBuildStep(dir, 'npm', true, 120000);
     expect(result.status).toBe('fail');
     expect(result.message).toContain('Build failed');
   });

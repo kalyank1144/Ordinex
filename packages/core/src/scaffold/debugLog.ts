@@ -11,7 +11,8 @@ let _enabled: boolean | null = null;
 function isEnabled(): boolean {
   if (_enabled !== null) return _enabled;
   try {
-    _enabled = !!process.env.ORDINEX_DEBUG;
+    const val = process.env.ORDINEX_DEBUG;
+    _enabled = val !== undefined && val !== '' && val !== '0' && val.toLowerCase() !== 'false';
   } catch {
     _enabled = false;
   }

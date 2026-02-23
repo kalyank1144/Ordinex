@@ -33,7 +33,15 @@ import { handleScaffoldFlow } from './scaffoldHandler';
 // ---------------------------------------------------------------------------
 
 function resolveActiveProjectRoot(ctx: IProvider): string | undefined {
-  if (ctx.scaffoldProjectPath) return ctx.scaffoldProjectPath;
+  // Validate stale scaffoldProjectPath — clear if directory no longer exists
+  if (ctx.scaffoldProjectPath) {
+    if (fs.existsSync(path.join(ctx.scaffoldProjectPath, 'package.json'))) {
+      return ctx.scaffoldProjectPath;
+    }
+    console.log('[resolveActiveProjectRoot] Stale scaffoldProjectPath cleared:', ctx.scaffoldProjectPath);
+    ctx.scaffoldProjectPath = null;
+  }
+
   if (ctx.selectedWorkspaceRoot) return ctx.selectedWorkspaceRoot;
 
   const folders = vscode.workspace.workspaceFolders;
@@ -226,42 +234,23 @@ export async function handleSubmitPrompt(
 
     // 3. Workspace-aware scaffold detection
     const wsState = getWorkspaceState(workspaceRoot || undefined);
+    const isEmptyWorkspace = wsState && !wsState.hasPackageJson && wsState.fileCount <= 3;
     console.log('[Router] Workspace state:', {
       workspaceRoot,
       scaffoldProjectPath: ctx.scaffoldProjectPath,
       selectedWorkspaceRoot: ctx.selectedWorkspaceRoot,
       folderCount: vscode.workspace.workspaceFolders?.length || 0,
       wsState,
+      isEmptyWorkspace,
     });
 
-    // Build routing context — add LLM classification for empty workspaces
+    // Build routing context — LLM-first architecture
     const routingCtx: RoutingContext = { workspace: wsState };
-
-    const isEmptyWorkspace = wsState && !wsState.hasPackageJson && wsState.fileCount <= 3;
-    if (isEmptyWorkspace) {
-      const apiKey = await ctx._context.secrets.get('ordinex.apiKey');
-      if (apiKey) {
-        const resolvedModel = resolveModel(modelId || 'sonnet-4.5');
-        routingCtx.llmClassify = async (prompt: string): Promise<'BUILD' | 'QUESTION'> => {
-          const llmClient = new AnthropicLLMClient(apiKey, resolvedModel);
-          const classificationPrompt =
-            `The user's workspace is empty — no project files exist. They said: "${prompt}". ` +
-            `Do they want to BUILD something (a project, app, page, site, tool, etc.) ` +
-            `or are they asking a QUESTION (explanation, advice, information)? ` +
-            `Reply with one word: BUILD or QUESTION`;
-
-          const response = await llmClient.createMessage({
-            model: resolvedModel,
-            max_tokens: 10,
-            messages: [{ role: 'user', content: classificationPrompt }],
-          });
-
-          const raw = (response.content?.[0] as any)?.text ?? '';
-          const token = raw.trim().toUpperCase().replace(/[^A-Z]/g, '').slice(0, 10);
-          console.log('[Router] LLM classification raw response:', raw, '→ token:', token);
-          return token.startsWith('BUILD') ? 'BUILD' : 'QUESTION';
-        };
-      }
+    const apiKey = await ctx._context.secrets.get('ordinex.apiKey');
+    if (apiKey) {
+      const resolvedModel = resolveModel(modelId || 'sonnet-4.5');
+      routingCtx.llmClient = new AnthropicLLMClient(apiKey, resolvedModel);
+      routingCtx.modelId = resolvedModel;
     }
 
     const routingResult: IntentRoutingResult = await routeIntent(text, routingCtx);

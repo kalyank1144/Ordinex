@@ -40,17 +40,22 @@ const STRONG_PATTERNS: Array<{ pattern: RegExp; description: string }> = [
   // Explicit creation verbs (all conjugations: create/created/creating/creates)
   // followed by project/app nouns
   {
-    pattern: /\b(creat(?:e|ed|es|ing)|build(?:s|ing)?|built|mak(?:e|es|ing)|made|start(?:s|ed|ing)?|scaffold(?:s|ed|ing)?|setup|sett?ing\s+up|spinn?ing\s+up|initializ(?:e|ed|es|ing)|init)\b.*\b(app|application|project|site|website|dashboard|webapp|web\s+app)\b/i,
+    pattern: /\b(creat(?:e|ed|es|ing)|build(?:s|ing)?|built|mak(?:e|es|ing)|made|start(?:s|ed|ing)?|scaffold(?:s|ed|ing)?|setup|sett?ing\s+up|spinn?ing\s+up|initializ(?:e|ed|es|ing)|init)\b.*\b(app|application|project|site|website|dashboard|webapp|web\s+app|landing\s+page|portfolio|storefront|admin\s+panel)\b/i,
     description: 'creation verb + project noun',
+  },
+  // "Build me a [page type]" — very common, "page" alone is a build target
+  {
+    pattern: /\b(creat(?:e|ed|es|ing)|build(?:s|ing)?|built|mak(?:e|es|ing)|made)\s+(?:me\s+)?(?:a\s+)?(?:\w+\s+)?(?:page|pages)\b/i,
+    description: 'creation verb + page',
   },
   // "I want/need to [verb] a [noun]" — very common phrasing
   {
-    pattern: /\b(want|need|like|going)\s+to\s+(create|build|make|start|scaffold|setup|initialize)\b.*\b(app|application|project|site|website|dashboard|webapp|web\s+app)\b/i,
+    pattern: /\b(want|need|like|going)\s+to\s+(create|build|make|start|scaffold|setup|initialize)\b.*\b(app|application|project|site|website|dashboard|webapp|web\s+app|landing\s+page|page|portfolio)\b/i,
     description: 'want/need to + creation verb + noun',
   },
   // Reversed: project noun followed by creation verb
   {
-    pattern: /\b(new|fresh|blank)\b.*\b(app|application|project|site|website|dashboard|webapp|web\s+app)\b/i,
+    pattern: /\b(new|fresh|blank)\b.*\b(app|application|project|site|website|dashboard|webapp|web\s+app|landing\s+page|page|portfolio)\b/i,
     description: 'new/fresh/blank + project noun',
   },
   // Explicit greenfield/scratch phrases
@@ -70,7 +75,7 @@ const STRONG_PATTERNS: Array<{ pattern: RegExp; description: string }> = [
   },
   // Specific app type patterns (all verb conjugations)
   {
-    pattern: /\b(new|creat(?:e|ed|es|ing)|build(?:s|ing)?|built|mak(?:e|es|ing)|made)\b.*\b(fitness|todo|to-do|workout|tracker|ecommerce|e-commerce|blog|chat|social|mobile|web)\b.*\b(app|application|project|page|site)?\b/i,
+    pattern: /\b(new|creat(?:e|ed|es|ing)|build(?:s|ing)?|built|mak(?:e|es|ing)|made)\b.*\b(fitness|todo|to-do|workout|tracker|ecommerce|e-commerce|blog|chat|social|mobile|web|landing|portfolio|saas|store|marketplace|admin)\b.*\b(app|application|project|page|site)?\b/i,
     description: 'creation verb + app type',
   },
 ];
@@ -87,7 +92,7 @@ const WEAK_SIGNAL_KEYWORDS = {
   /** Creation verbs (weak signal alone) */
   verbs: ['create', 'build', 'make', 'start', 'scaffold', 'setup', 'init', 'initialize', 'spin', 'bootstrap'],
   /** Target nouns (weak signal alone) */
-  nouns: ['app', 'application', 'project', 'website', 'site', 'dashboard', 'webapp'],
+  nouns: ['app', 'application', 'project', 'website', 'site', 'dashboard', 'webapp', 'page', 'portfolio', 'storefront', 'panel'],
   /** Newness indicators */
   newness: ['new', 'fresh', 'blank', 'scratch', 'greenfield', 'starter', 'template'],
   /** Framework names */
