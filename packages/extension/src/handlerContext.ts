@@ -127,4 +127,8 @@ export interface IProvider {
 
   /** Step 47: Set module-level global task ID for deactivate() crash recovery. */
   setGlobalCurrentTaskId(taskId: string | null): void;
+
+  // ─── Memory System (5-Layer) ───
+  getRulesContext(activeFile?: string): Promise<string>;
+  getSessionContext(): Promise<string>;
 }

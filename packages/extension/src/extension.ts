@@ -46,6 +46,14 @@ import { FsMemoryService } from './fsMemoryService';
 import { FsToolRegistryService } from './fsToolRegistryService';
 import { FsTaskPersistenceService } from './fsTaskPersistenceService';
 import { FsUndoService } from './fsUndoService';
+import { FsRulesService } from './fsRulesService';
+import { FsSessionService } from './fsSessionService';
+import { FsEnhancedMemoryService } from './fsEnhancedMemoryService';
+import { AutoMemorySubscriber } from './autoMemorySubscriber';
+import { WasmEmbeddingService } from './wasmEmbeddingService';
+import type { EmbeddingStatus } from './wasmEmbeddingService';
+import type { Rule } from 'core';
+import { loadRules, buildRulesContext, compressSession, buildSessionContext } from 'core';
 
 // R2: Extracted handler imports
 import type { IProvider } from './handlerContext';
@@ -125,6 +133,16 @@ class MissionControlViewProvider implements vscode.WebviewViewProvider {
   private _projectMemoryManager: ProjectMemoryManager | null = null;
   public recentEventsWindow: Event[] = [];
   private _toolRegistryService: FsToolRegistryService | null = null;
+
+  // Memory System (5-Layer)
+  private _rulesService: FsRulesService | null = null;
+  private _sessionService: FsSessionService | null = null;
+  private _enhancedMemoryService: FsEnhancedMemoryService | null = null;
+  private _autoMemorySubscriber: AutoMemorySubscriber | null = null;
+  private _embeddingService: WasmEmbeddingService | null = null;
+  private _embeddingInitPromise: Promise<boolean> | null = null;
+  private _cachedRules: Rule[] | null = null;
+  private _cachedSessionContext: string | null = null;
   private _generatedToolManager: GeneratedToolManager | null = null;
   private _taskPersistenceService: FsTaskPersistenceService | null = null;
   private _undoStack: UndoStack | null = null;
@@ -150,6 +168,9 @@ class MissionControlViewProvider implements vscode.WebviewViewProvider {
 
     // P2-1: Watch for workspace folder changes to invalidate cached services
     this.setupWorkspaceChangeListener();
+
+    // Layer 5: Initialize embedding service at startup (non-blocking)
+    this.initEmbeddingService();
   }
 
   // -------------------------------------------------------------------------
@@ -239,6 +260,192 @@ class MissionControlViewProvider implements vscode.WebviewViewProvider {
       this._projectMemoryManager = new ProjectMemoryManager(this._memoryService, publisher);
     }
     return this._projectMemoryManager;
+  }
+
+  // -------------------------------------------------------------------------
+  // Memory System — Lazy initialization (Layers 1-5)
+  // -------------------------------------------------------------------------
+
+  private getMemoryRoot(): string | null {
+    const workspaceRoot = this.getWorkspaceRoot();
+    return workspaceRoot ? path.join(workspaceRoot, '.ordinex', 'memory') : null;
+  }
+
+  public getRulesService(): FsRulesService {
+    if (!this._rulesService) {
+      this._rulesService = new FsRulesService();
+    }
+    return this._rulesService;
+  }
+
+  public getSessionService(): FsSessionService | null {
+    const memoryRoot = this.getMemoryRoot();
+    if (!memoryRoot) return null;
+    if (!this._sessionService) {
+      this._sessionService = new FsSessionService(memoryRoot);
+    }
+    return this._sessionService;
+  }
+
+  public getEnhancedMemoryService(): FsEnhancedMemoryService | null {
+    const memoryRoot = this.getMemoryRoot();
+    if (!memoryRoot) return null;
+    if (!this._enhancedMemoryService) {
+      this._enhancedMemoryService = new FsEnhancedMemoryService(memoryRoot);
+    }
+    return this._enhancedMemoryService;
+  }
+
+  public getAutoMemorySubscriber(): AutoMemorySubscriber | null {
+    const enhancedMemory = this.getEnhancedMemoryService();
+    if (!enhancedMemory) return null;
+    if (!this._autoMemorySubscriber) {
+      this._autoMemorySubscriber = new AutoMemorySubscriber(
+        enhancedMemory,
+        () => {
+          // LLM client factory — returns null if no API key available
+          const apiKey = this._context.secrets.get('ordinex.apiKey');
+          if (!apiKey) return null;
+          const { AnthropicLLMClient } = require('./anthropicLLMClient');
+          const client = new AnthropicLLMClient(apiKey as any);
+          return {
+            complete: async (prompt: string) => {
+              const response = await client.createMessage({
+                model: 'claude-sonnet-4-20250514',
+                max_tokens: 500,
+                system: 'You extract project learnings as JSON.',
+                messages: [{ role: 'user', content: prompt }],
+              });
+              const textBlock = response.content.find((b: any) => b.type === 'text');
+              return textBlock?.text || '';
+            },
+          };
+        },
+      );
+    }
+    return this._autoMemorySubscriber;
+  }
+
+  /**
+   * Load rules context for injection into system prompt.
+   * Cached per session — invalidated on workspace change.
+   */
+  public async getRulesContext(activeFile?: string): Promise<string> {
+    const workspaceRoot = this.getWorkspaceRoot();
+    if (!workspaceRoot) return '';
+
+    if (!this._cachedRules) {
+      try {
+        this._cachedRules = await loadRules(workspaceRoot, this.getRulesService());
+      } catch (err) {
+        console.warn('[Rules] Failed to load rules:', err);
+        return '';
+      }
+    }
+
+    return buildRulesContext(this._cachedRules, activeFile);
+  }
+
+  /**
+   * Load recent session context for injection.
+   * Cached per activation — loaded once.
+   */
+  public async getSessionContext(): Promise<string> {
+    if (this._cachedSessionContext !== null) return this._cachedSessionContext;
+
+    const sessionService = this.getSessionService();
+    if (!sessionService) {
+      this._cachedSessionContext = '';
+      return '';
+    }
+
+    try {
+      const recentSessions = await sessionService.loadRecentSessions(2);
+      this._cachedSessionContext = buildSessionContext(recentSessions);
+    } catch (err) {
+      console.warn('[Session] Failed to load session context:', err);
+      this._cachedSessionContext = '';
+    }
+
+    return this._cachedSessionContext;
+  }
+
+  /**
+   * Compress and save the current task's session at task end.
+   */
+  public async saveCurrentSession(taskId: string): Promise<void> {
+    const sessionService = this.getSessionService();
+    if (!sessionService || !this.eventStore) return;
+
+    try {
+      const events = this.eventStore.getEventsByTaskId(taskId) || [];
+      if (events.length === 0) return;
+
+      const summary = compressSession(events);
+      if (!summary) return;
+
+      await sessionService.saveSession(summary);
+      this._cachedSessionContext = null;
+      console.log(`[Session] Saved session summary for ${taskId}`);
+    } catch (err) {
+      console.warn('[Session] Failed to save session:', err);
+    }
+  }
+
+  // -------------------------------------------------------------------------
+  // Layer 5: Embedding Service — initialization + error surfacing
+  // -------------------------------------------------------------------------
+
+  /**
+   * Initialize the embedding service at extension startup.
+   * Non-blocking — runs in background, surfaces errors via VS Code UI.
+   */
+  private initEmbeddingService(): void {
+    this._embeddingService = new WasmEmbeddingService((status: EmbeddingStatus) => {
+      if (!status.available && status.error) {
+        const actionLabel = status.reason === 'package_not_installed'
+          ? 'Install Package'
+          : 'Retry';
+
+        vscode.window.showWarningMessage(
+          `Ordinex Semantic Memory: ${status.error}`,
+          actionLabel,
+          'Dismiss',
+        ).then(action => {
+          if (action === 'Install Package') {
+            const terminal = vscode.window.createTerminal('Ordinex Setup');
+            terminal.show();
+            terminal.sendText('pnpm add @huggingface/transformers');
+          } else if (action === 'Retry') {
+            this._embeddingService?.reinitialize().catch(err =>
+              console.error('[Embeddings] Reinitialize failed:', err),
+            );
+          }
+        });
+      }
+    });
+
+    this._embeddingInitPromise = this._embeddingService.initialize().catch(err => {
+      console.error('[Embeddings] Startup init failed:', err);
+      return false;
+    });
+  }
+
+  /**
+   * Get the embedding service (may not be available yet).
+   * Callers should check isAvailable() before using embed().
+   */
+  public getEmbeddingService(): WasmEmbeddingService | null {
+    return this._embeddingService;
+  }
+
+  /**
+   * Wait for embedding service initialization to complete.
+   * Returns true if available, false otherwise.
+   */
+  public async waitForEmbeddings(): Promise<boolean> {
+    if (!this._embeddingInitPromise) return false;
+    return this._embeddingInitPromise;
   }
 
   // -------------------------------------------------------------------------
@@ -343,6 +550,8 @@ class MissionControlViewProvider implements vscode.WebviewViewProvider {
     // A2: Clear conversation history for the ended task
     // (keep other tasks' histories in case of multi-task scenarios)
     await this.clearTaskPersistence();
+    // Layer 3: Reset auto-memory extraction state for next task
+    this._autoMemorySubscriber?.resetForNewTask();
   }
 
   // -------------------------------------------------------------------------
@@ -1081,6 +1290,7 @@ class MissionControlViewProvider implements vscode.WebviewViewProvider {
   /**
    * V3: Check if an event triggers solution capture.
    * Maintains a sliding window of recent events (max 50).
+   * Also triggers auto-memory extraction (Layer 3).
    */
   public async checkSolutionCapture(event: Event, runId: string): Promise<void> {
     this.recentEventsWindow.push(event);
@@ -1095,6 +1305,21 @@ class MissionControlViewProvider implements vscode.WebviewViewProvider {
     });
     if (candidate) {
       await pmm.captureSolution(candidate.solution, event.task_id, event.mode);
+    }
+
+    // Layer 3: Auto-memory extraction (non-blocking)
+    const autoMemory = this.getAutoMemorySubscriber();
+    if (autoMemory) {
+      autoMemory.onEvent(event, this.recentEventsWindow).catch(err =>
+        console.warn('[AutoMemory] Extraction check failed:', err),
+      );
+    }
+
+    // Layer 4: Save session on task completion events
+    if (event.type === 'mission_completed' || event.type === 'loop_completed') {
+      this.saveCurrentSession(event.task_id).catch(err =>
+        console.warn('[Session] Save failed:', err),
+      );
     }
   }
 
@@ -1185,6 +1410,15 @@ class MissionControlViewProvider implements vscode.WebviewViewProvider {
     this._undoStack = null;
     this._fsUndoService = null;
     this._undoBeforeCache.clear();
+
+    // Memory system services
+    this._sessionService = null;
+    this._enhancedMemoryService = null;
+    this._autoMemorySubscriber = null;
+    this._cachedRules = null;
+    this._cachedSessionContext = null;
+    // Re-init embeddings on workspace change (non-blocking)
+    this.initEmbeddingService();
 
     // Core-level module singletons
     resetSessionContextManager();

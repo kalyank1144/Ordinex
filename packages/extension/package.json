@@ -171,6 +171,7 @@
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.32.1",
+    "@huggingface/transformers": "^3.8.1",
     "core": "workspace:*",
     "webview": "workspace:*"
   }

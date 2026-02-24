@@ -180,12 +180,33 @@ export async function handleAgentMode(
       });
     }
 
-    // Priority 3: Activity context from events
+    // Priority 3: Rules context (Layer 1 — always-on rules)
+    try {
+      const activeFile = vscode.window.activeTextEditor?.document.uri.fsPath;
+      const rulesCtx = await ctx.getRulesContext(activeFile);
+      if (rulesCtx) {
+        contextLayers.push({ label: 'rules', content: rulesCtx, priority: 3 });
+      }
+    } catch (err) {
+      console.warn('[Agent] Failed to load rules context:', err);
+    }
+
+    // Priority 4: Session continuity (Layer 4 — previous session summaries)
+    try {
+      const sessionCtx = await ctx.getSessionContext();
+      if (sessionCtx) {
+        contextLayers.push({ label: 'session_context', content: sessionCtx, priority: 4 });
+      }
+    } catch (err) {
+      console.warn('[Agent] Failed to load session context:', err);
+    }
+
+    // Priority 5: Activity context from events
     if (ctx.eventStore) {
       const events = ctx.eventStore.getEventsByTaskId(taskId) || [];
       if (events.length > 0) {
         const activityCtx = buildRecentActivityContext(events);
-        contextLayers.push({ label: 'activity_context', content: activityCtx, priority: 3 });
+        contextLayers.push({ label: 'activity_context', content: activityCtx, priority: 5 });
       }
     }
 

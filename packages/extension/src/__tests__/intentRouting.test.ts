@@ -8,8 +8,9 @@
 
 import { describe, it, expect } from 'vitest';
 import { routeIntent } from 'core/src/intent/intentRouter';
-import type { LLMClient, LLMClientResponse, ConversationMessage, ToolSchema } from 'core/src/agenticLoop';
-import type { ToolChoice } from 'core/src/toolSchemas';
+import type { LLMClient, LLMClientResponse } from 'core/src/agenticLoop';
+import type { ConversationMessage } from 'core/src/conversationHistory';
+import type { ToolSchema, ToolChoice } from 'core/src/toolSchemas';
 import type { WorkspaceState } from 'core/src/intent/intentRouter';
 
 // ---------------------------------------------------------------------------

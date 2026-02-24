@@ -1,7 +1,7 @@
 # Ordinex — Verified Roadmap
 
-> Last verified: 2026-02-23
-> Tests: **1,845 passing** (65 core + 1 extension = 66 test files)
+> Last verified: 2026-02-24
+> Tests: **2,169 passing** (70 core + 5 extension + 2 webview = 77 test files)
 > Branch: `step-45-settings-panel-and-fixes`
 > Architecture: pnpm monorepo — `core` (pure logic) | `extension` (VS Code + FS) | `webview` (UI)
 
@@ -36,6 +36,7 @@ These features have **real implementations with tests** — not stubs.
 | Decision Records | 54 | decisionStore.ts | Yes | 284 |
 | Scope Manager + Impact Assessment | 55 | scopeManager.ts | Yes | 349 |
 | Project Memory (V2-V5) | V2-V5 | memoryService.ts, projectMemoryManager.ts, fsMemoryService.ts | 29 tests | 400+ |
+| Next-Gen Memory System (5-Layer) | P1-3+ | rulesLoader.ts, memoryDocument.ts, sessionCompressor.ts, autoMemoryExtractor.ts, embeddingService.ts + 4 extension services | 150+ tests | 1800+ |
 | Solution Capture | V3 | solutionCaptureSubscriber.ts | Yes | 150+ |
 | Generated Tools (V6-V8) | V6-V8 | toolRegistryService.ts, generatedToolManager.ts, generatedToolRunner.ts | 37 tests | 600+ |
 | Agent Mode Policy (V9) | V9 | modeManager.ts (isEscalation, isDowngrade, 4 enforcement boundaries) | 24 tests | 170+ |
@@ -289,7 +290,7 @@ These features have **real implementations with tests** — not stubs.
 | # | Issue | Status | Severity | Details |
 |---|-------|--------|----------|---------|
 | P1-1 | Task persistence sync cleanup | Partial | LOW-MED | `fsTaskPersistenceService.ts` uses `unlinkSync` in async methods |
-| P1-3 | Memory context unredacted | **OPEN** | MEDIUM | `contextEnricher.ts` injects raw facts/solutions without `redactSecrets()` |
+| P1-3 | Memory context unredacted | **COMPLETE** | MEDIUM | 5-layer memory system: rules, MEMORY.md CRUD, session continuity, auto-memory, semantic retrieval |
 | P2-1 | Workspace services cached | **OPEN** | MEDIUM | Lazy singletons never invalidated. No `onDidChangeWorkspaceFolders` listener |
 | P2-2 | UI card flicker | Fixed | - | MissionFeed uses incremental `replaceWith()` |
 | P2-3 | Sync FS in hot paths | **OPEN** | MEDIUM | 44 instances of sync FS ops in extension/webview |
@@ -349,6 +350,7 @@ LLM-First Intent Classification ✅
 | AgenticLoop | `agenticLoop.ts`, `toolSchemas.ts` (with ToolChoice), `conversationHistory.ts`, `stagedEditBuffer.ts`, `stagedToolProvider.ts`, `loopSessionState.ts` |
 | Scaffold | `scaffold/pipelineRunner.ts`, `scaffold/pipelineTypes.ts`, `scaffold/stages/` (init, designSystem, featureGeneration, qualityGate, summary), `scaffold/featureExtractor.ts`, `scaffold/featureCodeGenerator.ts`, `scaffold/featureApplicator.ts`, `scaffold/designPacks.ts`, `scaffold/overlayApplier.ts`, `scaffold/debugLog.ts` |
 | Intelligence | `intelligence/contextEnricher.ts`, `intelligence/memoryService.ts`, `intelligence/projectMemoryManager.ts`, `intelligence/solutionCaptureSubscriber.ts`, `intelligence/toolRegistryService.ts`, `intelligence/generatedToolManager.ts` |
+| Memory System | `memory/rulesLoader.ts`, `memory/memoryDocument.ts`, `memory/sessionCompressor.ts`, `memory/autoMemoryExtractor.ts`, `memory/embeddingService.ts`, `memory/index.ts` |
 | Retrieval | `retrieval/retriever.ts`, `retrieval/indexer.ts` |
 | Mission | `missionRunner.ts`, `missionExecutor.ts`, `planGenerator.ts` |
 | Diff/Test/Repair | `diffManager.ts`, `diffProposalGenerator.ts` (V1 stub), `testRunner.ts`, `repairOrchestrator.ts` |
@@ -378,6 +380,11 @@ LLM-First Intent Classification ✅
 | `vscodeWorkspaceWriter.ts` | File writer |
 | `vscodeCheckpointManager.ts` | Checkpoint manager |
 | `fsMemoryService.ts` | FS impl for memory |
+| `fsRulesService.ts` | FS impl for rules (Layer 1) |
+| `fsSessionService.ts` | FS impl for session persistence (Layer 4) |
+| `fsEnhancedMemoryService.ts` | Enhanced memory with CRUD (Layer 2) |
+| `autoMemorySubscriber.ts` | Event-triggered extraction (Layer 3) |
+| `wasmEmbeddingService.ts` | WASM embeddings (Layer 5) |
 | `fsToolRegistryService.ts` | FS impl for tool registry |
 | `fsTaskPersistenceService.ts` | FS impl for crash recovery |
 | `fsUndoService.ts` | FS impl for undo |

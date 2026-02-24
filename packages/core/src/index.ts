@@ -1298,3 +1298,93 @@ export type {
   WebVersions,
   MobileVersions,
 } from './scaffold/ordinexVersions';
+
+// ============================================================================
+// Memory System (5-Layer Architecture)
+// ============================================================================
+
+// Layer 1: Rules
+export {
+  loadRules,
+  buildRulesContext,
+  globMatch,
+} from './memory/rulesLoader';
+
+export type {
+  Rule,
+  RulesService,
+} from './memory/rulesLoader';
+
+// Layer 2: Memory Document (ID-Based CRUD)
+export {
+  MEMORY_SECTIONS,
+  generateFactId,
+  parseMemoryDocument,
+  serializeMemoryDocument,
+  serializeMetadata,
+  addFact,
+  updateFact,
+  removeFact,
+  listFacts,
+  markFactReferenced,
+  getMemoryContext,
+  migrateFromFactsMd,
+  createEmptyDocument,
+} from './memory/memoryDocument';
+
+export type {
+  MemorySection,
+  MemoryFact,
+  MemoryDocument,
+  MemoryMetadata,
+} from './memory/memoryDocument';
+
+// Layer 3: Auto Memory (Event-Triggered Extraction)
+export {
+  shouldExtract,
+  buildAutoMemoryPrompt,
+  parseExtractionResult,
+  deduplicateFacts,
+  shouldSkipDueToFactCount,
+  createExtractionState,
+  recordExtraction,
+} from './memory/autoMemoryExtractor';
+
+export type {
+  TriggerMatch,
+  ExtractedFact,
+  ExtractionState,
+} from './memory/autoMemoryExtractor';
+
+// Layer 4: Session Continuity
+export {
+  compressSession,
+  serializeSession,
+  parseSessionHeader,
+  buildSessionContext,
+} from './memory/sessionCompressor';
+
+export type {
+  SessionSummary,
+  FileChange,
+  CommandRun,
+  DecisionMade,
+  ErrorFixed,
+} from './memory/sessionCompressor';
+
+// Layer 5: Embedding Service
+export {
+  cosineSimilarity,
+  createEmptySidecar,
+  upsertEmbedding,
+  removeEmbedding,
+  queryBySimilarity,
+  sidecarNeedsRebuild,
+} from './memory/embeddingService';
+
+export type {
+  EmbeddingService,
+  EmbeddingSidecar,
+  EmbeddingEntry,
+  ScoredItem,
+} from './memory/embeddingService';
