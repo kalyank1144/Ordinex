@@ -118,12 +118,8 @@ export interface IProvider {
     updates: Partial<Pick<ActiveTaskMetadata, 'mode' | 'stage' | 'last_checkpoint_id'>>,
   ): Promise<void>;
   clearTaskPersistence(): Promise<void>;
-  resetCurrentTask(): void;
-  checkSolutionCapture(event: Event): void;
   captureForUndo(event: Event): Promise<void>;
-  syncUndoStateToWebview(): void;
   getLastAppliedDiff(events: Event[]): { files: string[]; timestamp: string } | undefined;
-  handleGetEvents(taskId?: string): Promise<void>;
 
   /** Step 47: Set module-level global task ID for deactivate() crash recovery. */
   setGlobalCurrentTaskId(taskId: string | null): void;

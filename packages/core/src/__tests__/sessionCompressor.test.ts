@@ -88,6 +88,23 @@ describe('compressSession', () => {
     expect(summary.commandsRun[0].command).toBe('pnpm test');
   });
 
+  it('merges exit code from tool_end into existing tool_start entry', () => {
+    const events = [
+      makeEvent({
+        type: 'tool_start',
+        payload: { tool: 'run_command', command: 'pnpm test' },
+      }),
+      makeEvent({
+        type: 'tool_end',
+        payload: { tool: 'run_command', command: 'pnpm test', exit_code: 1 },
+      }),
+    ];
+    const summary = compressSession(events)!;
+    expect(summary.commandsRun).toHaveLength(1);
+    expect(summary.commandsRun[0].command).toBe('pnpm test');
+    expect(summary.commandsRun[0].exitCode).toBe(1);
+  });
+
   it('ignores non-run_command tools', () => {
     const events = [
       makeEvent({ type: 'tool_start', payload: { tool: 'read_file', path: 'a.ts' } }),

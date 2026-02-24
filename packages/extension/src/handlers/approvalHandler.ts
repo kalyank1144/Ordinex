@@ -27,6 +27,7 @@ import {
 } from 'core';
 import * as path from 'path';
 import * as vscode from 'vscode';
+import { fileExists } from '../utils/fsAsync';
 
 // ---------------------------------------------------------------------------
 // handleResolveApproval
@@ -614,8 +615,7 @@ export async function handleResolveDecisionPoint(
               terminalCloseListener.dispose();
               // Give filesystem a moment to flush
               await new Promise(r => setTimeout(r, 1000));
-              const fs = await import('fs');
-              if (!fs.existsSync(scaffoldTargetPkg)) {
+              if (!(await fileExists(scaffoldTargetPkg))) {
                 console.error('[handleResolveDecisionPoint] Scaffold terminal closed before project was created');
                 await ctx.emitEvent({
                   event_id: ctx.generateId(),

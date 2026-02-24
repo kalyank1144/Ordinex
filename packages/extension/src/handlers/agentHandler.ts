@@ -21,6 +21,7 @@ import {
 import type { ContextLayer } from 'core';
 import { AnthropicLLMClient } from '../anthropicLLMClient';
 import { VSCodeToolProvider } from '../vsCodeToolProvider';
+import { fileExists } from '../utils/fsAsync';
 
 // ---------------------------------------------------------------------------
 // System prompt
@@ -103,7 +104,7 @@ export async function handleAgentMode(
       const folders = vscode.workspace.workspaceFolders;
       if (folders) {
         for (const folder of folders) {
-          if (fs.existsSync(path.join(folder.uri.fsPath, 'package.json'))) {
+          if (await fileExists(path.join(folder.uri.fsPath, 'package.json'))) {
             workspaceRoot = folder.uri.fsPath;
             break;
           }
@@ -111,9 +112,11 @@ export async function handleAgentMode(
         if (!workspaceRoot && folders.length > 0) {
           const root = folders[0].uri.fsPath;
           try {
-            for (const entry of fs.readdirSync(root).filter(e => !e.startsWith('.'))) {
+            const entries = await fs.promises.readdir(root);
+            for (const entry of entries.filter(e => !e.startsWith('.'))) {
               const ep = path.join(root, entry);
-              if (fs.statSync(ep).isDirectory() && fs.existsSync(path.join(ep, 'package.json'))) {
+              const stat = await fs.promises.stat(ep);
+              if (stat.isDirectory() && (await fileExists(path.join(ep, 'package.json')))) {
                 workspaceRoot = ep;
                 break;
               }

@@ -128,7 +128,12 @@ function extractCommandsRun(events: Event[]): CommandRun[] {
 
     const exitCode = event.payload.exit_code as number | undefined;
 
-    if (!commands.some(c => c.command === command)) {
+    const existing = commands.find(c => c.command === command);
+    if (existing) {
+      if (exitCode !== undefined) {
+        existing.exitCode = exitCode;
+      }
+    } else {
       commands.push({ command, exitCode });
     }
   }

@@ -20,8 +20,8 @@ import type {
   ProcessOutputEvent,
 } from 'core';
 import * as vscode from 'vscode';
-import * as fs from 'fs';
 import * as path from 'path';
+import { fileExists } from '../utils/fsAsync';
 import {
   EventBus,
   ScaffoldFlowCoordinator,
@@ -453,7 +453,7 @@ export async function handlePreflightProceed(
       if (closedTerminal !== scaffoldTerminalRef) return;
       terminalCloseListener.dispose();
       await new Promise(r => setTimeout(r, 1000));
-      if (!fs.existsSync(scaffoldTargetPkg)) {
+      if (!(await fileExists(scaffoldTargetPkg))) {
         console.error(`${LOG_PREFIX} Scaffold terminal closed before project was created`);
         await ctx.emitEvent({
           event_id: ctx.generateId(),
@@ -641,7 +641,7 @@ export async function handlePreflightProceed(
               for (const relPath of keyFiles) {
                 if (openedCount >= 3) break;
                 const absPath = path.join(result.projectPath, relPath);
-                if (fs.existsSync(absPath)) {
+                if (await fileExists(absPath)) {
                   const doc = await vscode.workspace.openTextDocument(absPath);
                   await vscode.window.showTextDocument(doc, { preview: false, preserveFocus: true });
                   openedCount++;

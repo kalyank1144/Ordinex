@@ -55,15 +55,14 @@ export class AutoMemorySubscriber {
     const trigger = shouldExtract(event, recentEvents, this.state);
     if (!trigger) return;
 
-    const doc = await this.memoryService.loadDocument();
-    if (shouldSkipDueToFactCount(doc.facts.length)) return;
-
-    const llmClient = this.llmClientFactory();
-    if (!llmClient) return;
-
     this.extracting = true;
 
     try {
+      const doc = await this.memoryService.loadDocument();
+      if (shouldSkipDueToFactCount(doc.facts.length)) return;
+
+      const llmClient = this.llmClientFactory();
+      if (!llmClient) return;
       const prompt = buildAutoMemoryPrompt(trigger, doc.facts);
       const response = await llmClient.complete(prompt);
       const extracted = parseExtractionResult(response);

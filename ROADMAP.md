@@ -289,12 +289,12 @@ These features have **real implementations with tests** — not stubs.
 
 | # | Issue | Status | Severity | Details |
 |---|-------|--------|----------|---------|
-| P1-1 | Task persistence sync cleanup | Partial | LOW-MED | `fsTaskPersistenceService.ts` uses `unlinkSync` in async methods |
+| P1-1 | Task persistence sync cleanup | **COMPLETE** | LOW-MED | All async methods already use `fsp.*`. Only `markCleanExitSync` (intentionally sync for VS Code deactivate) remains. |
 | P1-3 | Memory context unredacted | **COMPLETE** | MEDIUM | 5-layer memory system: rules, MEMORY.md CRUD, session continuity, auto-memory, semantic retrieval |
-| P2-1 | Workspace services cached | **OPEN** | MEDIUM | Lazy singletons never invalidated. No `onDidChangeWorkspaceFolders` listener |
+| P2-1 | Workspace services cached | **COMPLETE** | MEDIUM | `onDidChangeWorkspaceFolders` + file watchers for rules/MEMORY.md. Full `resetWorkspaceServices()` clears all lazy singletons, root caches, task state. |
 | P2-2 | UI card flicker | Fixed | - | MissionFeed uses incremental `replaceWith()` |
-| P2-3 | Sync FS in hot paths | **OPEN** | MEDIUM | 44 instances of sync FS ops in extension/webview |
-| P3-1 | `as unknown as IProvider` cast | **OPEN** | LOW | Single instance at `extension.ts`. Internal code only |
+| P2-3 | Sync FS in hot paths | **COMPLETE** | MEDIUM | Converted 35 sync FS ops to async (`fs.promises.*`) across 6 files. Shared `fileExists()` helper in `utils/fsAsync.ts`. `walkDir` uses `Promise.all` for concurrent sibling reads. Only `markCleanExitSync` (intentionally sync for VS Code deactivate) remains. |
+| P3-1 | `as unknown as IProvider` cast | **COMPLETE** | LOW | Class now `implements IProvider`. Added 3 missing fields (`activeScaffoldCoordinator`, `planModeContext`, `planModeOriginalPrompt`), changed `_extensionUri`/`_context` to public, removed 4 internal-only methods from interface, eliminated all 3 casts. |
 | P3-2 | No extension/webview tests | **OPEN** | HIGH | 1 extension test file, 0 webview test files. Biggest gap. See A8. |
 
 ---

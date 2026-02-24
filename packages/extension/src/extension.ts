@@ -104,9 +104,8 @@ import {
 let globalTaskPersistenceService: FsTaskPersistenceService | null = null;
 let globalCurrentTaskId: string | null = null;
 
-class MissionControlViewProvider implements vscode.WebviewViewProvider {
+class MissionControlViewProvider implements vscode.WebviewViewProvider, IProvider {
   public static readonly viewType = 'ordinex.missionControl';
-  // R2: Properties made public for handler access via IProvider interface
   public eventStore: EventStore | null = null;
   public currentTaskId: string | null = null;
   public currentMode: Mode = 'MISSION';
@@ -129,6 +128,9 @@ class MissionControlViewProvider implements vscode.WebviewViewProvider {
   public settingsPanel: vscode.WebviewPanel | null = null;
   public scaffoldProjectPath: string | null = null;
   public scaffoldSession: import('core').ScaffoldSession | null = null;
+  public activeScaffoldCoordinator: import('core').ScaffoldFlowCoordinator | null = null;
+  public planModeContext: import('core').LightContextBundle | null = null;
+  public planModeOriginalPrompt: string | null = null;
   private _memoryService: FsMemoryService | null = null;
   private _projectMemoryManager: ProjectMemoryManager | null = null;
   public recentEventsWindow: Event[] = [];
@@ -153,8 +155,8 @@ class MissionControlViewProvider implements vscode.WebviewViewProvider {
   public _webviewView: vscode.WebviewView | null = null;
 
   constructor(
-    private readonly _extensionUri: vscode.Uri,
-    private readonly _context: vscode.ExtensionContext
+    public readonly _extensionUri: vscode.Uri,
+    public readonly _context: vscode.ExtensionContext,
   ) {
     // Initialize event store
     const storePath = path.join(_context.globalStorageUri.fsPath, 'events.jsonl');
@@ -1037,7 +1039,7 @@ class MissionControlViewProvider implements vscode.WebviewViewProvider {
 
         try {
           await handleExecutePlan(
-            this as unknown as IProvider,
+            this,
             {
               taskId,
               planOverride: fixPlan,
@@ -1395,13 +1397,25 @@ class MissionControlViewProvider implements vscode.WebviewViewProvider {
 
   /**
    * Reset all cached workspace-specific services.
-   * Called when VS Code workspace folders change so that lazy getters
-   * re-initialize with the new workspace root on next access.
+   *
+   * Called when:
+   *  - VS Code workspace folders change (onDidChangeWorkspaceFolders)
+   *  - User selects a different workspace root via UI
+   *  - .ordinex/ configuration files change
+   *
+   * Every lazy singleton and cached value that derives from getWorkspaceRoot()
+   * must be nulled here so the next access re-initializes against the new root.
    */
   public resetWorkspaceServices(): void {
     console.log('[P2-1] Invalidating cached workspace services...');
 
-    // Extension-level lazy singletons
+    // Workspace root caches — these drive all service initialization
+    this.selectedWorkspaceRoot = null;
+    this.scaffoldProjectPath = null;
+    this.scaffoldSession = null;
+    this.activeScaffoldCoordinator = null;
+
+    // Extension-level lazy singletons (all workspace-dependent)
     this._projectMemoryManager = null;
     this._memoryService = null;
     this._generatedToolManager = null;
@@ -1411,13 +1425,14 @@ class MissionControlViewProvider implements vscode.WebviewViewProvider {
     this._fsUndoService = null;
     this._undoBeforeCache.clear();
 
-    // Memory system services
+    // Memory system services (Layers 1-5)
+    this._rulesService = null;
     this._sessionService = null;
     this._enhancedMemoryService = null;
     this._autoMemorySubscriber = null;
     this._cachedRules = null;
     this._cachedSessionContext = null;
-    // Re-init embeddings on workspace change (non-blocking)
+    this._embeddingInitPromise = null;
     this.initEmbeddingService();
 
     // Core-level module singletons
@@ -1437,9 +1452,13 @@ class MissionControlViewProvider implements vscode.WebviewViewProvider {
     this.recentEventsWindow = [];
     this.pendingCommandContexts.clear();
     this.conversationHistories.clear();
+    this.activeTerminals.clear();
     this.pendingPreflightResult = null;
     this.pendingPreflightInput = null;
     this.pendingPreflightCtx = null;
+    this.pendingVerifyTargetDir = null;
+    this.pendingVerifyRecipe = null;
+    this.pendingVerifyScaffoldId = null;
 
     // Clear module-level refs
     globalTaskPersistenceService = null;
@@ -1461,10 +1480,11 @@ class MissionControlViewProvider implements vscode.WebviewViewProvider {
   }
 
   /**
-   * Set up workspace folder change listener.
-   * Called from the constructor to register the subscription.
+   * Set up workspace folder change listener + config file watchers.
+   * Called from the constructor to register subscriptions.
    */
   public setupWorkspaceChangeListener(): void {
+    // 1. Workspace folder add/remove
     this._context.subscriptions.push(
       vscode.workspace.onDidChangeWorkspaceFolders((event) => {
         console.log('[P2-1] Workspace folders changed:', {
@@ -1472,7 +1492,40 @@ class MissionControlViewProvider implements vscode.WebviewViewProvider {
           removed: event.removed.map(f => f.uri.fsPath),
         });
         this.resetWorkspaceServices();
-      })
+      }),
+    );
+
+    // 2. Watch .ordinex/rules/*.md for changes → invalidate cached rules
+    const rulesWatcher = vscode.workspace.createFileSystemWatcher('**/.ordinex/rules/*.md');
+    rulesWatcher.onDidChange(() => {
+      console.log('[P2-1] Rules file changed, invalidating rules cache');
+      this._cachedRules = null;
+    });
+    rulesWatcher.onDidCreate(() => {
+      console.log('[P2-1] Rules file created, invalidating rules cache');
+      this._cachedRules = null;
+    });
+    rulesWatcher.onDidDelete(() => {
+      console.log('[P2-1] Rules file deleted, invalidating rules cache');
+      this._cachedRules = null;
+    });
+    this._context.subscriptions.push(rulesWatcher);
+
+    // 3. Watch MEMORY.md for external edits → invalidate memory cache
+    const memoryWatcher = vscode.workspace.createFileSystemWatcher('**/.ordinex/memory/MEMORY.md');
+    memoryWatcher.onDidChange(() => {
+      console.log('[P2-1] MEMORY.md changed externally, invalidating memory cache');
+      this._enhancedMemoryService?.invalidateCache();
+    });
+    this._context.subscriptions.push(memoryWatcher);
+
+    // 4. Watch VS Code configuration changes relevant to Ordinex
+    this._context.subscriptions.push(
+      vscode.workspace.onDidChangeConfiguration((event) => {
+        if (event.affectsConfiguration('ordinex')) {
+          console.log('[P2-1] Ordinex configuration changed');
+        }
+      }),
     );
   }
 
@@ -1515,8 +1568,7 @@ class MissionControlViewProvider implements vscode.WebviewViewProvider {
 
   private async handleMessage(message: any, webview: vscode.Webview) {
     console.log('Message from webview:', message);
-    // R2: Cast `this` to IProvider for extracted handler functions
-    const ctx = this as unknown as IProvider;
+    const ctx: IProvider = this;
 
     switch (message.type) {
       case 'ordinex:submitPrompt':
@@ -2244,7 +2296,7 @@ export function activate(context: vscode.ExtensionContext) {
 
       // Wire up message handling — delegate to extracted settings handler
       panel.webview.onDidReceiveMessage(async (message) => {
-        await handleSettingsMessageHandler(provider as unknown as IProvider, message, panel.webview);
+        await handleSettingsMessageHandler(provider, message, panel.webview);
       });
     })
   );
