@@ -43,6 +43,7 @@ export async function llmRoutes(app: FastifyInstance) {
 
     const client = getClient();
     const startTime = Date.now();
+    let settled = false;
 
     try {
       const response = await client.messages.create({
@@ -60,6 +61,8 @@ export async function llmRoutes(app: FastifyInstance) {
       const actualTokens = response.usage.input_tokens + response.usage.output_tokens;
 
       await settleCredits(app.db, userId, reservation.reserved, actualTokens);
+      settled = true;
+
       await logUsage(app.db, {
         userId,
         model,
@@ -71,7 +74,9 @@ export async function llmRoutes(app: FastifyInstance) {
 
       return reply.send(response);
     } catch (err: any) {
-      await settleCredits(app.db, userId, reservation.reserved, 0);
+      if (!settled) {
+        await settleCredits(app.db, userId, reservation.reserved, 0);
+      }
       if (err?.status) {
         return reply.code(err.status).send({
           error: err.message || 'Anthropic API error',
@@ -110,6 +115,7 @@ export async function llmRoutes(app: FastifyInstance) {
 
     let inputTokens = 0;
     let outputTokens = 0;
+    let settled = false;
 
     try {
       const stream = client.messages.stream({
@@ -136,6 +142,8 @@ export async function llmRoutes(app: FastifyInstance) {
       const actualTokens = inputTokens + outputTokens;
 
       await settleCredits(app.db, userId, reservation.reserved, actualTokens);
+      settled = true;
+
       await logUsage(app.db, {
         userId,
         model,
@@ -148,13 +156,19 @@ export async function llmRoutes(app: FastifyInstance) {
       reply.raw.write('event: done\ndata: {"type":"done"}\n\n');
       reply.raw.end();
     } catch (err: any) {
-      await settleCredits(app.db, userId, reservation.reserved, 0);
-      const errorEvent = {
-        type: 'error',
-        error: { message: err.message || 'Stream error' },
-      };
-      reply.raw.write(`event: error\ndata: ${JSON.stringify(errorEvent)}\n\n`);
-      reply.raw.end();
+      if (!settled) {
+        await settleCredits(app.db, userId, reservation.reserved, 0);
+      }
+      try {
+        const errorEvent = {
+          type: 'error',
+          error: { message: err.message || 'Stream error' },
+        };
+        reply.raw.write(`event: error\ndata: ${JSON.stringify(errorEvent)}\n\n`);
+        reply.raw.end();
+      } catch {
+        reply.raw.end();
+      }
     }
   });
 }

@@ -70,29 +70,37 @@ const MIN_CREDITS_TO_PROCEED = 1;
  * their balance (as long as they have at least MIN_CREDITS_TO_PROCEED).
  * Returns { reserved, remaining } on success, or null if the user has
  * no credits at all.
+ *
+ * Retries on contention: if a concurrent request changes the balance
+ * between SELECT and UPDATE, the conditional UPDATE fails (0 rows) and
+ * we re-read fresh data before trying again.
  */
 export async function reserveCredits(db: Database, userId: string, tokens: number): Promise<{ reserved: number; remaining: number } | null> {
-  const before = await db.select({ credits: users.creditsRemaining })
-    .from(users)
-    .where(eq(users.id, userId))
-    .limit(1);
+  const MAX_ATTEMPTS = 3;
 
-  if (before.length === 0 || before[0].credits < MIN_CREDITS_TO_PROCEED) {
-    return null;
+  for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
+    const before = await db.select({ credits: users.creditsRemaining })
+      .from(users)
+      .where(eq(users.id, userId))
+      .limit(1);
+
+    if (before.length === 0 || before[0].credits < MIN_CREDITS_TO_PROCEED) {
+      return null;
+    }
+
+    const toDeduct = Math.min(tokens, before[0].credits);
+
+    const result = await db.run(
+      sql`UPDATE users SET credits_remaining = credits_remaining - ${toDeduct}
+          WHERE id = ${userId} AND credits_remaining >= ${toDeduct}`
+    );
+
+    if (result.rowsAffected > 0) {
+      return { reserved: toDeduct, remaining: before[0].credits - toDeduct };
+    }
   }
 
-  const toDeduct = Math.min(tokens, before[0].credits);
-
-  const result = await db.run(
-    sql`UPDATE users SET credits_remaining = credits_remaining - ${toDeduct}
-        WHERE id = ${userId} AND credits_remaining >= ${toDeduct}`
-  );
-
-  if (result.rowsAffected === 0) {
-    return null;
-  }
-
-  return { reserved: toDeduct, remaining: before[0].credits - toDeduct };
+  return null;
 }
 
 export async function checkCredits(db: Database, userId: string): Promise<number> {
