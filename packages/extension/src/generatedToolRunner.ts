@@ -177,7 +177,7 @@ export async function runGeneratedTool(
   let code: string;
   try {
     const fs = require('fs');
-    code = fs.readFileSync(opts.code_path, 'utf-8');
+    code = await fs.promises.readFile(opts.code_path, 'utf-8');
   } catch (err) {
     return {
       success: false,

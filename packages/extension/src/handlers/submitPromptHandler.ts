@@ -27,15 +27,15 @@ import { AnthropicLLMClient } from '../anthropicLLMClient';
 import { handleAgentMode } from './agentHandler';
 import { handlePlanMode } from './planHandler';
 import { handleScaffoldFlow } from './scaffoldHandler';
+import { fileExists } from '../utils/fsAsync';
 
 // ---------------------------------------------------------------------------
 // resolveActiveProjectRoot — find the workspace folder that contains the project
 // ---------------------------------------------------------------------------
 
-function resolveActiveProjectRoot(ctx: IProvider): string | undefined {
-  // Validate stale scaffoldProjectPath — clear if directory no longer exists
+async function resolveActiveProjectRoot(ctx: IProvider): Promise<string | undefined> {
   if (ctx.scaffoldProjectPath) {
-    if (fs.existsSync(path.join(ctx.scaffoldProjectPath, 'package.json'))) {
+    if (await fileExists(path.join(ctx.scaffoldProjectPath, 'package.json'))) {
       return ctx.scaffoldProjectPath;
     }
     console.log('[resolveActiveProjectRoot] Stale scaffoldProjectPath cleared:', ctx.scaffoldProjectPath);
@@ -47,22 +47,23 @@ function resolveActiveProjectRoot(ctx: IProvider): string | undefined {
   const folders = vscode.workspace.workspaceFolders;
   if (!folders || folders.length === 0) return undefined;
 
-  // Check workspace folders for package.json (project root).
   for (const folder of folders) {
     const p = folder.uri.fsPath;
-    if (fs.existsSync(path.join(p, 'package.json'))) return p;
+    if (await fileExists(path.join(p, 'package.json'))) return p;
   }
 
   // Scaffold creates projects at <workspace>/<app-name>/. After reload,
   // the workspace folder is the parent. Check immediate subdirectories.
   const root = folders[0].uri.fsPath;
   try {
-    const entries = fs.readdirSync(root).filter(e => !e.startsWith('.'));
-    for (const entry of entries) {
+    const entries = await fs.promises.readdir(root);
+    const visible = entries.filter(e => !e.startsWith('.'));
+    for (const entry of visible) {
       const entryPath = path.join(root, entry);
       try {
-        if (fs.statSync(entryPath).isDirectory() &&
-            fs.existsSync(path.join(entryPath, 'package.json'))) {
+        const stat = await fs.promises.stat(entryPath);
+        if (stat.isDirectory() &&
+            (await fileExists(path.join(entryPath, 'package.json')))) {
           return entryPath;
         }
       } catch { /* skip */ }
@@ -76,13 +77,13 @@ function resolveActiveProjectRoot(ctx: IProvider): string | undefined {
 // getWorkspaceState — checks ALL workspace folders for project indicators
 // ---------------------------------------------------------------------------
 
-function getWorkspaceState(primaryRoot: string | undefined): WorkspaceState | undefined {
+async function getWorkspaceState(primaryRoot: string | undefined): Promise<WorkspaceState | undefined> {
   if (!primaryRoot) return undefined;
   try {
-    const entries = fs.readdirSync(primaryRoot);
+    const entries = await fs.promises.readdir(primaryRoot);
     const visible = entries.filter(e => !e.startsWith('.'));
-    let hasPackageJson = fs.existsSync(path.join(primaryRoot, 'package.json'));
-    let hasGitRepo = fs.existsSync(path.join(primaryRoot, '.git'));
+    let hasPackageJson = await fileExists(path.join(primaryRoot, 'package.json'));
+    let hasGitRepo = await fileExists(path.join(primaryRoot, '.git'));
     let fileCount = visible.length;
 
     // Scaffold creates projects at <workspace>/<app-name>/. After reload the
@@ -92,8 +93,9 @@ function getWorkspaceState(primaryRoot: string | undefined): WorkspaceState | un
       for (const entry of visible) {
         try {
           const entryPath = path.join(primaryRoot, entry);
-          if (fs.statSync(entryPath).isDirectory() &&
-              fs.existsSync(path.join(entryPath, 'package.json'))) {
+          const stat = await fs.promises.stat(entryPath);
+          if (stat.isDirectory() &&
+              (await fileExists(path.join(entryPath, 'package.json')))) {
             hasPackageJson = true;
             fileCount = Math.max(fileCount, 11);
             break;
@@ -102,13 +104,12 @@ function getWorkspaceState(primaryRoot: string | undefined): WorkspaceState | un
       }
     }
 
-    // Also check other workspace folders (multi-root workspaces).
     if (!hasPackageJson) {
       const folders = vscode.workspace.workspaceFolders || [];
       for (const folder of folders) {
         const fp = folder.uri.fsPath;
         if (fp === primaryRoot) continue;
-        if (fs.existsSync(path.join(fp, 'package.json'))) {
+        if (await fileExists(path.join(fp, 'package.json'))) {
           hasPackageJson = true;
           break;
         }
@@ -183,7 +184,7 @@ export async function handleSubmitPrompt(
     await ctx.updateTaskPersistence(taskId, { mode: userSelectedMode, stage: ctx.currentStage });
 
     // 2. Enrich user input with intelligence layer
-    const workspaceRoot = resolveActiveProjectRoot(ctx) || '';
+    const workspaceRoot = (await resolveActiveProjectRoot(ctx)) || '';
     const openFilePaths = vscode.workspace.textDocuments
       .filter(doc => doc.uri.scheme === 'file')
       .map(doc => doc.uri.fsPath);
@@ -233,7 +234,7 @@ export async function handleSubmitPrompt(
     }
 
     // 3. Workspace-aware scaffold detection
-    const wsState = getWorkspaceState(workspaceRoot || undefined);
+    const wsState = await getWorkspaceState(workspaceRoot || undefined);
     const isEmptyWorkspace = wsState && !wsState.hasPackageJson && wsState.fileCount <= 3;
     console.log('[Router] Workspace state:', {
       workspaceRoot,

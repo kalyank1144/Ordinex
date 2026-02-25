@@ -12,6 +12,7 @@ import * as path from 'path';
 import * as childProcess from 'child_process';
 import * as vscode from 'vscode';
 import type { ToolExecutionProvider, ToolExecutionResult } from 'core';
+import { fileExists } from './utils/fsAsync';
 
 /** Max file size we'll read (1 MB) */
 const MAX_READ_SIZE = 1_048_576;
@@ -66,7 +67,7 @@ export class VSCodeToolProvider implements ToolExecutionProvider {
   ): Promise<ToolExecutionResult> {
     try {
       const filePath = this.resolvePath(String(input.path || ''));
-      const stat = fs.statSync(filePath);
+      const stat = await fs.promises.stat(filePath);
       if (stat.size > MAX_READ_SIZE) {
         return {
           success: false,
@@ -74,7 +75,7 @@ export class VSCodeToolProvider implements ToolExecutionProvider {
           error: `File too large (${stat.size} bytes, max ${MAX_READ_SIZE})`,
         };
       }
-      let content = fs.readFileSync(filePath, 'utf-8');
+      let content = await fs.promises.readFile(filePath, 'utf-8');
       const offset = typeof input.offset === 'number' ? Math.max(0, Math.floor(input.offset)) : 0;
       const maxLines = typeof input.max_lines === 'number' ? Math.max(0, Math.floor(input.max_lines)) : 0;
       if (offset > 0 || maxLines > 0) {
@@ -107,13 +108,13 @@ export class VSCodeToolProvider implements ToolExecutionProvider {
       const filePath = this.resolvePath(String(input.path || ''));
       const content = String(input.content || '');
       const dir = path.dirname(filePath);
-      const isNew = !fs.existsSync(filePath);
-      const originalContent = isNew ? '' : fs.readFileSync(filePath, 'utf-8');
+      const isNew = !(await fileExists(filePath));
+      const originalContent = isNew ? '' : await fs.promises.readFile(filePath, 'utf-8');
 
-      if (!fs.existsSync(dir)) {
-        fs.mkdirSync(dir, { recursive: true });
+      if (!(await fileExists(dir))) {
+        await fs.promises.mkdir(dir, { recursive: true });
       }
-      fs.writeFileSync(filePath, content, 'utf-8');
+      await fs.promises.writeFile(filePath, content, 'utf-8');
 
       // Open the file in the editor and show diff
       await this.showFileChangeInEditor(filePath, originalContent, content, isNew ? 'created' : 'written');
@@ -143,11 +144,11 @@ export class VSCodeToolProvider implements ToolExecutionProvider {
       const oldText = String(input.old_text || '');
       const newText = String(input.new_text || '');
 
-      if (!fs.existsSync(filePath)) {
+      if (!(await fileExists(filePath))) {
         return { success: false, output: '', error: `File not found: ${input.path}` };
       }
 
-      const originalContent = fs.readFileSync(filePath, 'utf-8');
+      const originalContent = await fs.promises.readFile(filePath, 'utf-8');
       if (!originalContent.includes(oldText)) {
         return {
           success: false,
@@ -156,9 +157,8 @@ export class VSCodeToolProvider implements ToolExecutionProvider {
         };
       }
 
-      // Replace first occurrence only
       const updated = originalContent.replace(oldText, newText);
-      fs.writeFileSync(filePath, updated, 'utf-8');
+      await fs.promises.writeFile(filePath, updated, 'utf-8');
 
       // Open the file in the editor and show diff
       await this.showFileChangeInEditor(filePath, originalContent, updated, 'edited');
@@ -261,16 +261,16 @@ export class VSCodeToolProvider implements ToolExecutionProvider {
       const pattern = String(input.query || '');
       const glob = input.glob ? String(input.glob) : undefined;
 
-      // Use grep-like search (cross-platform via Node)
       const matches: string[] = [];
       const maxResults = 50;
+      const allFiles = await this.walkDir(this.workspaceRoot);
 
-      this.walkDir(this.workspaceRoot, (filePath) => {
-        if (matches.length >= maxResults) return;
-        if (glob && !this.matchGlob(filePath, glob)) return;
+      for (const filePath of allFiles) {
+        if (matches.length >= maxResults) break;
+        if (glob && !this.matchGlob(filePath, glob)) continue;
 
         try {
-          const content = fs.readFileSync(filePath, 'utf-8');
+          const content = await fs.promises.readFile(filePath, 'utf-8');
           const lines = content.split('\n');
           for (let i = 0; i < lines.length; i++) {
             if (matches.length >= maxResults) break;
@@ -282,7 +282,7 @@ export class VSCodeToolProvider implements ToolExecutionProvider {
         } catch {
           // Skip unreadable files
         }
-      });
+      }
 
       if (matches.length === 0) {
         return { success: true, output: `No matches found for "${pattern}"` };
@@ -309,11 +309,17 @@ export class VSCodeToolProvider implements ToolExecutionProvider {
   ): Promise<ToolExecutionResult> {
     try {
       const dirPath = this.resolvePath(String(input.path || '.'));
-      if (!fs.existsSync(dirPath) || !fs.statSync(dirPath).isDirectory()) {
+      let dirStat: fs.Stats;
+      try {
+        dirStat = await fs.promises.stat(dirPath);
+      } catch {
+        return { success: false, output: '', error: `Not a directory: ${input.path}` };
+      }
+      if (!dirStat.isDirectory()) {
         return { success: false, output: '', error: `Not a directory: ${input.path}` };
       }
 
-      const entries = fs.readdirSync(dirPath, { withFileTypes: true });
+      const entries = await fs.promises.readdir(dirPath, { withFileTypes: true });
       const lines = entries.map((e) => {
         const suffix = e.isDirectory() ? '/' : '';
         return `${e.name}${suffix}`;
@@ -341,29 +347,30 @@ export class VSCodeToolProvider implements ToolExecutionProvider {
     return resolved;
   }
 
-  /** Walk a directory tree, skipping node_modules/.git/etc. */
-  private walkDir(dir: string, callback: (filePath: string) => void): void {
-    const SKIP_DIRS = new Set([
-      'node_modules', '.git', 'dist', 'build', '.next', '.nuxt',
-      'coverage', '.cache', '__pycache__', '.venv', 'vendor',
-    ]);
+  private static readonly SKIP_DIRS = new Set([
+    'node_modules', '.git', 'dist', 'build', '.next', '.nuxt',
+    'coverage', '.cache', '__pycache__', '.venv', 'vendor',
+  ]);
 
+  /** Walk a directory tree concurrently, skipping node_modules/.git/etc. */
+  private async walkDir(dir: string, results: string[] = []): Promise<string[]> {
     try {
-      const entries = fs.readdirSync(dir, { withFileTypes: true });
-      for (const entry of entries) {
-        if (entry.name.startsWith('.') && entry.name !== '.env.example') continue;
+      const entries = await fs.promises.readdir(dir, { withFileTypes: true });
+      await Promise.all(entries.map(async (entry) => {
+        if (entry.name.startsWith('.') && entry.name !== '.env.example') return;
         const fullPath = path.join(dir, entry.name);
         if (entry.isDirectory()) {
-          if (!SKIP_DIRS.has(entry.name)) {
-            this.walkDir(fullPath, callback);
+          if (!VSCodeToolProvider.SKIP_DIRS.has(entry.name)) {
+            await this.walkDir(fullPath, results);
           }
         } else if (entry.isFile()) {
-          callback(fullPath);
+          results.push(fullPath);
         }
-      }
+      }));
     } catch {
       // Skip directories we can't read
     }
+    return results;
   }
 
   /** Simple glob matching (supports * and **) */

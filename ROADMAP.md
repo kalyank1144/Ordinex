@@ -1,7 +1,7 @@
 # Ordinex — Verified Roadmap
 
-> Last verified: 2026-02-13 (full codebase audit with 8 parallel agents)
-> Tests: **1,812 passing** (53 files, all in `packages/core/`)
+> Last verified: 2026-02-24
+> Tests: **2,169 passing** (70 core + 5 extension + 2 webview = 77 test files)
 > Branch: `step-45-settings-panel-and-fixes`
 > Architecture: pnpm monorepo — `core` (pure logic) | `extension` (VS Code + FS) | `webview` (UI)
 
@@ -14,16 +14,16 @@ These features have **real implementations with tests** — not stubs.
 | Feature | Step | Files | Tests | Lines |
 |---------|------|-------|-------|-------|
 | Event Sourcing (EventStore, EventBus, StateReducer) | 0-10 | 3 core files | Yes | 500+ |
-| Modes (ANSWER, PLAN, MISSION) + ModeManager | 11-20 | modeManager.ts | Yes | 170+ |
-| Intent Router (heuristic + LLM fallback) | 33-40 | 6 files in intent/ | Yes | 1000+ |
-| Greenfield Detector | 35.8 | greenfieldDetector.ts | Yes | 200+ |
-| User Command Detector | 34 | userCommandDetector.ts | Yes | 200+ |
-| LLM Intent Classifier (Haiku 4.5 fallback) | 40 | llmIntentClassifier.ts | Yes | 150+ |
+| Modes (Agent, Plan) + ModeManager | 11-20 | modeManager.ts | Yes | 170+ |
+| Intent Router (LLM-first + heuristic fallback) | 33-40 | 7 files in intent/ | Yes | 1200+ |
+| Greenfield Detector (offline fallback only) | 35.8 | greenfieldDetector.ts | Yes | 310 |
+| LLM Intent Classifier (tool_use + strict schema) | 40+ | intentClassifier.ts | Yes | 115 |
 | Scaffold Flow (recipes, design packs, apply) | 35 | 8 files in scaffold/ | Yes | 2000+ |
 | Feature Intelligence (extract, generate, apply) | 35.X | featureExtractor/CodeGenerator/Applicator.ts | 44 tests | 600+ |
-| Post-Scaffold Orchestrator + Verification | 35.X/44 | postScaffoldOrchestrator.ts, postVerify.ts | 39 tests | 800+ |
+| Post-Scaffold Pipeline (modular stages) | 35.X/44 | pipelineRunner.ts, 5 stage files, postVerify.ts | 39 tests | 1200+ |
 | Quality Gates + Preflight Checks | 43 | qualityGates.ts, preflightChecks.ts | Yes | 500+ |
-| Design Packs + Tailwind Config | 35.5 | designPacks.ts | Yes | 400+ |
+| Design Packs + OKLCH Engine + Tailwind Config | 35.5 | designPacks.ts, oklchEngine.ts | Yes | 400+ |
+| Design System Pipeline (prompt color extraction) | 35.X | stages/designSystem.ts, styleIntentResolver.ts | Yes | 800+ |
 | Vision Provider | 36 | anthropicVisionProvider.ts | - | 230+ |
 | Context Enricher + Session Manager | 40.5 | contextEnricher.ts, sessionContext.ts | Yes | 800+ |
 | ProcessManager + Dev Server Wiring | 41/S3 | processManager.ts, scaffoldHandler.ts | Yes | 400+ |
@@ -36,13 +36,14 @@ These features have **real implementations with tests** — not stubs.
 | Decision Records | 54 | decisionStore.ts | Yes | 284 |
 | Scope Manager + Impact Assessment | 55 | scopeManager.ts | Yes | 349 |
 | Project Memory (V2-V5) | V2-V5 | memoryService.ts, projectMemoryManager.ts, fsMemoryService.ts | 29 tests | 400+ |
+| Next-Gen Memory System (5-Layer) | P1-3+ | rulesLoader.ts, memoryDocument.ts, sessionCompressor.ts, autoMemoryExtractor.ts, embeddingService.ts + 4 extension services | 150+ tests | 1800+ |
 | Solution Capture | V3 | solutionCaptureSubscriber.ts | Yes | 150+ |
 | Generated Tools (V6-V8) | V6-V8 | toolRegistryService.ts, generatedToolManager.ts, generatedToolRunner.ts | 37 tests | 600+ |
 | Agent Mode Policy (V9) | V9 | modeManager.ts (isEscalation, isDowngrade, 4 enforcement boundaries) | 24 tests | 170+ |
 | Shared Card Helpers (R0) | R0 | cardHelpers.ts used by 28 card files | - | 100+ |
 | Event Tiering (R1) | R1 | 3-tier system in renderers.ts + MissionFeed.ts | - | - |
 | Extension Decomposition (R2) | R2 | 8 handler files in handlers/ + IProvider | - | 1654 (ext) |
-| Webview Decomposition (R3) | R3 | 13 CSS + 15 JS modules, index.ts: 246 lines | - | - |
+| Webview Decomposition (R3) | R3 | 14 CSS + 16 JS modules, index.ts: 246 lines | - | - |
 | ScaffoldCard Decomposition (R4) | R4 | 7 files in scaffoldRenderers/, ScaffoldCard: 326 lines | - | 1716 |
 | User Chat Bubble (I1) | I1 | intent_received as chat bubble | - | - |
 | AI Response Bubble (I2) | I2 | plan_created, streaming in assistant bubble | - | - |
@@ -58,19 +59,21 @@ These features have **real implementations with tests** — not stubs.
 | Model Registry (A10) | A10 | modelRegistry.ts (resolveModel, context windows, output limits) | Yes | 200+ |
 | Multi-Turn Conversation (A2) | A2 | conversationHistory.ts (sliding window, serialize, token estimation) | 114 tests | 400+ |
 | Token Counting (Task #5) | A2 | tokenCounter.ts (TokenCounter interface, improved estimator, validation) | 44 tests | 350+ |
-| Anthropic Tool Use (A3) | A3 | toolSchemas.ts, agenticLoop.ts (LLM↔tool loop, max iterations, token budget) | 67 tests | 800+ |
+| Anthropic Tool Use (A3) | A3 | toolSchemas.ts, agenticLoop.ts (LLM↔tool loop, tool_choice, strict schema) | 67 tests | 800+ |
 | Staged Edit Buffer (Task #6) | A3 | stagedEditBuffer.ts, stagedToolProvider.ts, loopSessionState.ts | 52 tests | 500+ |
 | LoopPausedCard | A3 | LoopPausedCard.ts (stats, staged files, Continue/Approve/Discard) | - | 150+ |
 | Retriever + Indexing Wired (A4) | A4 | missionExecutor.ts, missionHandler.ts (real Indexer+Retriever) | - | - |
 | TestRunner + Repair Wired (A5) | A5 | missionExecutor.ts, missionHandler.ts (real TestRunner+RepairOrchestrator) | - | - |
+| Streaming All Modes (A6) | A6 | Agent (AgenticLoop streaming), Plan (planGenerator streaming), Mission (missionExecutor streaming), Scaffold (heartbeat streaming) | - | - |
+| Plan Refine (A7) | A7 | refinePlan() in planGenerator.ts, ordinex:refinePlan handler in planHandler.ts | - | - |
+| Workspace Settings (A7) | A7 | settingsHandler.ts reads/writes vscode.workspace.getConfiguration('ordinex') | - | - |
+| Onboarding Flow (A9) | A9 | onboarding.ts (3-slide flow), onboarding.css, extension.ts first-run detection via globalState | - | 580+ |
 
-**Total: 1,812 tests passing across 53 test files (all in core)**
+**Total: 1,845 tests passing across 66 test files (65 core + 1 extension)**
 
 ---
 
 ## SECTION A: MUST-HAVE FOR WORKING PRODUCT
-
-These are **blockers** — without them, the extension cannot function as a real coding assistant.
 
 ---
 
@@ -79,30 +82,25 @@ These are **blockers** — without them, the extension cannot function as a real
 **Status**: NOT STARTED
 **Priority**: CRITICAL
 
-**Current state (verified)**:
-- 7 direct Anthropic API call sites, each creating its own `new Anthropic({ apiKey })` client
+**Current state**:
+- 7+ direct Anthropic API call sites, each creating its own `new Anthropic({ apiKey })` client
 - API key stored in VS Code SecretStorage (`context.secrets.get('ordinex.apiKey')`)
 - No rate limiting, usage tracking, or team/org support
-- `@anthropic-ai/sdk@^0.32.1` loaded via `require()` in core
+- `@anthropic-ai/sdk` loaded via dynamic import in extension
 - No `packages/server/` directory exists
-- No unified `apiClient.ts`
 
 **LLM call sites (all must be refactored)**:
 
 | File | Purpose | Call Type |
 |------|---------|-----------|
-| `core/src/llmService.ts` | ANSWER mode streaming | `client.messages.stream()` |
+| `core/src/llmService.ts` | Plan streaming | `client.messages.stream()` |
 | `core/src/llmEditTool.ts` | Mission edit diff generation | `client.messages.create()` |
 | `core/src/truncationSafeExecutor.ts` | Chunked edit execution | `client.messages.create()` |
-| `core/src/intent/llmIntentClassifier.ts` | Intent classification | Via LLMService |
+| `core/src/intent/intentClassifier.ts` | Intent classification (tool_use) | Via LLMClient |
 | `core/src/scaffold/featureExtractor.ts` | Feature extraction | Injected FeatureLLMClient |
 | `core/src/scaffold/featureCodeGenerator.ts` | Feature code generation | Injected FeatureLLMClient |
-| `core/src/scaffold/postScaffoldOrchestrator.ts` | Auto-fix after verify | Injected client |
 | `core/src/vision/anthropicVisionProvider.ts` | Vision/image analysis | Raw `fetch()` |
-
-**API key read locations** (6 handlers):
-- `answerHandler.ts:47`, `planHandler.ts:283,924`, `missionHandler.ts:168`
-- `submitPromptHandler.ts:266`, `scaffoldHandler.ts:470`, `approvalHandler.ts:649`
+| `extension/src/anthropicLLMClient.ts` | Agent mode (AgenticLoop) | `createMessage` / `createMessageStream` |
 
 **What to build**: A1.1 (Backend HTTP Server), A1.2 (Auth), A1.3 (LLM Proxy), A1.4 (Extension Client Refactor), A1.5 (Database)
 
@@ -111,37 +109,28 @@ These are **blockers** — without them, the extension cannot function as a real
 ### A2. Multi-Turn Conversation
 
 **Status**: COMPLETE (Feb 12, 2026)
-**Priority**: CRITICAL
 
-**Current state (verified)**:
-- Every LLM call sends `messages: [{ role: 'user', content: userQuestion }]` — single-shot, no history
-- No `ConversationHistory` class exists anywhere
-- `SessionContextManager` tracks topics/file mentions but does NOT store message history for API calls
-- User cannot have a back-and-forth conversation
-
-**What to build**:
-- [ ] `ConversationHistory` class — stores `{ role, content }[]` per task
-- [ ] Sliding window or summarization for context limits
-- [ ] Pass history to all LLM calls
-- [ ] Token counting for context window management
-- [ ] Conversation persistence + clear command
+**Implemented**:
+- `ConversationHistory` class — stores `{ role, content }[]` per task with sliding window
+- Token counting for context window management (`tokenCounter.ts`)
+- History passed to AgenticLoop and Plan generation
+- 114 tests for conversation history + 44 tests for token counting
 
 ---
 
 ### A3. Anthropic Tool Use (Function Calling)
 
-**Status**: COMPLETE (Feb 12, 2026)
-**Priority**: HIGH
+**Status**: COMPLETE (Feb 12, 2026; enhanced Feb 23, 2026)
 
 **Implemented**:
 - 6 Anthropic tool schemas in `toolSchemas.ts` (read_file, write_file, edit_file, run_command, search_files, list_directory)
-- Full AgenticLoop in `agenticLoop.ts` — LLM↔tool execution loop (max iterations, token budget, event emission, error handling)
-- `ToolExecutionProvider` interface (extension implements with real FS/commands via VSCodeToolProvider)
-- `LLMClient` interface (matches Anthropic SDK messages.create subset, implemented by AnthropicLLMClient adapter)
-- StagedEditBuffer + StagedToolProvider — in-memory staged edits during AgenticLoop (Task #6)
+- `ToolChoice` type and `strict` support on `ToolSchema` (Feb 23)
+- Full AgenticLoop in `agenticLoop.ts` — LLM↔tool execution loop with `tool_choice` forwarding
+- `LLMClient` interface with `tool_choice` parameter on both `createMessage` and `createMessageStream`
+- `AnthropicLLMClient` adapter forwards `tool_choice` and `strict` to Anthropic SDK
+- StagedEditBuffer + StagedToolProvider — in-memory staged edits during AgenticLoop
 - LoopSessionState — session tracking, continue/approve/discard lifecycle
-- LoopPausedCard — webview component for staged edit review
-- 67 tests (agenticLoop + vsCodeToolProvider) + 52 tests (agenticLoopIntegration)
+- 67 tests (agenticLoop) + 52 tests (integration)
 
 ---
 
@@ -151,15 +140,12 @@ These are **blockers** — without them, the extension cannot function as a real
 
 **Implemented**:
 - `Indexer` instantiated in `missionHandler.ts` with workspace root
-- `Retriever` created with `(indexer, eventBus, taskId)` and passed to MissionExecutor (replaces `null`)
-- `missionExecutor.ts:executeRetrievalStep()` now calls real `this.retriever.retrieve()` with scope limits
-- Results stored in `this.retrievalResults` for context injection into subsequent LLM calls
+- `Retriever` created with `(indexer, eventBus, taskId)` and passed to MissionExecutor
+- `missionExecutor.ts:executeRetrievalStep()` calls real `this.retriever.retrieve()`
 - Graceful fallback: if retriever unavailable, emits placeholder event with 0 results
-- Events stream in real-time through EventBus → webview
 
 **Remaining (nice-to-have)**:
 - [ ] File watcher for index updates (currently re-indexes on demand)
-- [ ] Wire into `contextEnricher.ts` for auto-include in ANSWER mode
 
 ---
 
@@ -168,87 +154,74 @@ These are **blockers** — without them, the extension cannot function as a real
 **Status**: COMPLETE (Feb 13, 2026)
 
 **Implemented**:
-- All 4x `null` in `missionHandler.ts` replaced with real instances:
-  - `DiffManager(taskId, eventBus, approvalManager, checkpointManager, evidenceStore, workspaceRoot)`
-  - `TestRunner(taskId, eventBus, approvalManager, testEvidenceStore, workspaceRoot)`
-  - `RepairOrchestrator(taskId, eventBus, autonomyController, testRunner, diffManager, approvalManager)`
-- `executeTestStep()` now calls real `TestRunner.runTests()`, emits `test_completed` events with stdout/stderr preview, feeds failures to `RepairOrchestrator.captureTestFailure()`
-- `executeRepairStep()` now calls real `RepairOrchestrator.startRepair()` which runs bounded A1 repair loop (diagnose→propose→approve→apply→retest)
-- `repairOrchestrator` stored on `ctx` for Stop button access
-- Full constructor dependency chain: Indexer→Retriever, EventBus+ApprovalManager→DiffManager+TestRunner, TestRunner+DiffManager+AutonomyController→RepairOrchestrator
+- All `null` instances in `missionHandler.ts` replaced with real DiffManager, TestRunner, RepairOrchestrator
+- Full constructor dependency chain wired
 - All events stream in real-time through EventBus → webview
 
 **Remaining (V1 limitation)**:
-- [ ] `diffProposalGenerator.ts` still V1 placeholder (creates markdown docs, not LLM-powered code diffs) — replace with `llmEditTool.ts`
+- [ ] `diffProposalGenerator.ts` still V1 placeholder — replace with `llmEditTool.ts`
 
 ---
 
 ### A6. Streaming for All Modes
 
-**Status**: PARTIAL — ANSWER only
+**Status**: COMPLETE
 
-**Current state (verified)**:
-- ANSWER mode: `client.messages.stream()` → `stream_delta` events → webview (WORKING)
-- PLAN mode: `client.messages.create()` — blocks until full response (NO streaming)
-- MISSION mode: `client.messages.create()` — blocks (NO streaming)
-- Edit generation: `client.messages.create()` — blocks (NO streaming)
-
-**What to build**:
-- [ ] SSE streaming from backend (A1.3) for all calls
-- [ ] PLAN mode streaming (real-time plan generation)
-- [ ] MISSION mode streaming (real-time reasoning)
-- [ ] Edit generation streaming (diff construction)
+**Implemented**:
+- Agent mode: `AgenticLoop` → `onStreamDelta` → `ordinex:missionStreamDelta` (agentHandler.ts)
+- Plan mode: `planGenerator.ts` → `streamAnswerWithContext` → `ordinex:planStreamDelta` (planHandler.ts)
+- Mission mode: `missionExecutor.onStreamDelta` → `ordinex:missionStreamDelta` (missionHandler.ts)
+- Scaffold: Heartbeat-based streaming in `featureCodeGenerator.ts` via `createMessageStream`
 
 ---
 
-### A7. Fix Partial Implementations (Bugs + Gaps)
+### A7. Fix Partial Implementations
 
-**Status**: PARTIAL
+**Status**: COMPLETE
 
-| Item | Verified Status | What's Needed |
-|------|----------------|---------------|
-| **Edit Plan button** | NOT IMPLEMENTED — `actions.ts:426` shows `alert('Plan editing will be available in a future version')` | Wire handler in extension for `ordinex:refinePlan` message |
-| **Plan Refine button** | UI works (textarea) but NO backend handler | Implement `ordinex:refinePlan` handler in extension |
-| **Workspace settings** | Settings UI works, but `submitPromptHandler.ts:473` passes `{}` | Replace `{}` with actual `workspace.getConfiguration('ordinex')` |
-| **SolutionCapturedCard** | FULLY IMPLEMENTED (162 lines, wired in MissionFeed) | Done |
-| **GeneratedToolCard** | FULLY IMPLEMENTED (143 lines, propose + run cards) | Done |
-| **ScaffoldCompleteCard buttons** | FULLY WORKING (dev_server + open_editor) | Done |
-| **Approval flow** | FULLY WORKING (6 inline types + standalone fallback) | Done |
-| **3x duplicated MODEL_MAP** | FIXED — consolidated into `modelRegistry.ts` (A10) | Done |
+| Item | Status |
+|------|--------|
+| **Edit Plan / Refine Plan** | COMPLETE — `ordinex:refinePlan` message handled in `extension.ts:1342`, routed to `handleRefinePlan` in `planHandler.ts:1128`, calls real `refinePlan()` from `planGenerator.ts` |
+| **Workspace settings** | COMPLETE — `settingsHandler.ts` reads/writes `vscode.workspace.getConfiguration('ordinex')` for all settings (command policy, autonomy, session persistence, generated tools) |
+| **SolutionCapturedCard** | COMPLETE (162 lines, wired in MissionFeed) |
+| **GeneratedToolCard** | COMPLETE (143 lines, propose + run cards) |
+| **ScaffoldCompleteCard buttons** | COMPLETE (dev_server + open_editor) |
+| **Approval flow** | COMPLETE (6 inline types + standalone fallback) |
+| **3x duplicated MODEL_MAP** | COMPLETE — consolidated into `modelRegistry.ts` (A10) |
 
 ---
 
 ### A8. Extension + Webview Tests
 
-**Status**: NOT STARTED
+**Status**: MINIMAL — biggest quality gap
 **Priority**: HIGH
 
-**Current state (verified)**:
-- Core: 1,516 tests in 47 files
-- Extension: `echo 'No tests yet'` (0 test files in `packages/extension/`)
-- Webview: no test script defined (0 test files in `packages/webview/`)
+**Current state**:
+- Core: 1,821 tests in 65 files
+- Extension: 24 tests in 1 file (`fsServices.test.ts`)
+- Webview: 0 test files
 - 8 handler files with 0 test coverage
-- 31 card components with 0 test coverage
+- 32+ card components with 0 test coverage
 
 **What to build**:
 - [ ] Extension handler tests (mock VS Code API, test message routing)
 - [ ] Webview component tests (card rendering, state management)
 - [ ] Integration tests (extension ↔ webview message flow)
-- [ ] Vitest config for extension + webview packages
 
 ---
 
-### A9. Onboarding Flow (Step 50)
+### A9. Onboarding Flow
 
-**Status**: NOT STARTED
+**Status**: COMPLETE
 
-**Verified**: No onboarding, welcome, or first-run files exist anywhere in the codebase.
-
-**What to build**:
-- [ ] First-run detection (check if API key / auth token exists)
-- [ ] Welcome screen in webview
-- [ ] API key / login setup wizard
-- [ ] Sample prompt suggestions
+**Implemented**:
+- First-run detection via `globalState.get('ordinex.onboardingCompleted')` in `extension.ts`
+- 3-slide overlay: Welcome → Modes → Quick Start with sample prompts
+- `onboarding.ts` (206 lines) — slide logic, prompt selection, completion notification
+- `onboarding.css` (379 lines) — full styling with animations
+- Wiring: extension posts `ordinex:showOnboarding` → `messageHandler.ts` calls `checkOnboarding(true)` → overlay shown
+- Completion: `ordinex:onboardingComplete` → extension persists flag to `globalState`
+- Sample prompts auto-fill input and set mode
 
 ---
 
@@ -258,30 +231,48 @@ These are **blockers** — without them, the extension cannot function as a real
 
 **Implemented**:
 - `modelRegistry.ts` — single source of truth: `resolveModel()`, `didModelFallback()`, FAST/CAPABLE/EDIT_MODEL constants
-- `MODEL_CONTEXT_WINDOWS` and `MODEL_MAX_OUTPUT_TOKENS` maps (Task #5)
+- `MODEL_CONTEXT_WINDOWS` and `MODEL_MAX_OUTPUT_TOKENS` maps
 - `getContextWindow(modelId)` and `getMaxOutputTokens(modelId)` helpers
-- 3 duplicated MODEL_MAPs removed from `llmService.ts`, `llmEditTool.ts`, `truncationSafeExecutor.ts`
-- Model IDs updated to latest: `claude-haiku-4-5-20251001`, `claude-sonnet-4-5-20250929`, `claude-sonnet-4-20250514`
 
 **Remaining**:
 - [ ] Vision provider still uses raw `fetch()` instead of SDK
 
 ---
 
-## SECTION B: NOT YET IMPLEMENTED (Nice-to-Have)
+### LLM-First Intent Classification
 
-Verified: **no code exists** for any of these.
+**Status**: COMPLETE (Feb 23, 2026)
+
+**Implemented**:
+- `intentClassifier.ts` — LLM-based classification via Anthropic `tool_use` with `strict: true` and forced `tool_choice: { type: 'tool', name: 'classify_intent' }`
+- `intentRouter.ts` rewritten — 5-step LLM-first routing:
+  1. `/scaffold` slash override (always wins)
+  2. Filesystem quick-reject (`hasPackageJson || fileCount > 10` → AGENT)
+  3. LLM classification (PRIMARY path, uses user's selected model)
+  4. Heuristic fallback (only for empty/unknown workspaces when offline)
+  5. Default → AGENT
+- `ToolChoice` type and `strict` field added to `ToolSchema`
+- `LLMClient.createMessage` and `createMessageStream` accept `tool_choice` parameter
+- `AnthropicLLMClient` forwards `tool_choice` to Anthropic SDK
+- `submitPromptHandler.ts` passes `llmClient` + user's `modelId` on `RoutingContext`
+- Runtime validation on classifier output (intent enum check, confidence clamping)
+- `greenfieldDetector.ts` demoted to offline-only fallback
+- 11 new tests in `intentClassifier.test.ts` (mock LLM client, quick-reject, fallback scenarios)
+
+---
+
+## SECTION B: NOT YET IMPLEMENTED (Nice-to-Have)
 
 | Feature | Step | Status |
 |---------|------|--------|
 | Terminal Integration (VS Code terminal panel) | 42 | NOT STARTED — ProcessManager runs in background only |
 | Keyboard Shortcuts | 52 | NOT STARTED — only `ordinex.undo` keybinding exists (Cmd+Shift+Z) |
-| Run Export (SHA-256, evidence gating) | 57 | NOT STARTED — no export files found |
+| Run Export (SHA-256, evidence gating) | 57 | NOT STARTED |
 | Replay Mode | 58 | NOT STARTED |
 | Audit Trail Viewer | 59 | NOT STARTED |
 | Multi-File Diff Viewer | 51 | NOT STARTED |
 | Git Integration (branch management, PR draft) | 56 | NOT STARTED |
-| Multi-Model Support | 57 | NOT STARTED |
+| Multi-Model Support (OpenAI, Gemini, local) | 57 | NOT STARTED |
 | Semantic Code Search | 58 | NOT STARTED |
 | Test Generation | 59 | NOT STARTED |
 | Documentation Generation | 60 | NOT STARTED |
@@ -294,115 +285,117 @@ Verified: **no code exists** for any of these.
 
 ---
 
-## SECTION C: KNOWN ISSUES (Verified Feedback)
+## SECTION C: KNOWN ISSUES
 
-| # | Issue | Present? | Severity | Details |
-|---|-------|----------|----------|---------|
-| P1-1 | Task persistence sync cleanup | Partial | LOW-MED | `fsTaskPersistenceService.ts` uses `unlinkSync` in async methods. Goes through service (not bypass). |
-| P1-2 | ANSWER evidence orphaned | Unclear | N/A | ANSWER mode is stateless by design — evidence only for MISSION/SCAFFOLD. May be intentional. |
-| P1-3 | Memory context unredacted | **YES** | MEDIUM | `contextEnricher.ts:644,650` injects raw facts/solutions without `redactSecrets()`. Editor context IS redacted (line 616). |
-| P2-1 | Workspace services cached | **YES** | MEDIUM | Lazy singletons (`_memoryService`, `_toolRegistryService`) never invalidated. No `onDidChangeWorkspaceFolders` listener. |
-| P2-2 | UI card flicker | Fixed | - | MissionFeed uses incremental `replaceWith()` for process/scaffold cards. |
-| P2-3 | Sync FS in hot paths | **YES** | MEDIUM | 44 instances of sync FS ops in extension/webview. Most in init/cleanup, some in answer/attachment handlers. |
-| P3-1 | `as unknown as IProvider` cast | **YES** | LOW | Single instance at `extension.ts:883`. Internal code only. |
-| P3-2 | No extension/webview tests | **YES** | HIGH | 0 test files in extension/ and webview/. Biggest gap. |
+| # | Issue | Status | Severity | Details |
+|---|-------|--------|----------|---------|
+| P1-1 | Task persistence sync cleanup | **COMPLETE** | LOW-MED | All async methods already use `fsp.*`. Only `markCleanExitSync` (intentionally sync for VS Code deactivate) remains. |
+| P1-3 | Memory context unredacted | **COMPLETE** | MEDIUM | 5-layer memory system: rules, MEMORY.md CRUD, session continuity, auto-memory, semantic retrieval |
+| P2-1 | Workspace services cached | **COMPLETE** | MEDIUM | `onDidChangeWorkspaceFolders` + file watchers for rules/MEMORY.md. Full `resetWorkspaceServices()` clears all lazy singletons, root caches, task state. |
+| P2-2 | UI card flicker | Fixed | - | MissionFeed uses incremental `replaceWith()` |
+| P2-3 | Sync FS in hot paths | **COMPLETE** | MEDIUM | Converted 35 sync FS ops to async (`fs.promises.*`) across 6 files. Shared `fileExists()` helper in `utils/fsAsync.ts`. `walkDir` uses `Promise.all` for concurrent sibling reads. Only `markCleanExitSync` (intentionally sync for VS Code deactivate) remains. |
+| P3-1 | `as unknown as IProvider` cast | **COMPLETE** | LOW | Class now `implements IProvider`. Added 3 missing fields (`activeScaffoldCoordinator`, `planModeContext`, `planModeOriginalPrompt`), changed `_extensionUri`/`_context` to public, removed 4 internal-only methods from interface, eliminated all 3 casts. |
+| P3-2 | No extension/webview tests | **OPEN** | HIGH | 1 extension test file, 0 webview test files. Biggest gap. See A8. |
 
 ---
 
 ## SECTION D: IMPLEMENTATION ORDER (Recommended)
 
-### Phase 1: Backend Foundation (Week 1-2)
+### Phase 1: Backend Foundation (Next priority)
 ```
 A1.1 Backend Server Setup
 A1.2 Authentication System
 A1.5 Database Schema
-A1.3 LLM Proxy Endpoints (non-streaming first)
-A1.4 Extension Client Refactor
-A10  SDK + Model Map Cleanup ✅ DONE (Feb 12, 2026)
+A1.3 LLM Proxy Endpoints (SSE streaming)
+A1.4 Extension Client Refactor (replace direct Anthropic calls)
 ```
 
-### Phase 2: Core Intelligence (Week 3-4)
+### Phase 2: Quality + Polish
 ```
-A2   Multi-Turn Conversation ✅ DONE (Feb 12, 2026)
-A3   Anthropic Tool Use ✅ DONE (Feb 12, 2026)
-A6   Streaming for All Modes (SSE from backend)
-```
-
-### Phase 3: Wire Missing Pieces (Week 5)
-```
-A4   Retriever + Code Indexing ✅ DONE (Feb 13, 2026)
-A5   DiffManager + TestRunner + Repair ✅ DONE (Feb 13, 2026)
-A7   Fix Partial Implementations (Edit Plan, workspace settings)
+A8   Extension + Webview Tests (biggest quality gap)
+Fix P1-3 (memory redaction), P2-1 (workspace cache invalidation)
+Fix P2-3 (sync FS in hot paths)
 ```
 
-### Phase 4: Polish + Quality (Week 6)
-```
-A8   Extension + Webview Tests
-A9   Onboarding Flow
-Fix P1-3 (memory redaction), P2-1 (workspace invalidation)
-```
-
-### Phase 5+: Nice-to-Have Features
+### Phase 3: Nice-to-Have Features
 ```
 B1-B16 (prioritize based on user feedback)
+```
+
+### Already Complete
+```
+A2   Multi-Turn Conversation ✅
+A3   Anthropic Tool Use ✅ (enhanced with tool_choice + strict)
+A4   Retriever + Code Indexing ✅
+A5   DiffManager + TestRunner + Repair ✅
+A6   Streaming for All Modes ✅
+A7   Fix Partial Implementations ✅
+A9   Onboarding Flow ✅
+A10  SDK + Model Map Cleanup ✅
+LLM-First Intent Classification ✅
 ```
 
 ---
 
 ## APPENDIX: File Inventory
 
-### Core Package (`packages/core/src/`) — ~70 files
+### Core Package (`packages/core/src/`) — ~75 files
 
 | Area | Key Files |
 |------|-----------|
 | Event sourcing | `eventStore.ts`, `eventBus.ts`, `stateReducer.ts` |
 | Modes | `modeManager.ts`, `types.ts` |
-| Intent routing | `intent/intentRouter.ts`, `intent/intentSignals.ts`, `intent/greenfieldDetector.ts`, `intent/llmIntentClassifier.ts`, `userCommandDetector.ts` |
-| LLM | `llmService.ts` (782 lines), `llmEditTool.ts` (1018 lines), `truncationSafeExecutor.ts` (932 lines), `modelRegistry.ts`, `tokenCounter.ts` |
-| AgenticLoop | `agenticLoop.ts`, `toolSchemas.ts`, `conversationHistory.ts`, `stagedEditBuffer.ts`, `stagedToolProvider.ts`, `loopSessionState.ts` |
-| Scaffold | `scaffold/recipeSelector.ts`, `scaffold/recipeRegistry.ts`, `scaffold/scaffoldApplyExecutor.ts`, `scaffold/designPacks.ts`, `scaffold/postScaffoldOrchestrator.ts`, `scaffold/featureExtractor.ts`, `scaffold/featureCodeGenerator.ts`, `scaffold/featureApplicator.ts`, `scaffold/qualityGates.ts`, `scaffold/preflightChecks.ts`, `scaffold/postVerify.ts`, `scaffold/nextSteps.ts` |
+| Intent routing | `intent/intentRouter.ts`, `intent/intentClassifier.ts`, `intent/intentSignals.ts`, `intent/greenfieldDetector.ts` |
+| LLM | `llmService.ts`, `llmEditTool.ts`, `truncationSafeExecutor.ts`, `modelRegistry.ts`, `tokenCounter.ts` |
+| AgenticLoop | `agenticLoop.ts`, `toolSchemas.ts` (with ToolChoice), `conversationHistory.ts`, `stagedEditBuffer.ts`, `stagedToolProvider.ts`, `loopSessionState.ts` |
+| Scaffold | `scaffold/pipelineRunner.ts`, `scaffold/pipelineTypes.ts`, `scaffold/stages/` (init, designSystem, featureGeneration, qualityGate, summary), `scaffold/featureExtractor.ts`, `scaffold/featureCodeGenerator.ts`, `scaffold/featureApplicator.ts`, `scaffold/designPacks.ts`, `scaffold/overlayApplier.ts`, `scaffold/debugLog.ts` |
 | Intelligence | `intelligence/contextEnricher.ts`, `intelligence/memoryService.ts`, `intelligence/projectMemoryManager.ts`, `intelligence/solutionCaptureSubscriber.ts`, `intelligence/toolRegistryService.ts`, `intelligence/generatedToolManager.ts` |
-| Retrieval | `retrieval/retriever.ts` (347 lines), `retrieval/indexer.ts` (321 lines) |
-| Mission | `missionRunner.ts`, `missionExecutor.ts` (1784 lines), `planGenerator.ts` |
-| Diff/Test/Repair | `diffManager.ts`, `diffProposalGenerator.ts` (STUB), `testRunner.ts` (395 lines), `repairOrchestrator.ts` (400+ lines) |
-| Safety | `scopeManager.ts` (349 lines), `autonomyLoopDetector.ts` (221 lines), `errorPatterns.ts` (694 lines) |
+| Memory System | `memory/rulesLoader.ts`, `memory/memoryDocument.ts`, `memory/sessionCompressor.ts`, `memory/autoMemoryExtractor.ts`, `memory/embeddingService.ts`, `memory/index.ts` |
+| Retrieval | `retrieval/retriever.ts`, `retrieval/indexer.ts` |
+| Mission | `missionRunner.ts`, `missionExecutor.ts`, `planGenerator.ts` |
+| Diff/Test/Repair | `diffManager.ts`, `diffProposalGenerator.ts` (V1 stub), `testRunner.ts`, `repairOrchestrator.ts` |
+| Safety | `scopeManager.ts`, `autonomyLoopDetector.ts`, `errorPatterns.ts` |
 | Persistence | `taskPersistence.ts`, `crashRecoveryPolicy.ts`, `undoStack.ts`, `undoContentCapture.ts`, `decisionStore.ts` |
 | Process | `processManager.ts` |
 | Checkpoint | `checkpointManagerV2.ts` |
 | Vision | `vision/anthropicVisionProvider.ts` |
-| Exports | `index.ts` (1,008 lines, ~60 modules) |
 
-### Extension Package (`packages/extension/src/`) — 16 files
+### Extension Package (`packages/extension/src/`) — 20 files
 
-| File | Lines | Purpose |
-|------|-------|---------|
-| `extension.ts` | 1,654 | Main entry, message routing, lifecycle |
-| `handlerContext.ts` | ~60 | IProvider interface |
-| `handlers/submitPromptHandler.ts` | ~500 | Intent routing entry point |
-| `handlers/answerHandler.ts` | ~300 | ANSWER mode streaming |
-| `handlers/planHandler.ts` | ~950 | PLAN mode |
-| `handlers/missionHandler.ts` | ~350 | MISSION mode |
-| `handlers/scaffoldHandler.ts` | ~1000 | SCAFFOLD mode + dev server |
-| `handlers/approvalHandler.ts` | ~700 | Approval resolution |
-| `handlers/settingsHandler.ts` | ~200 | API key + settings |
-| `handlers/toolsHandler.ts` | ~150 | Generated tool handling |
-| `fsMemoryService.ts` | ~150 | FS impl for memory |
-| `fsToolRegistryService.ts` | ~100 | FS impl for tool registry |
-| `fsTaskPersistenceService.ts` | 122 | FS impl for crash recovery |
-| `fsUndoService.ts` | 71 | FS impl for undo |
-| `generatedToolRunner.ts` | 295 | Tool execution sandbox |
-| `anthropicLLMClient.ts` | ~50 | Wraps Anthropic SDK → LLMClient interface for AgenticLoop |
-| `anthropicTokenCounter.ts` | ~50 | Wraps SDK countTokens() → TokenCounter interface |
-| `vsCodeToolProvider.ts` | ~200 | Implements ToolExecutionProvider (6 tools against real workspace) |
-| `vscodeWorkspaceWriter.ts` | ~100 | File writer |
-| `vscodeCheckpointManager.ts` | ~100 | Checkpoint manager |
+| File | Purpose |
+|------|---------|
+| `extension.ts` | Main entry, message routing, lifecycle, onboarding trigger |
+| `handlerContext.ts` | IProvider interface |
+| `handlers/submitPromptHandler.ts` | Intent routing entry point (LLM-first) |
+| `handlers/agentHandler.ts` | Agent mode (AgenticLoop with streaming) |
+| `handlers/planHandler.ts` | Plan mode (streaming + refinePlan) |
+| `handlers/missionHandler.ts` | Mission mode (streaming) |
+| `handlers/scaffoldHandler.ts` | Scaffold mode + dev server + pipeline logger |
+| `handlers/approvalHandler.ts` | Approval resolution |
+| `handlers/settingsHandler.ts` | API key + workspace settings |
+| `handlers/toolsHandler.ts` | Generated tool handling |
+| `anthropicLLMClient.ts` | Wraps Anthropic SDK → LLMClient (with tool_choice) |
+| `anthropicTokenCounter.ts` | Wraps SDK countTokens() → TokenCounter |
+| `vsCodeToolProvider.ts` | ToolExecutionProvider (6 tools against real workspace) |
+| `vscodeWorkspaceWriter.ts` | File writer |
+| `vscodeCheckpointManager.ts` | Checkpoint manager |
+| `fsMemoryService.ts` | FS impl for memory |
+| `fsRulesService.ts` | FS impl for rules (Layer 1) |
+| `fsSessionService.ts` | FS impl for session persistence (Layer 4) |
+| `fsEnhancedMemoryService.ts` | Enhanced memory with CRUD (Layer 2) |
+| `autoMemorySubscriber.ts` | Event-triggered extraction (Layer 3) |
+| `wasmEmbeddingService.ts` | WASM embeddings (Layer 5) |
+| `fsToolRegistryService.ts` | FS impl for tool registry |
+| `fsTaskPersistenceService.ts` | FS impl for crash recovery |
+| `fsUndoService.ts` | FS impl for undo |
+| `generatedToolRunner.ts` | Tool execution sandbox |
 
 ### Webview Package (`packages/webview/src/`) — 60+ files
 
 | Area | Files |
 |------|-------|
 | Entry | `index.ts` (246 lines), `settingsPanel.ts` |
-| Components | 32 card files in `components/` (MissionFeed.ts is 1,600+ lines, LoopPausedCard.ts) |
-| Scaffold renderers | 7 files in `scaffoldRenderers/` (1,716 lines total) |
-| CSS | 13 files in `styles/` |
-| JS modules | 15 files in `webviewJs/` (state, utils, renderers, actions, etc.) |
+| Components | 32+ card files in `components/` (MissionFeed.ts, LoopPausedCard.ts, etc.) |
+| Scaffold renderers | 7 files in `scaffoldRenderers/` |
+| CSS | 14 files in `styles/` (includes onboarding.css) |
+| JS modules | 16 files in `webviewJs/` (state, utils, renderers, actions, onboarding, etc.) |

@@ -21,6 +21,7 @@ import {
 import type { ContextLayer } from 'core';
 import { AnthropicLLMClient } from '../anthropicLLMClient';
 import { VSCodeToolProvider } from '../vsCodeToolProvider';
+import { fileExists } from '../utils/fsAsync';
 
 // ---------------------------------------------------------------------------
 // System prompt
@@ -103,7 +104,7 @@ export async function handleAgentMode(
       const folders = vscode.workspace.workspaceFolders;
       if (folders) {
         for (const folder of folders) {
-          if (fs.existsSync(path.join(folder.uri.fsPath, 'package.json'))) {
+          if (await fileExists(path.join(folder.uri.fsPath, 'package.json'))) {
             workspaceRoot = folder.uri.fsPath;
             break;
           }
@@ -111,9 +112,11 @@ export async function handleAgentMode(
         if (!workspaceRoot && folders.length > 0) {
           const root = folders[0].uri.fsPath;
           try {
-            for (const entry of fs.readdirSync(root).filter(e => !e.startsWith('.'))) {
+            const entries = await fs.promises.readdir(root);
+            for (const entry of entries.filter(e => !e.startsWith('.'))) {
               const ep = path.join(root, entry);
-              if (fs.statSync(ep).isDirectory() && fs.existsSync(path.join(ep, 'package.json'))) {
+              const stat = await fs.promises.stat(ep);
+              if (stat.isDirectory() && (await fileExists(path.join(ep, 'package.json')))) {
                 workspaceRoot = ep;
                 break;
               }
@@ -180,12 +183,33 @@ export async function handleAgentMode(
       });
     }
 
-    // Priority 3: Activity context from events
+    // Priority 3: Rules context (Layer 1 — always-on rules)
+    try {
+      const activeFile = vscode.window.activeTextEditor?.document.uri.fsPath;
+      const rulesCtx = await ctx.getRulesContext(activeFile);
+      if (rulesCtx) {
+        contextLayers.push({ label: 'rules', content: rulesCtx, priority: 3 });
+      }
+    } catch (err) {
+      console.warn('[Agent] Failed to load rules context:', err);
+    }
+
+    // Priority 4: Session continuity (Layer 4 — previous session summaries)
+    try {
+      const sessionCtx = await ctx.getSessionContext();
+      if (sessionCtx) {
+        contextLayers.push({ label: 'session_context', content: sessionCtx, priority: 4 });
+      }
+    } catch (err) {
+      console.warn('[Agent] Failed to load session context:', err);
+    }
+
+    // Priority 5: Activity context from events
     if (ctx.eventStore) {
       const events = ctx.eventStore.getEventsByTaskId(taskId) || [];
       if (events.length > 0) {
         const activityCtx = buildRecentActivityContext(events);
-        contextLayers.push({ label: 'activity_context', content: activityCtx, priority: 3 });
+        contextLayers.push({ label: 'activity_context', content: activityCtx, priority: 5 });
       }
     }
 
