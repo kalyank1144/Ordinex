@@ -664,23 +664,19 @@ export async function handleResolveDecisionPoint(
 
             if (typeof startPostScaffoldOrchestration === 'function') {
               // Build LLM client adapter for feature generation
-              const featureApiKey = await ctx._context.secrets.get('ordinex.apiKey');
               let featureLLMClient: any = undefined;
-              if (featureApiKey) {
-                try {
-                  // Use core's factory -- core has @anthropic-ai/sdk as a dependency
-                  const { createFeatureLLMClient } = await import('core');
-                  featureLLMClient = await createFeatureLLMClient(featureApiKey);
-                  if (featureLLMClient) {
-                    console.log('[handleResolveDecisionPoint] Feature LLM client created successfully');
-                  } else {
-                    console.warn('[handleResolveDecisionPoint] createFeatureLLMClient returned null');
-                  }
-                } catch (llmError) {
-                  console.warn('[handleResolveDecisionPoint] Could not create LLM client for feature generation:', llmError);
-                }
-              } else {
-                console.warn('[handleResolveDecisionPoint] No API key found (ordinex.apiKey) -- feature generation will be skipped');
+              try {
+                const { BackendLLMClient } = await import('../backendLLMClient');
+                const approvalBackend = ctx.getBackendClient();
+                const featureClient = new BackendLLMClient(approvalBackend);
+                featureLLMClient = {
+                  async createMessage(params: any) {
+                    return featureClient.createMessage(params);
+                  },
+                };
+                console.log('[handleResolveDecisionPoint] Feature LLM client created successfully (backend)');
+              } catch (llmError) {
+                console.warn('[handleResolveDecisionPoint] Could not create LLM client for feature generation:', llmError);
               }
 
               // Extract user prompt from scaffold events

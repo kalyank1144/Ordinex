@@ -19,7 +19,7 @@ import {
   buildRecentActivityContext,
 } from 'core';
 import type { ContextLayer } from 'core';
-import { AnthropicLLMClient } from '../anthropicLLMClient';
+import { BackendLLMClient } from '../backendLLMClient';
 import { VSCodeToolProvider } from '../vsCodeToolProvider';
 import { fileExists } from '../utils/fsAsync';
 
@@ -65,9 +65,10 @@ export async function handleAgentMode(
   let webviewUpdateTimer: ReturnType<typeof setTimeout> | null = null;
 
   try {
-    // 1. Get API key
-    const apiKey = await ctx._context.secrets.get('ordinex.apiKey');
-    if (!apiKey) {
+    // 1. Check auth
+    const backendClient = ctx.getBackendClient();
+    const isAuthed = await backendClient.isAuthenticated();
+    if (!isAuthed) {
       await ctx.emitEvent({
         event_id: ctx.generateId(),
         task_id: taskId,
@@ -76,19 +77,19 @@ export async function handleAgentMode(
         mode: ctx.currentMode,
         stage: ctx.currentStage,
         payload: {
-          error: 'No API key configured',
-          suggestion: 'Run command "Ordinex: Set API Key" to configure your Anthropic API key',
+          error: 'Not signed in. Use "Ordinex: Sign In" to authenticate.',
+          suggestion: 'Run command "Ordinex: Sign In" to authenticate with your Ordinex account',
         },
         evidence_ids: [],
         parent_event_id: null,
       });
       await ctx.sendEventsToWebview(webview, taskId);
       vscode.window.showErrorMessage(
-        'Ordinex API key not found. Please run "Ordinex: Set API Key" command.',
-        'Set API Key',
+        'Not signed in to Ordinex. Please sign in to continue.',
+        'Sign In',
       ).then(action => {
-        if (action === 'Set API Key') {
-          vscode.commands.executeCommand('ordinex.setApiKey');
+        if (action === 'Sign In') {
+          vscode.commands.executeCommand('ordinex.signIn');
         }
       });
       return;
@@ -140,7 +141,7 @@ export async function handleAgentMode(
     const compactionResult = await history.maybeCompact({
       modelContextWindow: modelWindow,
       llmClient: history.compactionCount >= 3
-        ? new AnthropicLLMClient(apiKey) as any
+        ? new BackendLLMClient(backendClient) as any
         : undefined,
     });
 
@@ -227,7 +228,7 @@ export async function handleAgentMode(
     }
 
     const eventBus = new EventBus(ctx.eventStore);
-    const llmClient = new AnthropicLLMClient(apiKey, modelId);
+    const llmClient = new BackendLLMClient(backendClient, modelId);
     const toolProvider = new VSCodeToolProvider(workspaceRoot);
     toolProvider.setWebview(webview);
 

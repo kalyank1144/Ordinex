@@ -1,0 +1,40 @@
+{
+  "name": "server",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Ordinex backend server — auth, LLM proxy, usage tracking",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "scripts": {
+    "dev": "tsx watch src/index.ts",
+    "build": "tsc -p ./",
+    "start": "node dist/index.js",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "clean": "rm -rf dist",
+    "db:generate": "drizzle-kit generate",
+    "db:migrate": "drizzle-kit migrate"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.32.1",
+    "@fastify/cors": "^10.0.0",
+    "@fastify/static": "^9.0.0",
+    "@libsql/client": "^0.14.0",
+    "bcryptjs": "^2.4.3",
+    "dotenv": "^17.3.1",
+    "drizzle-orm": "^0.38.0",
+    "fastify": "^5.2.0",
+    "fastify-type-provider-zod": "^4.0.0",
+    "jose": "^6.0.0",
+    "zod": "^3.24.0"
+  },
+  "devDependencies": {
+    "@types/bcryptjs": "^2.4.6",
+    "@types/node": "^20.10.0",
+    "drizzle-kit": "^0.30.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.3.3",
+    "vitest": "^1.0.4"
+  }
+}

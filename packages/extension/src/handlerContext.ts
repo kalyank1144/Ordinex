@@ -29,6 +29,7 @@ import type { FileReadResult, ToolExecutionPolicy, PreflightChecksInput, Preflig
 import type { TokenCounter } from 'core/src/tokenCounter';
 import type { FsTaskPersistenceService } from './fsTaskPersistenceService';
 import type { FsUndoService } from './fsUndoService';
+import type { BackendClient } from './backendClient';
 
 /**
  * Mutable extension state — handlers read and write these properties directly.
@@ -93,6 +94,7 @@ export interface IProvider {
   getTaskPersistenceService(): FsTaskPersistenceService | null;
   getUndoStack(): UndoStack;
   getFsUndoService(): FsUndoService | null;
+  getBackendClient(): BackendClient;
 
   // ─── Conversation (A2) ───
   getConversationHistory(taskId: string): ConversationHistory;

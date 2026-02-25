@@ -1,9 +1,9 @@
 # Ordinex — Verified Roadmap
 
 > Last verified: 2026-02-24
-> Tests: **2,169 passing** (70 core + 5 extension + 2 webview = 77 test files)
+> Tests: **2,116+ passing** (70 core + 5 extension + 4 server = 79+ test files)
 > Branch: `step-45-settings-panel-and-fixes`
-> Architecture: pnpm monorepo — `core` (pure logic) | `extension` (VS Code + FS) | `webview` (UI)
+> Architecture: pnpm monorepo — `core` (pure logic) | `extension` (VS Code + FS) | `server` (Fastify backend) | `dashboard` (React SPA) | `webview` (UI)
 
 ---
 
@@ -45,6 +45,8 @@ These features have **real implementations with tests** — not stubs.
 | Extension Decomposition (R2) | R2 | 8 handler files in handlers/ + IProvider | - | 1654 (ext) |
 | Webview Decomposition (R3) | R3 | 14 CSS + 16 JS modules, index.ts: 246 lines | - | - |
 | ScaffoldCard Decomposition (R4) | R4 | 7 files in scaffoldRenderers/, ScaffoldCard: 326 lines | - | 1716 |
+| Backend Server (A1) | A1 | packages/server/ (8 src files), packages/dashboard/ (10 src files) | 46 tests | 2000+ |
+| Extension Backend Refactor (A1.5) | A1.5 | backendClient.ts, backendLLMClient.ts, 8 handler files refactored | - | 400+ |
 | User Chat Bubble (I1) | I1 | intent_received as chat bubble | - | - |
 | AI Response Bubble (I2) | I2 | plan_created, streaming in assistant bubble | - | - |
 | Inline Approval (I3) | I3 | 6 inline types, DiffProposedCard + PlanCard inline buttons | - | - |
@@ -79,15 +81,21 @@ These features have **real implementations with tests** — not stubs.
 
 ### A1. Backend Server (LLM Proxy + Auth + SSE Streaming)
 
-**Status**: NOT STARTED
+**Status**: COMPLETE (Feb 23, 2026)
 **Priority**: CRITICAL
 
-**Current state**:
-- 7+ direct Anthropic API call sites, each creating its own `new Anthropic({ apiKey })` client
-- API key stored in VS Code SecretStorage (`context.secrets.get('ordinex.apiKey')`)
-- No rate limiting, usage tracking, or team/org support
-- `@anthropic-ai/sdk` loaded via dynamic import in extension
-- No `packages/server/` directory exists
+**Implemented**:
+- `packages/server/` — Fastify v5 backend with JWT auth, libsql/Drizzle ORM, Zod validation
+- `packages/dashboard/` — React 19 SPA with Tailwind CSS, recharts, react-router
+- Auth system: signup/login/refresh/me/logout with bcryptjs + JWT (jose)
+- LLM proxy: `/api/llm/messages` (non-streaming) + `/api/llm/messages/stream` (SSE)
+- Usage tracking: per-call logging, credit deduction, monthly summaries, daily breakdown
+- Account management: profile, API keys (create/list/revoke)
+- Extension refactored: `BackendClient` + `BackendLLMClient` replace all direct Anthropic calls
+- URI handler: `vscode://ordinex.auth?token=JWT` for browser-based auth flow
+- Core `LLMService` refactored to accept optional `LLMClient` (no breaking change)
+- Dashboard served from Fastify via `@fastify/static`
+- 46 server tests, all packages compile with zero errors
 
 **LLM call sites (all must be refactored)**:
 
@@ -301,13 +309,14 @@ These features have **real implementations with tests** — not stubs.
 
 ## SECTION D: IMPLEMENTATION ORDER (Recommended)
 
-### Phase 1: Backend Foundation (Next priority)
+### Phase 1: Backend Foundation — COMPLETE
 ```
-A1.1 Backend Server Setup
-A1.2 Authentication System
-A1.5 Database Schema
-A1.3 LLM Proxy Endpoints (SSE streaming)
-A1.4 Extension Client Refactor (replace direct Anthropic calls)
+A1.1 Server Foundation (Fastify + libsql + Drizzle + CORS + Zod) ✓
+A1.2 Authentication System (signup/login/JWT/bcryptjs) ✓
+A1.3 LLM Proxy + SSE Streaming ✓
+A1.4 Dashboard (React 19 + Tailwind + recharts) ✓
+A1.5 Extension Client Refactor (BackendLLMClient, URI handler) ✓
+A1.6 Usage API + Account Management ✓
 ```
 
 ### Phase 2: Quality + Polish

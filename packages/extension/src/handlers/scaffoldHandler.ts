@@ -43,7 +43,7 @@ import {
 
 // Cross-handler imports
 import { handleSubmitPrompt } from './submitPromptHandler';
-import { AnthropicLLMClient } from '../anthropicLLMClient';
+import { BackendLLMClient } from '../backendLLMClient';
 
 let _pipelineOutputChannel: vscode.OutputChannel | null = null;
 function getPipelineOutputChannel(): vscode.OutputChannel {
@@ -133,8 +133,8 @@ export async function handleScaffoldFlow(
     // decision card. If extraction fails or no API key, the decision card
     // is emitted without blueprint data — there is no "old fallback card".
     try {
-      const apiKey = await ctx._context.secrets.get('ordinex.apiKey');
-      if (apiKey) {
+      const scaffoldBackend = ctx.getBackendClient();
+      if (await scaffoldBackend.isAuthenticated()) {
         const coreModule = await import('core');
         const { buildExtractionPrompt, parseBlueprintFromLLMResponse } = coreModule;
 
@@ -142,7 +142,7 @@ export async function handleScaffoldFlow(
           console.log(`${LOG_PREFIX} Extracting app blueprint via LLM...`);
           const extractionPrompt = buildExtractionPrompt(userPrompt);
 
-          const llmClient = new AnthropicLLMClient(apiKey);
+          const llmClient = new BackendLLMClient(scaffoldBackend);
           const llmResponse = await llmClient.createMessage({
             model: resolveModel(modelId),
             max_tokens: 4096,
@@ -520,22 +520,18 @@ export async function handlePreflightProceed(
         console.log(`${LOG_PREFIX} Design pack ID: ${designPackIdForPost}`);
 
         // Build LLM client using core's factory
-        const featureApiKey = await ctx._context.secrets.get('ordinex.apiKey');
+        const featureBackend = ctx.getBackendClient();
         let featureLLMClient: any = undefined;
-        if (featureApiKey) {
-          try {
-            const { createFeatureLLMClient } = coreModule;
-            featureLLMClient = await createFeatureLLMClient(featureApiKey);
-            if (featureLLMClient) {
-              console.log(`${LOG_PREFIX} Feature LLM client created successfully`);
-            } else {
-              console.warn(`${LOG_PREFIX} createFeatureLLMClient returned null`);
-            }
-          } catch (llmError) {
-            console.warn(`${LOG_PREFIX} Could not create LLM client:`, llmError);
-          }
-        } else {
-          console.warn(`${LOG_PREFIX} No API key (ordinex.apiKey) — feature generation will be skipped`);
+        try {
+          const featureClient = new BackendLLMClient(featureBackend);
+          featureLLMClient = {
+            async createMessage(params: any) {
+              return featureClient.createMessage(params);
+            },
+          };
+          console.log(`${LOG_PREFIX} Feature LLM client created successfully (backend)`);
+        } catch (llmError) {
+          console.warn(`${LOG_PREFIX} Could not create LLM client:`, llmError);
         }
 
         // Get blueprint from coordinator if available (use `as any` for enhanced methods)

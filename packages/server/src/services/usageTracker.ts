@@ -1,0 +1,57 @@
+import { randomUUID } from 'crypto';
+import type { Database } from '../db/index.js';
+import { usageLogs, users } from '../db/schema.js';
+import { eq, sql } from 'drizzle-orm';
+
+interface UsageEntry {
+  userId: string;
+  model: string;
+  inputTokens: number;
+  outputTokens: number;
+  endpoint: string;
+  durationMs?: number;
+}
+
+const COST_PER_MILLION: Record<string, { input: number; output: number }> = {
+  'claude-sonnet-4-20250514': { input: 300, output: 1500 },
+  'claude-3-5-sonnet-20241022': { input: 300, output: 1500 },
+  'claude-3-5-haiku-20241022': { input: 100, output: 500 },
+  'claude-3-haiku-20240307': { input: 25, output: 125 },
+};
+
+function estimateCostCents(model: string, inputTokens: number, outputTokens: number): number {
+  const rates = COST_PER_MILLION[model] || { input: 300, output: 1500 };
+  const inputCost = (inputTokens / 1_000_000) * rates.input;
+  const outputCost = (outputTokens / 1_000_000) * rates.output;
+  return Math.round((inputCost + outputCost) * 100) / 100;
+}
+
+export async function logUsage(db: Database, entry: UsageEntry): Promise<void> {
+  const costCents = estimateCostCents(entry.model, entry.inputTokens, entry.outputTokens);
+  const totalTokens = entry.inputTokens + entry.outputTokens;
+
+  await db.insert(usageLogs).values({
+    id: randomUUID(),
+    userId: entry.userId,
+    model: entry.model,
+    inputTokens: entry.inputTokens,
+    outputTokens: entry.outputTokens,
+    costCents,
+    endpoint: entry.endpoint,
+    durationMs: entry.durationMs,
+  });
+
+  await db.update(users)
+    .set({ creditsRemaining: sql`credits_remaining - ${totalTokens}` })
+    .where(eq(users.id, entry.userId));
+}
+
+export async function checkCredits(db: Database, userId: string): Promise<number> {
+  const rows = await db.select({ credits: users.creditsRemaining })
+    .from(users)
+    .where(eq(users.id, userId))
+    .limit(1);
+
+  if (rows.length === 0) return 0;
+  return rows[0].credits;
+}
