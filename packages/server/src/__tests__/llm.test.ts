@@ -232,14 +232,15 @@ describe('Usage Tracker', () => {
     const creditsBefore = await checkCredits(db, userId);
     expect(creditsBefore).toBe(5000);
 
-    const remaining = await reserveCredits(db, userId, 4096);
-    expect(remaining).toBeGreaterThanOrEqual(0);
+    const reservation = await reserveCredits(db, userId, 4096);
+    expect(reservation).not.toBeNull();
+    expect(reservation!.reserved).toBe(4096);
 
     const creditsAfterReserve = await checkCredits(db, userId);
     expect(creditsAfterReserve).toBe(5000 - 4096);
 
     const actualTokens = 150;
-    await settleCredits(db, userId, 4096, actualTokens);
+    await settleCredits(db, userId, reservation!.reserved, actualTokens);
 
     const creditsAfterSettle = await checkCredits(db, userId);
     expect(creditsAfterSettle).toBe(5000 - actualTokens);
@@ -257,7 +258,7 @@ describe('Usage Tracker', () => {
     expect(creditsFinal).toBe(5000 - actualTokens);
   });
 
-  it('rejects reservation when credits insufficient', async () => {
+  it('caps reservation to available credits when estimate exceeds balance', async () => {
     const { reserveCredits, checkCredits } = await import('../services/usageTracker.js');
     const { randomUUID } = await import('crypto');
     const { hashPassword } = await import('../auth/password.js');
@@ -267,16 +268,41 @@ describe('Usage Tracker', () => {
     const hash = await hashPassword('test');
     await db.insert(users).values({
       id: userId,
-      email: 'tracker-reserve-fail@example.com',
+      email: 'tracker-cap-test@example.com',
       passwordHash: hash,
       name: 'Low Credit User',
       creditsRemaining: 100,
     });
 
     const result = await reserveCredits(db, userId, 4096);
-    expect(result).toBe(-1);
+    expect(result).not.toBeNull();
+    expect(result!.reserved).toBe(100);
+    expect(result!.remaining).toBe(0);
 
     const credits = await checkCredits(db, userId);
-    expect(credits).toBe(100);
+    expect(credits).toBe(0);
+  });
+
+  it('rejects reservation when credits are zero', async () => {
+    const { reserveCredits, checkCredits } = await import('../services/usageTracker.js');
+    const { randomUUID } = await import('crypto');
+    const { hashPassword } = await import('../auth/password.js');
+    const { users } = await import('../db/schema.js');
+
+    const userId = randomUUID();
+    const hash = await hashPassword('test');
+    await db.insert(users).values({
+      id: userId,
+      email: 'tracker-zero-test@example.com',
+      passwordHash: hash,
+      name: 'Zero Credit User',
+      creditsRemaining: 0,
+    });
+
+    const result = await reserveCredits(db, userId, 4096);
+    expect(result).toBeNull();
+
+    const credits = await checkCredits(db, userId);
+    expect(credits).toBe(0);
   });
 });

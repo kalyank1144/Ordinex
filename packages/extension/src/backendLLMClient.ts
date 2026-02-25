@@ -92,8 +92,14 @@ export class BackendLLMClient implements LLMClient {
     let responseId = '';
     let stopReason = 'end_turn';
     let usage: { input_tokens: number; output_tokens: number } | undefined;
+    let streamError: string | null = null;
 
     await this.backend.requestStream('POST', '/api/llm/messages/stream', body, (eventType, data) => {
+      if (data.type === 'error') {
+        streamError = data.error?.message || 'Unknown streaming error';
+        return;
+      }
+
       if (data.type === 'message_start') {
         responseId = data.message?.id || '';
         if (data.message?.usage) {
@@ -141,6 +147,10 @@ export class BackendLLMClient implements LLMClient {
         if (data.usage && usage) usage.output_tokens = data.usage.output_tokens;
       }
     });
+
+    if (streamError) {
+      throw new Error(`LLM stream error: ${streamError}`);
+    }
 
     return {
       id: responseId,

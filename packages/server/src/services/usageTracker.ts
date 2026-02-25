@@ -62,27 +62,37 @@ export async function settleCredits(db: Database, userId: string, reserved: numb
   }
 }
 
+const MIN_CREDITS_TO_PROCEED = 1;
+
 /**
- * Atomically reserve credits for an LLM call. Returns the remaining balance
- * after deduction, or -1 if the user has insufficient credits. The UPDATE
- * uses a WHERE guard so the balance can never go below zero.
+ * Atomically reserve credits for an LLM call. Reserves up to `tokens`
+ * but will reserve whatever the user has if the full estimate exceeds
+ * their balance (as long as they have at least MIN_CREDITS_TO_PROCEED).
+ * Returns { reserved, remaining } on success, or null if the user has
+ * no credits at all.
  */
-export async function reserveCredits(db: Database, userId: string, tokens: number): Promise<number> {
-  const result = await db.run(
-    sql`UPDATE users SET credits_remaining = credits_remaining - ${tokens}
-        WHERE id = ${userId} AND credits_remaining >= ${tokens}`
-  );
-
-  if (result.rowsAffected === 0) {
-    return -1;
-  }
-
-  const rows = await db.select({ credits: users.creditsRemaining })
+export async function reserveCredits(db: Database, userId: string, tokens: number): Promise<{ reserved: number; remaining: number } | null> {
+  const before = await db.select({ credits: users.creditsRemaining })
     .from(users)
     .where(eq(users.id, userId))
     .limit(1);
 
-  return rows.length > 0 ? rows[0].credits : -1;
+  if (before.length === 0 || before[0].credits < MIN_CREDITS_TO_PROCEED) {
+    return null;
+  }
+
+  const toDeduct = Math.min(tokens, before[0].credits);
+
+  const result = await db.run(
+    sql`UPDATE users SET credits_remaining = credits_remaining - ${toDeduct}
+        WHERE id = ${userId} AND credits_remaining >= ${toDeduct}`
+  );
+
+  if (result.rowsAffected === 0) {
+    return null;
+  }
+
+  return { reserved: toDeduct, remaining: before[0].credits - toDeduct };
 }
 
 export async function checkCredits(db: Database, userId: string): Promise<number> {
