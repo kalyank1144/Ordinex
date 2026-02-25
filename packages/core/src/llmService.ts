@@ -974,8 +974,21 @@ Step to implement: ${stepText}`;
         max_tokens: maxTokens,
         system: systemContext || undefined,
         messages,
-        onDelta: (delta: string) => {
+        onDelta: async (delta: string) => {
           fullContent += delta;
+
+          await this.eventBus.publish({
+            event_id: this.generateId(),
+            task_id: this.taskId,
+            timestamp: new Date().toISOString(),
+            type: 'stream_delta',
+            mode: this.mode,
+            stage: this.stage,
+            payload: { delta },
+            evidence_ids: [],
+            parent_event_id: null,
+          });
+
           onChunk({ delta, done: false });
         },
       });
@@ -998,6 +1011,19 @@ Step to implement: ${stepText}`;
         .map(b => b.text!)
         .join('');
       usage = response.usage;
+
+      await this.eventBus.publish({
+        event_id: this.generateId(),
+        task_id: this.taskId,
+        timestamp: new Date().toISOString(),
+        type: 'stream_delta',
+        mode: this.mode,
+        stage: this.stage,
+        payload: { delta: fullContent },
+        evidence_ids: [],
+        parent_event_id: null,
+      });
+
       onChunk({ delta: fullContent, done: false });
     }
 

@@ -50,6 +50,7 @@ export const api = {
         body: JSON.stringify(data),
       }),
     me: () => request<{ user: any }>('/auth/me'),
+    logout: () => request<{ ok: boolean }>('/auth/logout', { method: 'POST' }),
     refresh: (token: string) =>
       request<{ token: string }>('/auth/refresh', {
         method: 'POST',

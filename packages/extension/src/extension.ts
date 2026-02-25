@@ -2249,7 +2249,7 @@ export function activate(context: vscode.ExtensionContext) {
 
       if (confirm === 'Sign Out') {
         const backendClient = provider.getBackendClient();
-        await backendClient.clearToken();
+        await backendClient.logout();
         vscode.window.showInformationMessage('Signed out of Ordinex');
       }
     })

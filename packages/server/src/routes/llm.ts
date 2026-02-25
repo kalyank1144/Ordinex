@@ -2,7 +2,7 @@ import type { FastifyInstance } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import Anthropic from '@anthropic-ai/sdk';
 import { llmMessageSchema } from '../schemas/llm.js';
-import { logUsage, checkCredits } from '../services/usageTracker.js';
+import { logUsage, reserveCredits, settleCredits } from '../services/usageTracker.js';
 
 export async function llmRoutes(app: FastifyInstance) {
   const server = app.withTypeProvider<ZodTypeProvider>();
@@ -19,17 +19,16 @@ export async function llmRoutes(app: FastifyInstance) {
     schema: { body: llmMessageSchema },
   }, async (request, reply) => {
     const userId = request.userId!;
+    const { model, messages, system, max_tokens, temperature, stop_sequences, tools, tool_choice } = request.body;
 
-    const credits = await checkCredits(app.db, userId);
-    if (credits <= 0) {
+    const remaining = await reserveCredits(app.db, userId, max_tokens);
+    if (remaining < 0) {
       return reply.code(402).send({
         error: 'Insufficient credits',
-        creditsRemaining: credits,
         message: 'Please purchase additional credits to continue.',
       });
     }
 
-    const { model, messages, system, max_tokens, temperature, stop_sequences, tools, tool_choice } = request.body;
     const client = getClient();
     const startTime = Date.now();
 
@@ -46,7 +45,9 @@ export async function llmRoutes(app: FastifyInstance) {
       });
 
       const durationMs = Date.now() - startTime;
+      const actualTokens = response.usage.input_tokens + response.usage.output_tokens;
 
+      await settleCredits(app.db, userId, max_tokens, actualTokens);
       await logUsage(app.db, {
         userId,
         model,
@@ -58,6 +59,7 @@ export async function llmRoutes(app: FastifyInstance) {
 
       return reply.send(response);
     } catch (err: any) {
+      await settleCredits(app.db, userId, max_tokens, 0);
       if (err?.status) {
         return reply.code(err.status).send({
           error: err.message || 'Anthropic API error',
@@ -72,17 +74,16 @@ export async function llmRoutes(app: FastifyInstance) {
     schema: { body: llmMessageSchema },
   }, async (request, reply) => {
     const userId = request.userId!;
+    const { model, messages, system, max_tokens, temperature, stop_sequences, tools, tool_choice } = request.body;
 
-    const credits = await checkCredits(app.db, userId);
-    if (credits <= 0) {
+    const remaining = await reserveCredits(app.db, userId, max_tokens);
+    if (remaining < 0) {
       return reply.code(402).send({
         error: 'Insufficient credits',
-        creditsRemaining: credits,
         message: 'Please purchase additional credits to continue.',
       });
     }
 
-    const { model, messages, system, max_tokens, temperature, stop_sequences, tools, tool_choice } = request.body;
     const client = getClient();
     const startTime = Date.now();
 
@@ -118,6 +119,9 @@ export async function llmRoutes(app: FastifyInstance) {
       }
 
       const durationMs = Date.now() - startTime;
+      const actualTokens = inputTokens + outputTokens;
+
+      await settleCredits(app.db, userId, max_tokens, actualTokens);
       await logUsage(app.db, {
         userId,
         model,
@@ -130,6 +134,7 @@ export async function llmRoutes(app: FastifyInstance) {
       reply.raw.write('event: done\ndata: {"type":"done"}\n\n');
       reply.raw.end();
     } catch (err: any) {
+      await settleCredits(app.db, userId, max_tokens, 0);
       const errorEvent = {
         type: 'error',
         error: { message: err.message || 'Stream error' },

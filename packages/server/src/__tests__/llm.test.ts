@@ -213,8 +213,8 @@ describe('Usage Tracker', () => {
     db = await initDatabase(':memory:');
   });
 
-  it('logs usage and deducts credits', async () => {
-    const { logUsage, checkCredits } = await import('../services/usageTracker.js');
+  it('reserves credits atomically and settles after usage', async () => {
+    const { logUsage, checkCredits, reserveCredits, settleCredits } = await import('../services/usageTracker.js');
     const { randomUUID } = await import('crypto');
     const { hashPassword } = await import('../auth/password.js');
     const { users } = await import('../db/schema.js');
@@ -232,6 +232,18 @@ describe('Usage Tracker', () => {
     const creditsBefore = await checkCredits(db, userId);
     expect(creditsBefore).toBe(5000);
 
+    const remaining = await reserveCredits(db, userId, 4096);
+    expect(remaining).toBeGreaterThanOrEqual(0);
+
+    const creditsAfterReserve = await checkCredits(db, userId);
+    expect(creditsAfterReserve).toBe(5000 - 4096);
+
+    const actualTokens = 150;
+    await settleCredits(db, userId, 4096, actualTokens);
+
+    const creditsAfterSettle = await checkCredits(db, userId);
+    expect(creditsAfterSettle).toBe(5000 - actualTokens);
+
     await logUsage(db, {
       userId,
       model: 'claude-sonnet-4-20250514',
@@ -241,7 +253,30 @@ describe('Usage Tracker', () => {
       durationMs: 500,
     });
 
-    const creditsAfter = await checkCredits(db, userId);
-    expect(creditsAfter).toBe(4850);
+    const creditsFinal = await checkCredits(db, userId);
+    expect(creditsFinal).toBe(5000 - actualTokens);
+  });
+
+  it('rejects reservation when credits insufficient', async () => {
+    const { reserveCredits, checkCredits } = await import('../services/usageTracker.js');
+    const { randomUUID } = await import('crypto');
+    const { hashPassword } = await import('../auth/password.js');
+    const { users } = await import('../db/schema.js');
+
+    const userId = randomUUID();
+    const hash = await hashPassword('test');
+    await db.insert(users).values({
+      id: userId,
+      email: 'tracker-reserve-fail@example.com',
+      passwordHash: hash,
+      name: 'Low Credit User',
+      creditsRemaining: 100,
+    });
+
+    const result = await reserveCredits(db, userId, 4096);
+    expect(result).toBe(-1);
+
+    const credits = await checkCredits(db, userId);
+    expect(credits).toBe(100);
   });
 });

@@ -137,6 +137,15 @@ export class BackendClient {
     }
   }
 
+  async logout(): Promise<void> {
+    try {
+      await this.request('POST', '/api/auth/logout');
+    } catch {
+      // Best-effort: clear local token even if server call fails
+    }
+    await this.clearToken();
+  }
+
   getLoginUrl(): string {
     return `${this.serverUrl}/auth?redirect=vscode`;
   }

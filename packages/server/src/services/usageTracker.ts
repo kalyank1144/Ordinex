@@ -28,7 +28,6 @@ function estimateCostCents(model: string, inputTokens: number, outputTokens: num
 
 export async function logUsage(db: Database, entry: UsageEntry): Promise<void> {
   const costCents = estimateCostCents(entry.model, entry.inputTokens, entry.outputTokens);
-  const totalTokens = entry.inputTokens + entry.outputTokens;
 
   await db.insert(usageLogs).values({
     id: randomUUID(),
@@ -40,11 +39,21 @@ export async function logUsage(db: Database, entry: UsageEntry): Promise<void> {
     endpoint: entry.endpoint,
     durationMs: entry.durationMs,
   });
+}
 
-  await db.run(
-    sql`UPDATE users SET credits_remaining = MAX(0, credits_remaining - ${totalTokens})
-        WHERE id = ${entry.userId}`
-  );
+/**
+ * After an LLM call completes, settle the pre-reserved credits.
+ * Refunds (reserved - actual) tokens back to the user's balance.
+ * If actual > reserved (shouldn't happen), no refund is issued.
+ */
+export async function settleCredits(db: Database, userId: string, reserved: number, actualTokens: number): Promise<void> {
+  const refund = reserved - actualTokens;
+  if (refund > 0) {
+    await db.run(
+      sql`UPDATE users SET credits_remaining = credits_remaining + ${refund}
+          WHERE id = ${userId}`
+    );
+  }
 }
 
 /**
