@@ -2,8 +2,11 @@ import * as vscode from 'vscode';
 
 const DEFAULT_SERVER_URL = 'http://localhost:3741';
 
+const AUTH_CACHE_TTL_MS = 5_000;
+
 export class BackendClient {
   private serverUrl: string;
+  private authCache: { result: boolean; expiry: number } | null = null;
 
   constructor(
     private readonly context: vscode.ExtensionContext,
@@ -17,21 +20,32 @@ export class BackendClient {
   }
 
   async setToken(token: string): Promise<void> {
+    this.authCache = null;
     await this.context.secrets.store('ordinex.jwt', token);
   }
 
   async clearToken(): Promise<void> {
+    this.authCache = null;
     await this.context.secrets.delete('ordinex.jwt');
   }
 
   async isAuthenticated(): Promise<boolean> {
+    if (this.authCache && Date.now() < this.authCache.expiry) {
+      return this.authCache.result;
+    }
+
     const token = await this.getToken();
-    if (!token) return false;
+    if (!token) {
+      this.authCache = { result: false, expiry: Date.now() + AUTH_CACHE_TTL_MS };
+      return false;
+    }
 
     try {
       await this.request('GET', '/api/auth/me');
+      this.authCache = { result: true, expiry: Date.now() + AUTH_CACHE_TTL_MS };
       return true;
     } catch {
+      this.authCache = { result: false, expiry: Date.now() + AUTH_CACHE_TTL_MS };
       return false;
     }
   }

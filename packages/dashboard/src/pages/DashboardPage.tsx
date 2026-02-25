@@ -110,7 +110,7 @@ function SubscriptionCard({ user }: { user: any }) {
         <div className="flex items-center justify-between">
           <span className="text-sm text-gray-600">Current Plan</span>
           <span className={`px-3 py-1 rounded-full text-sm font-medium ${planColors[user?.plan] || planColors.free}`}>
-            {user?.plan?.charAt(0).toUpperCase() + user?.plan?.slice(1)}
+            {(user?.plan ?? 'free').charAt(0).toUpperCase() + (user?.plan ?? 'free').slice(1)}
           </span>
         </div>
         <div className="flex items-center justify-between">

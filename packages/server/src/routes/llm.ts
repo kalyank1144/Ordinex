@@ -14,14 +14,21 @@ export async function llmRoutes(app: FastifyInstance) {
     return new Anthropic({ apiKey: app.config.anthropicApiKey });
   }
 
+  function estimateReservation(body: { messages: unknown; system?: string; max_tokens: number }): number {
+    const inputChars = JSON.stringify(body.messages).length + (body.system?.length || 0);
+    const estimatedInputTokens = Math.ceil(inputChars / 4);
+    return estimatedInputTokens + body.max_tokens;
+  }
+
   server.post('/api/llm/messages', {
     preHandler: [app.authenticate],
     schema: { body: llmMessageSchema },
   }, async (request, reply) => {
     const userId = request.userId!;
     const { model, messages, system, max_tokens, temperature, stop_sequences, tools, tool_choice } = request.body;
+    const reserved = estimateReservation({ messages, system, max_tokens });
 
-    const remaining = await reserveCredits(app.db, userId, max_tokens);
+    const remaining = await reserveCredits(app.db, userId, reserved);
     if (remaining < 0) {
       return reply.code(402).send({
         error: 'Insufficient credits',
@@ -47,7 +54,7 @@ export async function llmRoutes(app: FastifyInstance) {
       const durationMs = Date.now() - startTime;
       const actualTokens = response.usage.input_tokens + response.usage.output_tokens;
 
-      await settleCredits(app.db, userId, max_tokens, actualTokens);
+      await settleCredits(app.db, userId, reserved, actualTokens);
       await logUsage(app.db, {
         userId,
         model,
@@ -59,7 +66,7 @@ export async function llmRoutes(app: FastifyInstance) {
 
       return reply.send(response);
     } catch (err: any) {
-      await settleCredits(app.db, userId, max_tokens, 0);
+      await settleCredits(app.db, userId, reserved, 0);
       if (err?.status) {
         return reply.code(err.status).send({
           error: err.message || 'Anthropic API error',
@@ -75,8 +82,9 @@ export async function llmRoutes(app: FastifyInstance) {
   }, async (request, reply) => {
     const userId = request.userId!;
     const { model, messages, system, max_tokens, temperature, stop_sequences, tools, tool_choice } = request.body;
+    const reserved = estimateReservation({ messages, system, max_tokens });
 
-    const remaining = await reserveCredits(app.db, userId, max_tokens);
+    const remaining = await reserveCredits(app.db, userId, reserved);
     if (remaining < 0) {
       return reply.code(402).send({
         error: 'Insufficient credits',
@@ -121,7 +129,7 @@ export async function llmRoutes(app: FastifyInstance) {
       const durationMs = Date.now() - startTime;
       const actualTokens = inputTokens + outputTokens;
 
-      await settleCredits(app.db, userId, max_tokens, actualTokens);
+      await settleCredits(app.db, userId, reserved, actualTokens);
       await logUsage(app.db, {
         userId,
         model,
@@ -134,7 +142,7 @@ export async function llmRoutes(app: FastifyInstance) {
       reply.raw.write('event: done\ndata: {"type":"done"}\n\n');
       reply.raw.end();
     } catch (err: any) {
-      await settleCredits(app.db, userId, max_tokens, 0);
+      await settleCredits(app.db, userId, reserved, 0);
       const errorEvent = {
         type: 'error',
         error: { message: err.message || 'Stream error' },

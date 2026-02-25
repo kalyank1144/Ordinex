@@ -43,14 +43,20 @@ export async function logUsage(db: Database, entry: UsageEntry): Promise<void> {
 
 /**
  * After an LLM call completes, settle the pre-reserved credits.
- * Refunds (reserved - actual) tokens back to the user's balance.
- * If actual > reserved (shouldn't happen), no refund is issued.
+ * If actual < reserved: refund the excess.
+ * If actual > reserved: charge the additional tokens (clamped to 0 floor).
  */
 export async function settleCredits(db: Database, userId: string, reserved: number, actualTokens: number): Promise<void> {
-  const refund = reserved - actualTokens;
-  if (refund > 0) {
+  const diff = reserved - actualTokens;
+  if (diff > 0) {
     await db.run(
-      sql`UPDATE users SET credits_remaining = credits_remaining + ${refund}
+      sql`UPDATE users SET credits_remaining = credits_remaining + ${diff}
+          WHERE id = ${userId}`
+    );
+  } else if (diff < 0) {
+    const extra = -diff;
+    await db.run(
+      sql`UPDATE users SET credits_remaining = MAX(0, credits_remaining - ${extra})
           WHERE id = ${userId}`
     );
   }
