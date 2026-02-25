@@ -206,8 +206,9 @@ export async function authRoutes(app: FastifyInstance) {
   server.post('/api/auth/logout', {
     preHandler: [app.authenticate],
   }, async (request, reply) => {
-    const userId = request.userId!;
-    await app.db.delete(sessions).where(eq(sessions.userId, userId));
+    if (request.sessionId) {
+      await app.db.delete(sessions).where(eq(sessions.id, request.sessionId));
+    }
     return reply.send({ ok: true });
   });
 }

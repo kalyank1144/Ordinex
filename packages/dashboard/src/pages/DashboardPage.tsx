@@ -122,7 +122,7 @@ function SubscriptionCard({ user }: { user: any }) {
         <div className="w-full bg-gray-200 rounded-full h-2">
           <div
             className="bg-ordinex-500 h-2 rounded-full transition-all"
-            style={{ width: `${Math.min((user?.creditsRemaining / 10000) * 100, 100)}%` }}
+            style={{ width: `${Math.min(((user?.creditsRemaining ?? 0) / 10000) * 100, 100)}%` }}
           />
         </div>
         <button className="w-full py-2 bg-ordinex-600 hover:bg-ordinex-700 text-white text-sm font-medium rounded-lg transition-colors">

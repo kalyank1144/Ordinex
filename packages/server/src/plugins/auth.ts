@@ -7,11 +7,13 @@ import type { ServerConfig } from '../config.js';
 declare module 'fastify' {
   interface FastifyRequest {
     userId?: string;
+    sessionId?: string;
   }
 }
 
 export async function registerAuth(app: FastifyInstance, config: ServerConfig) {
   app.decorateRequest('userId', undefined);
+  app.decorateRequest('sessionId', undefined);
 
   app.decorate('authenticate', async (request: FastifyRequest, reply: FastifyReply) => {
     const authHeader = request.headers.authorization;
@@ -37,6 +39,7 @@ export async function registerAuth(app: FastifyInstance, config: ServerConfig) {
       }
 
       request.userId = payload.sub;
+      request.sessionId = payload.sid;
     } catch {
       reply.code(401).send({ error: 'Invalid or expired token' });
     }

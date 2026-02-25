@@ -1,7 +1,7 @@
 import { randomUUID } from 'crypto';
 import type { Database } from '../db/index.js';
 import { usageLogs, users } from '../db/schema.js';
-import { eq, sql } from 'drizzle-orm';
+import { eq, sql, and, gte } from 'drizzle-orm';
 
 interface UsageEntry {
   userId: string;
@@ -41,9 +41,33 @@ export async function logUsage(db: Database, entry: UsageEntry): Promise<void> {
     durationMs: entry.durationMs,
   });
 
-  await db.update(users)
-    .set({ creditsRemaining: sql`credits_remaining - ${totalTokens}` })
-    .where(eq(users.id, entry.userId));
+  await db.run(
+    sql`UPDATE users SET credits_remaining = MAX(0, credits_remaining - ${totalTokens})
+        WHERE id = ${entry.userId}`
+  );
+}
+
+/**
+ * Atomically reserve credits for an LLM call. Returns the remaining balance
+ * after deduction, or -1 if the user has insufficient credits. The UPDATE
+ * uses a WHERE guard so the balance can never go below zero.
+ */
+export async function reserveCredits(db: Database, userId: string, tokens: number): Promise<number> {
+  const result = await db.run(
+    sql`UPDATE users SET credits_remaining = credits_remaining - ${tokens}
+        WHERE id = ${userId} AND credits_remaining >= ${tokens}`
+  );
+
+  if (result.rowsAffected === 0) {
+    return -1;
+  }
+
+  const rows = await db.select({ credits: users.creditsRemaining })
+    .from(users)
+    .where(eq(users.id, userId))
+    .limit(1);
+
+  return rows.length > 0 ? rows[0].credits : -1;
 }
 
 export async function checkCredits(db: Database, userId: string): Promise<number> {
