@@ -51,6 +51,7 @@ export const api = {
       }),
     me: () => request<{ user: any }>('/auth/me'),
     logout: () => request<{ ok: boolean }>('/auth/logout', { method: 'POST' }),
+    vscodeCode: () => request<{ code: string }>('/auth/vscode-code', { method: 'POST' }),
     refresh: (token: string) =>
       request<{ token: string }>('/auth/refresh', {
         method: 'POST',

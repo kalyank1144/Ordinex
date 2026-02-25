@@ -969,26 +969,15 @@ Step to implement: ${stepText}`;
     let usage: { input_tokens: number; output_tokens: number } | undefined;
 
     if (client.createMessageStream) {
+      const deltas: string[] = [];
       const response = await client.createMessageStream({
         model,
         max_tokens: maxTokens,
         system: systemContext || undefined,
         messages,
-        onDelta: async (delta: string) => {
+        onDelta: (delta: string) => {
           fullContent += delta;
-
-          await this.eventBus.publish({
-            event_id: this.generateId(),
-            task_id: this.taskId,
-            timestamp: new Date().toISOString(),
-            type: 'stream_delta',
-            mode: this.mode,
-            stage: this.stage,
-            payload: { delta },
-            evidence_ids: [],
-            parent_event_id: null,
-          });
-
+          deltas.push(delta);
           onChunk({ delta, done: false });
         },
       });
@@ -998,6 +987,20 @@ Step to implement: ${stepText}`;
           .filter(b => b.type === 'text')
           .map(b => b.text!)
           .join('');
+      }
+
+      for (const delta of deltas) {
+        await this.eventBus.publish({
+          event_id: this.generateId(),
+          task_id: this.taskId,
+          timestamp: new Date().toISOString(),
+          type: 'stream_delta',
+          mode: this.mode,
+          stage: this.stage,
+          payload: { delta },
+          evidence_ids: [],
+          parent_event_id: null,
+        });
       }
     } else {
       const response = await client.createMessage({

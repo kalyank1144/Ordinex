@@ -8,6 +8,16 @@ import { hashPassword, verifyPassword } from '../auth/password.js';
 import { signJwt, verifyJwt } from '../auth/jwt.js';
 import { users, sessions } from '../db/schema.js';
 
+const AUTH_CODE_TTL_MS = 60_000;
+const authCodes = new Map<string, { token: string; expiry: number }>();
+
+function cleanExpiredCodes() {
+  const now = Date.now();
+  for (const [code, entry] of authCodes) {
+    if (now >= entry.expiry) authCodes.delete(code);
+  }
+}
+
 export async function authRoutes(app: FastifyInstance) {
   const server = app.withTypeProvider<ZodTypeProvider>();
 
@@ -48,7 +58,6 @@ export async function authRoutes(app: FastifyInstance) {
     await app.db.insert(sessions).values({
       id: sessionId,
       userId: id,
-      tokenHash: sessionId,
       expiresAt,
     });
 
@@ -90,7 +99,6 @@ export async function authRoutes(app: FastifyInstance) {
     await app.db.insert(sessions).values({
       id: sessionId,
       userId: user.id,
-      tokenHash: sessionId,
       expiresAt,
     });
 
@@ -150,7 +158,6 @@ export async function authRoutes(app: FastifyInstance) {
       await app.db.insert(sessions).values({
         id: newSessionId,
         userId: user.id,
-        tokenHash: newSessionId,
         expiresAt,
       });
 
@@ -184,22 +191,40 @@ export async function authRoutes(app: FastifyInstance) {
     return reply.send({ user: userRows[0] });
   });
 
+  server.post('/api/auth/vscode-code', {
+    preHandler: [app.authenticate],
+  }, async (request, reply) => {
+    cleanExpiredCodes();
+    const code = randomUUID();
+    const token = request.headers.authorization!.slice(7);
+    authCodes.set(code, { token, expiry: Date.now() + AUTH_CODE_TTL_MS });
+    return reply.send({ code });
+  });
+
   server.get('/api/auth/vscode-callback', {
     schema: {
       querystring: z.object({
-        token: z.string().min(1),
+        code: z.string().min(1),
       }),
     },
   }, async (request, reply) => {
-    const { token } = request.query;
+    cleanExpiredCodes();
+    const { code } = request.query;
+    const entry = authCodes.get(code);
 
-    try {
-      await verifyJwt(token, app.config.jwtSecret);
-    } catch {
-      return reply.code(400).send({ error: 'Invalid token' });
+    if (!entry) {
+      return reply.code(400).send({ error: 'Invalid or expired authorization code' });
     }
 
-    const redirectUri = `vscode://ordinex.auth?token=${encodeURIComponent(token)}`;
+    authCodes.delete(code);
+
+    try {
+      await verifyJwt(entry.token, app.config.jwtSecret);
+    } catch {
+      return reply.code(400).send({ error: 'Token associated with code is no longer valid' });
+    }
+
+    const redirectUri = `vscode://ordinex.auth?token=${encodeURIComponent(entry.token)}`;
     return reply.redirect(redirectUri);
   });
 

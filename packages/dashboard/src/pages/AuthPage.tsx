@@ -1,6 +1,7 @@
 import { useState, type FormEvent } from 'react';
 import { useAuth } from '../hooks/useAuth';
 import { useNavigate, useSearchParams } from 'react-router-dom';
+import { api } from '../lib/api';
 
 export default function AuthPage() {
   const [isLogin, setIsLogin] = useState(true);
@@ -28,7 +29,8 @@ export default function AuthPage() {
       }
 
       if (isVscodeRedirect && token) {
-        window.location.href = `/api/auth/vscode-callback?token=${encodeURIComponent(token)}`;
+        const { code } = await api.auth.vscodeCode();
+        window.location.href = `/api/auth/vscode-callback?code=${encodeURIComponent(code)}`;
         return;
       }
 

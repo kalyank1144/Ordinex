@@ -15,7 +15,6 @@ export const users = sqliteTable('users', {
 export const sessions = sqliteTable('sessions', {
   id: text('id').primaryKey(),
   userId: text('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
-  tokenHash: text('token_hash').notNull(),
   expiresAt: text('expires_at').notNull(),
   createdAt: text('created_at').notNull().default(sql`(datetime('now'))`),
 });
