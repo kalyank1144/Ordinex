@@ -10,7 +10,7 @@ export async function registerCors(app: FastifyInstance, config: ServerConfig) {
         return;
       }
 
-      const allowed = config.corsOrigins.some(o => origin.startsWith(o))
+      const allowed = config.corsOrigins.includes(origin)
         || origin.startsWith('vscode-webview://');
 
       cb(null, allowed);

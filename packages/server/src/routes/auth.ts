@@ -3,7 +3,7 @@ import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
 import { randomUUID } from 'crypto';
 import { eq } from 'drizzle-orm';
-import { signupSchema, loginSchema } from '../schemas/auth.js';
+import { signupSchema, loginSchema, refreshSchema } from '../schemas/auth.js';
 import { hashPassword, verifyPassword } from '../auth/password.js';
 import { signJwt, verifyJwt } from '../auth/jwt.js';
 import { users, sessions } from '../db/schema.js';
@@ -37,10 +37,20 @@ export async function authRoutes(app: FastifyInstance) {
       creditsRemaining: 10000,
     });
 
+    const sessionId = randomUUID();
+    const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString();
+
     const token = await signJwt(
-      { sub: id, email, plan: 'free' },
+      { sub: id, email, plan: 'free', sid: sessionId },
       app.config.jwtSecret,
     );
+
+    await app.db.insert(sessions).values({
+      id: sessionId,
+      userId: id,
+      tokenHash: sessionId,
+      expiresAt,
+    });
 
     return reply.code(201).send({
       user: { id, email, name, plan: 'free', creditsRemaining: 10000 },
@@ -69,10 +79,20 @@ export async function authRoutes(app: FastifyInstance) {
       return reply.code(401).send({ error: 'Invalid email or password' });
     }
 
+    const sessionId = randomUUID();
+    const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString();
+
     const token = await signJwt(
-      { sub: user.id, email: user.email, plan: user.plan },
+      { sub: user.id, email: user.email, plan: user.plan, sid: sessionId },
       app.config.jwtSecret,
     );
+
+    await app.db.insert(sessions).values({
+      id: sessionId,
+      userId: user.id,
+      tokenHash: sessionId,
+      expiresAt,
+    });
 
     return reply.send({
       user: {
@@ -88,13 +108,26 @@ export async function authRoutes(app: FastifyInstance) {
 
   server.post('/api/auth/refresh', {
     schema: {
-      body: z.object({ token: z.string() }),
+      body: refreshSchema,
     },
   }, async (request, reply) => {
     const { token } = request.body;
 
     try {
       const payload = await verifyJwt(token, app.config.jwtSecret);
+
+      if (payload.sid) {
+        const oldSession = await app.db.select({ id: sessions.id })
+          .from(sessions)
+          .where(eq(sessions.id, payload.sid))
+          .limit(1);
+
+        if (oldSession.length === 0) {
+          return reply.code(401).send({ error: 'Session has been revoked' });
+        }
+
+        await app.db.delete(sessions).where(eq(sessions.id, payload.sid));
+      }
 
       const userRows = await app.db.select()
         .from(users)
@@ -106,10 +139,20 @@ export async function authRoutes(app: FastifyInstance) {
       }
 
       const user = userRows[0];
+      const newSessionId = randomUUID();
+      const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString();
+
       const newToken = await signJwt(
-        { sub: user.id, email: user.email, plan: user.plan },
+        { sub: user.id, email: user.email, plan: user.plan, sid: newSessionId },
         app.config.jwtSecret,
       );
+
+      await app.db.insert(sessions).values({
+        id: newSessionId,
+        userId: user.id,
+        tokenHash: newSessionId,
+        expiresAt,
+      });
 
       return reply.send({ token: newToken });
     } catch {
@@ -139,6 +182,25 @@ export async function authRoutes(app: FastifyInstance) {
     }
 
     return reply.send({ user: userRows[0] });
+  });
+
+  server.get('/api/auth/vscode-callback', {
+    schema: {
+      querystring: z.object({
+        token: z.string().min(1),
+      }),
+    },
+  }, async (request, reply) => {
+    const { token } = request.query;
+
+    try {
+      await verifyJwt(token, app.config.jwtSecret);
+    } catch {
+      return reply.code(400).send({ error: 'Invalid token' });
+    }
+
+    const redirectUri = `vscode://ordinex.auth?token=${encodeURIComponent(token)}`;
+    return reply.redirect(redirectUri);
   });
 
   server.post('/api/auth/logout', {

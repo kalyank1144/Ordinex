@@ -59,15 +59,15 @@ export async function handleSettingsMessage(
     case 'ordinex:settings:saveApiKey': {
       try {
         const key = message.apiKey?.trim();
-        if (!key || !key.startsWith('sk-ant-')) {
-          webview.postMessage({ type: 'ordinex:settings:saveResult', setting: 'API Key', success: false, error: 'Invalid key format' });
+        if (!key) {
+          webview.postMessage({ type: 'ordinex:settings:saveResult', setting: 'Auth Token', success: false, error: 'Token cannot be empty' });
           return;
         }
         await ctx.getBackendClient().setToken(key);
         emitSettingsChangedEvent(ctx, 'authToken', 'updated');
         webview.postMessage({ type: 'ordinex:settings:saveResult', setting: 'Auth Token', success: true });
       } catch (err: any) {
-        webview.postMessage({ type: 'ordinex:settings:saveResult', setting: 'API Key', success: false, error: err.message });
+        webview.postMessage({ type: 'ordinex:settings:saveResult', setting: 'Auth Token', success: false, error: err.message });
       }
       break;
     }
@@ -78,7 +78,7 @@ export async function handleSettingsMessage(
         emitSettingsChangedEvent(ctx, 'authToken', 'cleared');
         await sendCurrentSettings(ctx, webview);
       } catch (err: any) {
-        webview.postMessage({ type: 'ordinex:settings:saveResult', setting: 'API Key', success: false, error: err.message });
+        webview.postMessage({ type: 'ordinex:settings:saveResult', setting: 'Auth Token', success: false, error: err.message });
       }
       break;
     }

@@ -29,7 +29,7 @@ export async function llmRoutes(app: FastifyInstance) {
       });
     }
 
-    const { model, messages, system, max_tokens, temperature, stop_sequences } = request.body;
+    const { model, messages, system, max_tokens, temperature, stop_sequences, tools, tool_choice } = request.body;
     const client = getClient();
     const startTime = Date.now();
 
@@ -41,6 +41,8 @@ export async function llmRoutes(app: FastifyInstance) {
         max_tokens,
         ...(temperature !== undefined && { temperature }),
         ...(stop_sequences && { stop_sequences }),
+        ...(tools?.length && { tools: tools as Anthropic.Tool[] }),
+        ...(tool_choice && { tool_choice: tool_choice as Anthropic.MessageCreateParams['tool_choice'] }),
       });
 
       const durationMs = Date.now() - startTime;
@@ -80,7 +82,7 @@ export async function llmRoutes(app: FastifyInstance) {
       });
     }
 
-    const { model, messages, system, max_tokens, temperature, stop_sequences } = request.body;
+    const { model, messages, system, max_tokens, temperature, stop_sequences, tools, tool_choice } = request.body;
     const client = getClient();
     const startTime = Date.now();
 
@@ -102,6 +104,8 @@ export async function llmRoutes(app: FastifyInstance) {
         max_tokens,
         ...(temperature !== undefined && { temperature }),
         ...(stop_sequences && { stop_sequences }),
+        ...(tools?.length && { tools: tools as Anthropic.Tool[] }),
+        ...(tool_choice && { tool_choice: tool_choice as Anthropic.MessageCreateParams['tool_choice'] }),
       });
 
       stream.on('message', (message) => {

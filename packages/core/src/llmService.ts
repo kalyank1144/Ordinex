@@ -21,6 +21,12 @@ export interface LLMConfig {
   llmClient?: import('./agenticLoop').LLMClient;
 }
 
+function requireLLMTransport(config: LLMConfig): void {
+  if (!config.llmClient && !config.apiKey) {
+    throw new Error('LLMConfig must provide either llmClient or apiKey');
+  }
+}
+
 export interface LLMStreamChunk {
   delta: string;
   done: boolean;
@@ -102,6 +108,7 @@ export class LLMService {
     config: LLMConfig,
     onChunk: (chunk: LLMStreamChunk) => void
   ): Promise<LLMResponse> {
+    requireLLMTransport(config);
     console.log('=== LLMService.streamAnswerWithContext START ===');
     console.log('User question:', userQuestion);
     console.log('System context length:', systemContext.length);
@@ -206,6 +213,7 @@ export class LLMService {
     config: LLMConfig,
     onChunk: (chunk: LLMStreamChunk) => void
   ): Promise<LLMResponse> {
+    requireLLMTransport(config);
     console.log('=== LLMService.streamAnswer START ===');
     console.log('User question:', userQuestion);
     console.log('Config:', { model: config.model, maxTokens: config.maxTokens, hasApiKey: !!config.apiKey });
@@ -311,6 +319,7 @@ export class LLMService {
     onChunk: (chunk: LLMStreamChunk) => void,
     tokenCounter?: TokenCounter,
   ): Promise<LLMResponse> {
+    requireLLMTransport(config);
     const userSelectedModel = config.model;
     const actualModel = resolveModel(userSelectedModel);
     const didFallback = didModelFallback(userSelectedModel);
@@ -730,6 +739,7 @@ export class LLMService {
     }>;
   }> {
     const { stepText, repoContextSummary, files, config } = params;
+    requireLLMTransport(config);
 
     const userSelectedModel = config.model;
     const actualModel = resolveModel(userSelectedModel);

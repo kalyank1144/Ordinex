@@ -1,5 +1,7 @@
 import type { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
+import { eq } from 'drizzle-orm';
 import { verifyJwt } from '../auth/jwt.js';
+import { sessions } from '../db/schema.js';
 import type { ServerConfig } from '../config.js';
 
 declare module 'fastify' {
@@ -21,6 +23,19 @@ export async function registerAuth(app: FastifyInstance, config: ServerConfig) {
     const token = authHeader.slice(7);
     try {
       const payload = await verifyJwt(token, config.jwtSecret);
+
+      if (payload.sid) {
+        const sessionRows = await app.db.select({ id: sessions.id })
+          .from(sessions)
+          .where(eq(sessions.id, payload.sid))
+          .limit(1);
+
+        if (sessionRows.length === 0) {
+          reply.code(401).send({ error: 'Session has been revoked' });
+          return;
+        }
+      }
+
       request.userId = payload.sub;
     } catch {
       reply.code(401).send({ error: 'Invalid or expired token' });

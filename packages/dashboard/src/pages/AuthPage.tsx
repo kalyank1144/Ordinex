@@ -1,6 +1,6 @@
 import { useState, type FormEvent } from 'react';
 import { useAuth } from '../hooks/useAuth';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 
 export default function AuthPage() {
   const [isLogin, setIsLogin] = useState(true);
@@ -11,6 +11,8 @@ export default function AuthPage() {
   const [submitting, setSubmitting] = useState(false);
   const { login, signup } = useAuth();
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
+  const isVscodeRedirect = searchParams.get('redirect') === 'vscode';
 
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
@@ -18,11 +20,18 @@ export default function AuthPage() {
     setSubmitting(true);
 
     try {
+      let token: string;
       if (isLogin) {
-        await login(email, password);
+        token = await login(email, password);
       } else {
-        await signup(email, password, name);
+        token = await signup(email, password, name);
       }
+
+      if (isVscodeRedirect && token) {
+        window.location.href = `/api/auth/vscode-callback?token=${encodeURIComponent(token)}`;
+        return;
+      }
+
       navigate('/dashboard');
     } catch (err: any) {
       setError(err.message || 'Something went wrong');
@@ -37,6 +46,11 @@ export default function AuthPage() {
         <div className="text-center mb-8">
           <h1 className="text-3xl font-bold text-ordinex-800">Ordinex</h1>
           <p className="text-gray-600 mt-2">AI-powered development assistant</p>
+          {isVscodeRedirect && (
+            <p className="text-sm text-ordinex-600 mt-3 bg-ordinex-50 rounded-lg px-3 py-2">
+              Sign in to connect your VS Code extension
+            </p>
+          )}
         </div>
 
         <div className="bg-white rounded-2xl shadow-xl p-8">

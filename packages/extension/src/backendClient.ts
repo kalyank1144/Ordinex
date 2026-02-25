@@ -111,6 +111,7 @@ export class BackendClient {
 
     const decoder = new TextDecoder();
     let buffer = '';
+    let eventType = 'message';
 
     while (true) {
       const { done, value } = await reader.read();
@@ -121,7 +122,6 @@ export class BackendClient {
       const lines = buffer.split('\n');
       buffer = lines.pop() || '';
 
-      let eventType = 'message';
       for (const line of lines) {
         if (line.startsWith('event: ')) {
           eventType = line.slice(7).trim();
@@ -138,7 +138,7 @@ export class BackendClient {
   }
 
   getLoginUrl(): string {
-    return `${this.serverUrl}/auth`;
+    return `${this.serverUrl}/auth?redirect=vscode`;
   }
 }
 

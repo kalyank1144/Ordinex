@@ -12,8 +12,8 @@ interface User {
 interface AuthState {
   user: User | null;
   loading: boolean;
-  login: (email: string, password: string) => Promise<void>;
-  signup: (email: string, password: string, name: string) => Promise<void>;
+  login: (email: string, password: string) => Promise<string>;
+  signup: (email: string, password: string, name: string) => Promise<string>;
   logout: () => void;
   refreshUser: () => Promise<void>;
 }
@@ -43,16 +43,18 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
   }, [refreshUser]);
 
-  const login = async (email: string, password: string) => {
+  const login = async (email: string, password: string): Promise<string> => {
     const { user, token } = await api.auth.login({ email, password });
     setToken(token);
     setUser(user);
+    return token;
   };
 
-  const signup = async (email: string, password: string, name: string) => {
+  const signup = async (email: string, password: string, name: string): Promise<string> => {
     const { user, token } = await api.auth.signup({ email, password, name });
     setToken(token);
     setUser(user);
+    return token;
   };
 
   const logout = () => {

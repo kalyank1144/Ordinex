@@ -8,6 +8,7 @@ export interface JwtPayload {
   sub: string;
   email: string;
   plan: string;
+  sid?: string;
 }
 
 export async function signJwt(
@@ -16,7 +17,7 @@ export async function signJwt(
 ): Promise<string> {
   const key = new TextEncoder().encode(secret);
 
-  return new SignJWT({ email: payload.email, plan: payload.plan })
+  return new SignJWT({ email: payload.email, plan: payload.plan, ...(payload.sid && { sid: payload.sid }) })
     .setProtectedHeader({ alg: ALGORITHM })
     .setSubject(payload.sub)
     .setIssuer(ISSUER)
@@ -40,5 +41,6 @@ export async function verifyJwt(
     sub: payload.sub as string,
     email: payload.email as string,
     plan: payload.plan as string,
+    sid: payload.sid as string | undefined,
   };
 }

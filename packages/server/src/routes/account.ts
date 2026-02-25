@@ -2,7 +2,7 @@ import type { FastifyInstance } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
 import { randomUUID, randomBytes, createHash } from 'crypto';
-import { eq } from 'drizzle-orm';
+import { eq, and } from 'drizzle-orm';
 import { users, apiKeys } from '../db/schema.js';
 
 export async function accountRoutes(app: FastifyInstance) {
@@ -123,7 +123,7 @@ export async function accountRoutes(app: FastifyInstance) {
 
     const rows = await app.db.select({ id: apiKeys.id })
       .from(apiKeys)
-      .where(eq(apiKeys.id, keyId))
+      .where(and(eq(apiKeys.id, keyId), eq(apiKeys.userId, userId)))
       .limit(1);
 
     if (rows.length === 0) {
@@ -131,7 +131,7 @@ export async function accountRoutes(app: FastifyInstance) {
     }
 
     await app.db.delete(apiKeys)
-      .where(eq(apiKeys.id, keyId));
+      .where(and(eq(apiKeys.id, keyId), eq(apiKeys.userId, userId)));
 
     return { ok: true };
   });
