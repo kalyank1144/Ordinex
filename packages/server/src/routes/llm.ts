@@ -95,6 +95,7 @@ export async function llmRoutes(app: FastifyInstance) {
     const client = getClient();
     const startTime = Date.now();
 
+    reply.hijack();
     reply.raw.writeHead(200, {
       'Content-Type': 'text/event-stream',
       'Cache-Control': 'no-cache',

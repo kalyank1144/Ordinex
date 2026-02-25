@@ -29,6 +29,13 @@ export class BackendClient {
     await this.context.secrets.delete('ordinex.jwt');
   }
 
+  isAuthenticatedSync(): boolean {
+    if (this.authCache && Date.now() < this.authCache.expiry) {
+      return this.authCache.result;
+    }
+    return false;
+  }
+
   async isAuthenticated(): Promise<boolean> {
     if (this.authCache && Date.now() < this.authCache.expiry) {
       return this.authCache.result;

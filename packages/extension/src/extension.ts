@@ -310,6 +310,7 @@ class MissionControlViewProvider implements vscode.WebviewViewProvider, IProvide
       this._autoMemorySubscriber = new AutoMemorySubscriber(
         enhancedMemory,
         () => {
+          if (!this._backendClient.isAuthenticatedSync()) return null;
           const client = new BackendLLMClient(this._backendClient);
           return {
             complete: async (prompt: string) => {
