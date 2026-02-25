@@ -663,18 +663,20 @@ export async function handleResolveDecisionPoint(
             const startPostScaffoldOrchestration = coreModule.startPostScaffoldOrchestration;
 
             if (typeof startPostScaffoldOrchestration === 'function') {
-              // Build LLM client adapter for feature generation
+              // Build LLM client adapter only when authenticated
               let featureLLMClient: any = undefined;
               try {
                 const { BackendLLMClient } = await import('../backendLLMClient');
                 const approvalBackend = ctx.getBackendClient();
-                const featureClient = new BackendLLMClient(approvalBackend);
-                featureLLMClient = {
-                  async createMessage(params: any) {
-                    return featureClient.createMessage(params);
-                  },
-                };
-                console.log('[handleResolveDecisionPoint] Feature LLM client created successfully (backend)');
+                if (await approvalBackend.isAuthenticated()) {
+                  const featureClient = new BackendLLMClient(approvalBackend);
+                  featureLLMClient = {
+                    async createMessage(params: any) {
+                      return featureClient.createMessage(params);
+                    },
+                  };
+                  console.log('[handleResolveDecisionPoint] Feature LLM client created successfully (backend)');
+                }
               } catch (llmError) {
                 console.warn('[handleResolveDecisionPoint] Could not create LLM client for feature generation:', llmError);
               }

@@ -519,17 +519,19 @@ export async function handlePreflightProceed(
           || 'minimal-light';
         console.log(`${LOG_PREFIX} Design pack ID: ${designPackIdForPost}`);
 
-        // Build LLM client using core's factory
+        // Build LLM client only when authenticated
         const featureBackend = ctx.getBackendClient();
         let featureLLMClient: any = undefined;
         try {
-          const featureClient = new BackendLLMClient(featureBackend);
-          featureLLMClient = {
-            async createMessage(params: any) {
-              return featureClient.createMessage(params);
-            },
-          };
-          console.log(`${LOG_PREFIX} Feature LLM client created successfully (backend)`);
+          if (await featureBackend.isAuthenticated()) {
+            const featureClient = new BackendLLMClient(featureBackend);
+            featureLLMClient = {
+              async createMessage(params: any) {
+                return featureClient.createMessage(params);
+              },
+            };
+            console.log(`${LOG_PREFIX} Feature LLM client created successfully (backend)`);
+          }
         } catch (llmError) {
           console.warn(`${LOG_PREFIX} Could not create LLM client:`, llmError);
         }

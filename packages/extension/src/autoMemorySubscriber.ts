@@ -33,7 +33,7 @@ export class AutoMemorySubscriber {
 
   constructor(
     private readonly memoryService: FsEnhancedMemoryService,
-    private readonly llmClientFactory: () => AutoMemoryLLMClient | null,
+    private readonly llmClientFactory: () => AutoMemoryLLMClient | null | Promise<AutoMemoryLLMClient | null>,
   ) {
     this.state = createExtractionState();
   }
@@ -61,7 +61,7 @@ export class AutoMemorySubscriber {
       const doc = await this.memoryService.loadDocument();
       if (shouldSkipDueToFactCount(doc.facts.length)) return;
 
-      const llmClient = this.llmClientFactory();
+      const llmClient = await this.llmClientFactory();
       if (!llmClient) return;
       const prompt = buildAutoMemoryPrompt(trigger, doc.facts);
       const response = await llmClient.complete(prompt);

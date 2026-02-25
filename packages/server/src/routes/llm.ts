@@ -7,11 +7,16 @@ import { logUsage, reserveCredits, settleCredits } from '../services/usageTracke
 export async function llmRoutes(app: FastifyInstance) {
   const server = app.withTypeProvider<ZodTypeProvider>();
 
+  let cachedClient: Anthropic | null = null;
+
   function getClient(): Anthropic {
     if (!app.config.anthropicApiKey) {
       throw new Error('ANTHROPIC_API_KEY not configured');
     }
-    return new Anthropic({ apiKey: app.config.anthropicApiKey });
+    if (!cachedClient) {
+      cachedClient = new Anthropic({ apiKey: app.config.anthropicApiKey });
+    }
+    return cachedClient;
   }
 
   function estimateReservation(body: { messages: unknown; system?: string; max_tokens: number }): number {
