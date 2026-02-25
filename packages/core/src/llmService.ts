@@ -980,10 +980,12 @@ Step to implement: ${stepText}`;
         },
       });
       usage = response.usage;
-      fullContent = response.content
-        .filter(b => b.type === 'text')
-        .map(b => b.text!)
-        .join('');
+      if (!fullContent) {
+        fullContent = response.content
+          .filter(b => b.type === 'text')
+          .map(b => b.text!)
+          .join('');
+      }
     } else {
       const response = await client.createMessage({
         model,

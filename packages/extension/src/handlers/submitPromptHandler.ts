@@ -245,11 +245,15 @@ export async function handleSubmitPrompt(
       isEmptyWorkspace,
     });
 
-    // Build routing context — LLM-first architecture
+    // Build routing context — only attach LLM client when authenticated
     const routingCtx: RoutingContext = { workspace: wsState };
-    const resolvedModel = resolveModel(modelId || 'sonnet-4.5');
-    routingCtx.llmClient = new BackendLLMClient(ctx.getBackendClient(), resolvedModel);
-    routingCtx.modelId = resolvedModel;
+    const backendClient = ctx.getBackendClient();
+    const isAuthed = await backendClient.isAuthenticated();
+    if (isAuthed) {
+      const resolvedModel = resolveModel(modelId || 'sonnet-4.5');
+      routingCtx.llmClient = new BackendLLMClient(backendClient, resolvedModel);
+      routingCtx.modelId = resolvedModel;
+    }
 
     const routingResult: IntentRoutingResult = await routeIntent(text, routingCtx);
 
