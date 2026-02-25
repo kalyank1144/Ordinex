@@ -280,9 +280,10 @@ export async function generateAndEmitPlan(
 ): Promise<void> {
   const LOG_PREFIX = '[Ordinex:PlanEnhancement]';
 
-  // Get API key
-  const apiKey = await ctx._context.secrets.get('ordinex.apiKey');
-  if (!apiKey) {
+  // Check auth
+  const backendClient = ctx.getBackendClient();
+  const isAuthed = await backendClient.isAuthenticated();
+  if (!isAuthed) {
     await ctx.emitEvent({
       event_id: ctx.generateId(),
       task_id: taskId,
@@ -291,8 +292,8 @@ export async function generateAndEmitPlan(
       mode: ctx.currentMode,
       stage: ctx.currentStage,
       payload: {
-        error: 'No API key configured',
-        suggestion: 'Run command "Ordinex: Set API Key" to configure your Anthropic API key',
+        error: 'Not signed in',
+        suggestion: 'Run command "Ordinex: Sign In" to authenticate with your Ordinex account',
       },
       evidence_ids: [],
       parent_event_id: null,
@@ -301,11 +302,11 @@ export async function generateAndEmitPlan(
     await ctx.sendEventsToWebview(webview, taskId);
 
     vscode.window.showErrorMessage(
-      'Ordinex API key not found. Please run "Ordinex: Set API Key" command.',
-      'Set API Key',
+      'Not signed in to Ordinex. Please sign in to continue.',
+      'Sign In',
     ).then(action => {
-      if (action === 'Set API Key') {
-        vscode.commands.executeCommand('ordinex.setApiKey');
+      if (action === 'Sign In') {
+        vscode.commands.executeCommand('ordinex.signIn');
       }
     });
 
@@ -365,14 +366,17 @@ export async function generateAndEmitPlan(
 
   console.log(`${LOG_PREFIX} Step 3: Generating LLM plan...`);
 
+  const { BackendLLMClient } = await import('../backendLLMClient');
+  const planLlmClient = new BackendLLMClient(backendClient, modelId);
+
   const plan = await generateLLMPlan(
     finalPrompt,
     taskId,
     eventBus,
     {
-      apiKey,
       model: modelId,
       maxTokens: 8192,
+      llmClient: planLlmClient,
     },
     workspaceRoot,
     openFiles,
@@ -1039,10 +1043,10 @@ export async function handleRefinePlan(
   }
 
   try {
-    // Get API key
-    const apiKey = await ctx._context.secrets.get('ordinex.apiKey');
-    if (!apiKey) {
-      vscode.window.showErrorMessage('API key not configured');
+    const refineBackend = ctx.getBackendClient();
+    const refineAuthed = await refineBackend.isAuthenticated();
+    if (!refineAuthed) {
+      vscode.window.showErrorMessage('Not signed in to Ordinex. Please sign in to continue.');
       return;
     }
 
@@ -1125,6 +1129,9 @@ export async function handleRefinePlan(
         progress.report({ message: 'Calling LLM to refine plan...' });
 
         // Call refinePlan
+        const { BackendLLMClient: RefineBackendLLMClient } = await import('../backendLLMClient');
+        const refineLlmClient = new RefineBackendLLMClient(refineBackend, FAST_MODEL);
+
         const revisedPlan = await refinePlan(
           originalPlan,
           originalPrompt,
@@ -1132,9 +1139,9 @@ export async function handleRefinePlan(
           task_id,
           eventBus,
           {
-            apiKey,
             model: FAST_MODEL,
             maxTokens: 8192,
+            llmClient: refineLlmClient,
           },
           workspaceRoot,
           openFiles,

@@ -41,7 +41,7 @@ import {
 
 import { VSCodeWorkspaceWriter } from '../vscodeWorkspaceWriter';
 import { VSCodeCheckpointManager } from '../vscodeCheckpointManager';
-import { AnthropicLLMClient } from '../anthropicLLMClient';
+import { BackendLLMClient } from '../backendLLMClient';
 import { VSCodeToolProvider } from '../vsCodeToolProvider';
 
 // ---------------------------------------------------------------------------
@@ -171,11 +171,14 @@ export async function handleExecutePlan(
       console.log(`[handleExecutePlan] Using scaffoldProjectPath as workspace: ${workspaceRoot}`);
     }
 
-    // Get API key for LLM calls
-    const apiKey = await ctx._context.secrets.get('ordinex.apiKey');
-    if (!apiKey) {
-      vscode.window.showErrorMessage('Ordinex API key not configured. Please run "Ordinex: Set API Key" command.');
-      throw new Error('No API key configured');
+    // Check auth
+    const backendClient = ctx.getBackendClient();
+    const isAuthed = await backendClient.isAuthenticated();
+    if (!isAuthed) {
+      vscode.window.showErrorMessage('Not signed in to Ordinex. Please sign in to continue.', 'Sign In').then(action => {
+        if (action === 'Sign In') vscode.commands.executeCommand('ordinex.signIn');
+      });
+      throw new Error('Not signed in');
     }
 
     // Get model ID from intent event or use EDIT_MODEL (Sonnet 4) for mission execution
@@ -269,10 +272,11 @@ export async function handleExecutePlan(
 
     // Prepare LLM config for edit stage
     // CRITICAL: Use 16384 tokens to avoid truncation on complex file generation
+    const missionLlmClient = new BackendLLMClient(backendClient, modelId);
     const llmConfig = {
-      apiKey,
       model: modelId,
-      maxTokens: 16384  // Increased from 4096 to handle complex files like auth.ts
+      maxTokens: 16384,
+      llmClient: missionLlmClient,
     };
 
     // PHASE 6: Create workspace adapters for real file operations
@@ -280,7 +284,7 @@ export async function handleExecutePlan(
     const workspaceCheckpointMgr = new VSCodeCheckpointManager(workspaceRoot);
 
     // Create LLM client and tool provider for AgenticLoop (required — no fallback)
-    const llmClient = new AnthropicLLMClient(apiKey, modelId);
+    const llmClient = new BackendLLMClient(backendClient, modelId);
     const toolProvider = new VSCodeToolProvider(workspaceRoot);
     toolProvider.setWebview(webview);
 
@@ -912,12 +916,9 @@ export async function handleStartAutonomy(
       workspaceRoot
     );
 
-    // Create LLM client for repair (if API key available)
-    const apiKey = await ctx._context.secrets.get('ordinex.apiKey');
+    const repairBackend = ctx.getBackendClient();
     let repairLlmClient = null;
-    if (apiKey) {
-      try { repairLlmClient = new AnthropicLLMClient(apiKey); } catch { /* no-op */ }
-    }
+    try { repairLlmClient = new BackendLLMClient(repairBackend); } catch { /* no-op */ }
 
     // Provide readFile closure for LLM-powered repair (path-traversal guarded)
     const readFile = async (filePath: string): Promise<string | null> => {

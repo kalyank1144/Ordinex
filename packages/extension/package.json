@@ -40,12 +40,24 @@
         "title": "Ordinex: Open Panel"
       },
       {
+        "command": "ordinex.signIn",
+        "title": "Ordinex: Sign In"
+      },
+      {
+        "command": "ordinex.signOut",
+        "title": "Ordinex: Sign Out"
+      },
+      {
+        "command": "ordinex.setToken",
+        "title": "Ordinex: Set Auth Token (Dev)"
+      },
+      {
         "command": "ordinex.setApiKey",
-        "title": "Ordinex: Set API Key"
+        "title": "Ordinex: Set API Key (Legacy)"
       },
       {
         "command": "ordinex.clearApiKey",
-        "title": "Ordinex: Clear API Key"
+        "title": "Ordinex: Clear API Key (Legacy)"
       },
       {
         "command": "ordinex.openSettings",

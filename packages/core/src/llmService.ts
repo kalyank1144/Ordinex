@@ -15,9 +15,16 @@ import { validateContextFitsSync, validateContextFits } from './tokenCounter';
 import type { TokenCounter } from './tokenCounter';
 
 export interface LLMConfig {
-  apiKey: string;
+  apiKey?: string;
   model: string;
   maxTokens?: number;
+  llmClient?: import('./agenticLoop').LLMClient;
+}
+
+function requireLLMTransport(config: LLMConfig): void {
+  if (!config.llmClient && !config.apiKey) {
+    throw new Error('LLMConfig must provide either llmClient or apiKey');
+  }
 }
 
 export interface LLMStreamChunk {
@@ -101,6 +108,7 @@ export class LLMService {
     config: LLMConfig,
     onChunk: (chunk: LLMStreamChunk) => void
   ): Promise<LLMResponse> {
+    requireLLMTransport(config);
     console.log('=== LLMService.streamAnswerWithContext START ===');
     console.log('User question:', userQuestion);
     console.log('System context length:', systemContext.length);
@@ -150,15 +158,9 @@ export class LLMService {
     });
 
     try {
-      // Call Anthropic API with streaming and context
-      const response = await this.callAnthropicStreamWithContext(
-        userQuestion,
-        systemContext,
-        config.apiKey,
-        actualModel,
-        config.maxTokens || 4096,
-        onChunk
-      );
+      const response = config.llmClient
+        ? await this.callLLMClientStreamWithContext(config.llmClient, userQuestion, systemContext, actualModel, config.maxTokens || 4096, onChunk)
+        : await this.callAnthropicStreamWithContext(userQuestion, systemContext, config.apiKey!, actualModel, config.maxTokens || 4096, onChunk);
 
       // Emit tool_end with success
       await this.eventBus.publish({
@@ -211,6 +213,7 @@ export class LLMService {
     config: LLMConfig,
     onChunk: (chunk: LLMStreamChunk) => void
   ): Promise<LLMResponse> {
+    requireLLMTransport(config);
     console.log('=== LLMService.streamAnswer START ===');
     console.log('User question:', userQuestion);
     console.log('Config:', { model: config.model, maxTokens: config.maxTokens, hasApiKey: !!config.apiKey });
@@ -259,14 +262,9 @@ export class LLMService {
     });
 
     try {
-      // Call Anthropic API with streaming
-      const response = await this.callAnthropicStream(
-        userQuestion,
-        config.apiKey,
-        actualModel,
-        config.maxTokens || 4096,
-        onChunk
-      );
+      const response = config.llmClient
+        ? await this.callLLMClientStreamWithContext(config.llmClient, userQuestion, '', actualModel, config.maxTokens || 4096, onChunk)
+        : await this.callAnthropicStream(userQuestion, config.apiKey!, actualModel, config.maxTokens || 4096, onChunk);
 
       // Emit tool_end with success
       await this.eventBus.publish({
@@ -321,6 +319,7 @@ export class LLMService {
     onChunk: (chunk: LLMStreamChunk) => void,
     tokenCounter?: TokenCounter,
   ): Promise<LLMResponse> {
+    requireLLMTransport(config);
     const userSelectedModel = config.model;
     const actualModel = resolveModel(userSelectedModel);
     const didFallback = didModelFallback(userSelectedModel);
@@ -393,14 +392,9 @@ export class LLMService {
     });
 
     try {
-      const response = await this.callAnthropicStreamWithHistory(
-        messages,
-        systemContext,
-        config.apiKey,
-        actualModel,
-        config.maxTokens || 4096,
-        onChunk
-      );
+      const response = config.llmClient
+        ? await this.callLLMClientStreamWithHistory(config.llmClient, messages, systemContext, actualModel, config.maxTokens || 4096, onChunk)
+        : await this.callAnthropicStreamWithHistory(messages, systemContext, config.apiKey!, actualModel, config.maxTokens || 4096, onChunk);
 
       await this.eventBus.publish({
         event_id: this.generateId(),
@@ -745,6 +739,7 @@ export class LLMService {
     }>;
   }> {
     const { stepText, repoContextSummary, files, config } = params;
+    requireLLMTransport(config);
 
     const userSelectedModel = config.model;
     const actualModel = resolveModel(userSelectedModel);
@@ -801,14 +796,9 @@ Generate the necessary file changes to complete this step. Output ONLY the JSON 
     });
 
     try {
-      // Call Anthropic API (non-streaming for structured output)
-      const response = await this.callAnthropicForEdit(
-        userPrompt,
-        systemPrompt,
-        config.apiKey,
-        actualModel,
-        config.maxTokens || 4096
-      );
+      const response = config.llmClient
+        ? await this.callLLMClientForEdit(config.llmClient, userPrompt, systemPrompt, actualModel, config.maxTokens || 4096)
+        : await this.callAnthropicForEdit(userPrompt, systemPrompt, config.apiKey!, actualModel, config.maxTokens || 4096);
 
       // Parse JSON response with robust extraction
       let patches;
@@ -832,13 +822,9 @@ CRITICAL: Ensure all string content is properly escaped. Use double quotes for J
 
 Step to implement: ${stepText}`;
 
-        const retryResponse = await this.callAnthropicForEdit(
-          retryPrompt,
-          systemPrompt,
-          config.apiKey,
-          actualModel,
-          config.maxTokens || 8192 // Increase tokens for retry
-        );
+        const retryResponse = config.llmClient
+          ? await this.callLLMClientForEdit(config.llmClient, retryPrompt, systemPrompt, actualModel, config.maxTokens || 8192)
+          : await this.callAnthropicForEdit(retryPrompt, systemPrompt, config.apiKey!, actualModel, config.maxTokens || 8192);
 
         try {
           patches = this.extractPatchesFromResponse(retryResponse.content);
@@ -969,6 +955,129 @@ Step to implement: ${stepText}`;
     }
 
     throw new Error('No patches array found in response');
+  }
+
+  private async callLLMClientStreamWithHistory(
+    client: import('./agenticLoop').LLMClient,
+    messages: ConversationMessage[],
+    systemContext: string,
+    model: string,
+    maxTokens: number,
+    onChunk: (chunk: LLMStreamChunk) => void,
+  ): Promise<LLMResponse> {
+    let fullContent = '';
+    let usage: { input_tokens: number; output_tokens: number } | undefined;
+
+    if (client.createMessageStream) {
+      const deltas: string[] = [];
+      const response = await client.createMessageStream({
+        model,
+        max_tokens: maxTokens,
+        system: systemContext || undefined,
+        messages,
+        onDelta: (delta: string) => {
+          fullContent += delta;
+          deltas.push(delta);
+          onChunk({ delta, done: false });
+        },
+      });
+      usage = response.usage;
+      if (!fullContent) {
+        fullContent = response.content
+          .filter(b => b.type === 'text')
+          .map(b => b.text!)
+          .join('');
+      }
+
+      for (const delta of deltas) {
+        await this.eventBus.publish({
+          event_id: this.generateId(),
+          task_id: this.taskId,
+          timestamp: new Date().toISOString(),
+          type: 'stream_delta',
+          mode: this.mode,
+          stage: this.stage,
+          payload: { delta },
+          evidence_ids: [],
+          parent_event_id: null,
+        });
+      }
+    } else {
+      const response = await client.createMessage({
+        model,
+        max_tokens: maxTokens,
+        system: systemContext || undefined,
+        messages,
+      });
+      fullContent = response.content
+        .filter(b => b.type === 'text')
+        .map(b => b.text!)
+        .join('');
+      usage = response.usage;
+
+      await this.eventBus.publish({
+        event_id: this.generateId(),
+        task_id: this.taskId,
+        timestamp: new Date().toISOString(),
+        type: 'stream_delta',
+        mode: this.mode,
+        stage: this.stage,
+        payload: { delta: fullContent },
+        evidence_ids: [],
+        parent_event_id: null,
+      });
+
+      onChunk({ delta: fullContent, done: false });
+    }
+
+    await this.eventBus.publish({
+      event_id: this.generateId(),
+      task_id: this.taskId,
+      timestamp: new Date().toISOString(),
+      type: 'stream_complete',
+      mode: this.mode,
+      stage: this.stage,
+      payload: { total_tokens: usage ? usage.input_tokens + usage.output_tokens : 0 },
+      evidence_ids: [],
+      parent_event_id: null,
+    });
+
+    onChunk({ delta: '', done: true });
+    return { content: fullContent, model, usage };
+  }
+
+  private async callLLMClientStreamWithContext(
+    client: import('./agenticLoop').LLMClient,
+    userQuestion: string,
+    systemContext: string,
+    model: string,
+    maxTokens: number,
+    onChunk: (chunk: LLMStreamChunk) => void,
+  ): Promise<LLMResponse> {
+    const messages: ConversationMessage[] = [{ role: 'user', content: userQuestion }];
+    return this.callLLMClientStreamWithHistory(client, messages, systemContext, model, maxTokens, onChunk);
+  }
+
+  private async callLLMClientForEdit(
+    client: import('./agenticLoop').LLMClient,
+    userPrompt: string,
+    systemPrompt: string,
+    model: string,
+    maxTokens: number,
+  ): Promise<LLMResponse> {
+    const response = await client.createMessage({
+      model,
+      max_tokens: maxTokens,
+      system: systemPrompt,
+      messages: [{ role: 'user', content: userPrompt }],
+    });
+
+    const content = response.content
+      .filter(b => b.type === 'text')
+      .map(b => b.text!)
+      .join('');
+
+    return { content, model, usage: response.usage };
   }
 
   private generateId(): string {

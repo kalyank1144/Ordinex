@@ -22,7 +22,7 @@ import {
   resolveModel,
 } from 'core';
 import type { IntentRoutingResult, WorkspaceState, RoutingContext } from 'core';
-import { AnthropicLLMClient } from '../anthropicLLMClient';
+import { BackendLLMClient } from '../backendLLMClient';
 
 import { handleAgentMode } from './agentHandler';
 import { handlePlanMode } from './planHandler';
@@ -245,12 +245,13 @@ export async function handleSubmitPrompt(
       isEmptyWorkspace,
     });
 
-    // Build routing context — LLM-first architecture
+    // Build routing context — only attach LLM client when authenticated
     const routingCtx: RoutingContext = { workspace: wsState };
-    const apiKey = await ctx._context.secrets.get('ordinex.apiKey');
-    if (apiKey) {
+    const backendClient = ctx.getBackendClient();
+    const isAuthed = await backendClient.isAuthenticated();
+    if (isAuthed) {
       const resolvedModel = resolveModel(modelId || 'sonnet-4.5');
-      routingCtx.llmClient = new AnthropicLLMClient(apiKey, resolvedModel);
+      routingCtx.llmClient = new BackendLLMClient(backendClient, resolvedModel);
       routingCtx.modelId = resolvedModel;
     }
 

@@ -53,6 +53,8 @@ import { AutoMemorySubscriber } from './autoMemorySubscriber';
 import { WasmEmbeddingService } from './wasmEmbeddingService';
 import type { EmbeddingStatus } from './wasmEmbeddingService';
 import type { Rule } from 'core';
+import { BackendClient } from './backendClient';
+import { BackendLLMClient } from './backendLLMClient';
 import { loadRules, buildRulesContext, compressSession, buildSessionContext } from 'core';
 
 // R2: Extracted handler imports
@@ -133,6 +135,7 @@ class MissionControlViewProvider implements vscode.WebviewViewProvider, IProvide
   public planModeOriginalPrompt: string | null = null;
   private _memoryService: FsMemoryService | null = null;
   private _projectMemoryManager: ProjectMemoryManager | null = null;
+  private _backendClient: BackendClient;
   public recentEventsWindow: Event[] = [];
   private _toolRegistryService: FsToolRegistryService | null = null;
 
@@ -158,6 +161,8 @@ class MissionControlViewProvider implements vscode.WebviewViewProvider, IProvide
     public readonly _extensionUri: vscode.Uri,
     public readonly _context: vscode.ExtensionContext,
   ) {
+    this._backendClient = new BackendClient(_context);
+
     // Initialize event store
     const storePath = path.join(_context.globalStorageUri.fsPath, 'events.jsonl');
     this.eventStore = new EventStore(storePath);
@@ -304,12 +309,9 @@ class MissionControlViewProvider implements vscode.WebviewViewProvider, IProvide
     if (!this._autoMemorySubscriber) {
       this._autoMemorySubscriber = new AutoMemorySubscriber(
         enhancedMemory,
-        () => {
-          // LLM client factory — returns null if no API key available
-          const apiKey = this._context.secrets.get('ordinex.apiKey');
-          if (!apiKey) return null;
-          const { AnthropicLLMClient } = require('./anthropicLLMClient');
-          const client = new AnthropicLLMClient(apiKey as any);
+        async () => {
+          if (!(await this._backendClient.isAuthenticated())) return null;
+          const client = new BackendLLMClient(this._backendClient);
           return {
             complete: async (prompt: string) => {
               const response = await client.createMessage({
@@ -318,7 +320,7 @@ class MissionControlViewProvider implements vscode.WebviewViewProvider, IProvide
                 system: 'You extract project learnings as JSON.',
                 messages: [{ role: 'user', content: prompt }],
               });
-              const textBlock = response.content.find((b: any) => b.type === 'text');
+              const textBlock = response.content.find((b) => b.type === 'text') as { type: 'text'; text: string } | undefined;
               return textBlock?.text || '';
             },
           };
@@ -576,6 +578,10 @@ class MissionControlViewProvider implements vscode.WebviewViewProvider, IProvide
     return this._fsUndoService;
   }
 
+  public getBackendClient(): BackendClient {
+    return this._backendClient;
+  }
+
   /**
    * Step 48: Capture file content for undo on diff_proposed / diff_applied events.
    * Called from emitEvent() after event is stored.
@@ -659,32 +665,18 @@ class MissionControlViewProvider implements vscode.WebviewViewProvider, IProvide
   }
 
   // ─── Token Counter (Task #5) ─────────────────────────────────────────
-  private _tokenCounter: import('./anthropicTokenCounter').AnthropicTokenCounter | null = null;
+  private _tokenCounter: import('core/src/tokenCounter').TokenCounter | null = null;
 
   public getTokenCounter(): import('core/src/tokenCounter').TokenCounter | null {
+    if (!this._tokenCounter) {
+      const { CharacterTokenCounter } = require('core');
+      this._tokenCounter = new CharacterTokenCounter();
+    }
     return this._tokenCounter;
   }
 
-  /** Reset the token counter (e.g. when API key changes). */
   public resetTokenCounter(): void {
     this._tokenCounter = null;
-  }
-
-  /**
-   * Lazily create or re-create the AnthropicTokenCounter when an API key
-   * becomes available. Called before ANSWER/MISSION mode flows.
-   */
-  private async ensureTokenCounter(): Promise<void> {
-    if (this._tokenCounter) return;
-    const apiKey = await this._context.secrets.get('ordinex.apiKey');
-    if (apiKey) {
-      try {
-        const { AnthropicTokenCounter } = require('./anthropicTokenCounter');
-        this._tokenCounter = new AnthropicTokenCounter(apiKey);
-      } catch {
-        // SDK not available — stay null, CharacterTokenCounter will be used
-      }
-    }
   }
 
   /** Step 48: Handle undo action from webview or VS Code command. */
@@ -1572,7 +1564,6 @@ class MissionControlViewProvider implements vscode.WebviewViewProvider, IProvide
 
     switch (message.type) {
       case 'ordinex:submitPrompt':
-        await this.ensureTokenCounter();
         await handleSubmitPrompt(ctx, message, webview);
         break;
 
@@ -2240,45 +2231,80 @@ export function activate(context: vscode.ExtensionContext) {
     )
   );
 
-  // Register API Key commands
+  // Register Auth commands
+  context.subscriptions.push(
+    vscode.commands.registerCommand('ordinex.signIn', async () => {
+      const backendClient = provider.getBackendClient();
+      const loginUrl = backendClient.getLoginUrl();
+      vscode.env.openExternal(vscode.Uri.parse(loginUrl));
+    })
+  );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand('ordinex.signOut', async () => {
+      const confirm = await vscode.window.showWarningMessage(
+        'Are you sure you want to sign out of Ordinex?',
+        'Sign Out',
+        'Cancel'
+      );
+
+      if (confirm === 'Sign Out') {
+        const backendClient = provider.getBackendClient();
+        await backendClient.logout();
+        vscode.window.showInformationMessage('Signed out of Ordinex');
+      }
+    })
+  );
+
+  // URI handler for vscode://ordinex.auth?token=JWT callback
+  context.subscriptions.push(
+    vscode.window.registerUriHandler({
+      handleUri: async (uri: vscode.Uri) => {
+        const token = new URLSearchParams(uri.query).get('token');
+        if (token) {
+          const backendClient = provider.getBackendClient();
+          await backendClient.setToken(token);
+          vscode.window.showInformationMessage('Signed in to Ordinex successfully');
+        }
+      },
+    })
+  );
+
+  // Manual token input for development/testing
+  context.subscriptions.push(
+    vscode.commands.registerCommand('ordinex.setToken', async () => {
+      const token = await vscode.window.showInputBox({
+        prompt: 'Paste your JWT token (from server signup/login response)',
+        password: true,
+        placeHolder: 'eyJhbGciOiJIUzI1NiJ9...',
+      });
+      if (token?.trim()) {
+        const backendClient = provider.getBackendClient();
+        await backendClient.setToken(token.trim());
+        const isValid = await backendClient.isAuthenticated();
+        if (isValid) {
+          vscode.window.showInformationMessage('Signed in to Ordinex successfully');
+        } else {
+          await backendClient.clearToken();
+          vscode.window.showErrorMessage('Invalid token — could not authenticate with backend. Is the server running?');
+        }
+      }
+    })
+  );
+
+  // Legacy API key commands redirect to new auth flow
   context.subscriptions.push(
     vscode.commands.registerCommand('ordinex.setApiKey', async () => {
-      const apiKey = await vscode.window.showInputBox({
-        prompt: 'Enter your Anthropic API key',
-        password: true,
-        placeHolder: 'sk-ant-...',
-        validateInput: (value) => {
-          if (!value || value.trim().length === 0) {
-            return 'API key cannot be empty';
-          }
-          if (!value.startsWith('sk-ant-')) {
-            return 'Invalid Anthropic API key format (should start with sk-ant-)';
-          }
-          return null;
-        }
-      });
-
-      if (apiKey) {
-        await context.secrets.store('ordinex.apiKey', apiKey);
-        // Reset token counter so it picks up the new key on next prompt
-        provider.resetTokenCounter();
-        vscode.window.showInformationMessage('Ordinex API key saved successfully');
-      }
+      vscode.window.showInformationMessage(
+        'API key input has been replaced by Sign In. Use "Ordinex: Sign In" instead.',
+      );
+      vscode.commands.executeCommand('ordinex.signIn');
     })
   );
 
   context.subscriptions.push(
     vscode.commands.registerCommand('ordinex.clearApiKey', async () => {
-      const confirm = await vscode.window.showWarningMessage(
-        'Are you sure you want to clear the stored API key?',
-        'Clear',
-        'Cancel'
-      );
-
-      if (confirm === 'Clear') {
-        await context.secrets.delete('ordinex.apiKey');
-        vscode.window.showInformationMessage('Ordinex API key cleared');
-      }
+      vscode.commands.executeCommand('ordinex.signOut');
     })
   );
 

@@ -59,26 +59,26 @@ export async function handleSettingsMessage(
     case 'ordinex:settings:saveApiKey': {
       try {
         const key = message.apiKey?.trim();
-        if (!key || !key.startsWith('sk-ant-')) {
-          webview.postMessage({ type: 'ordinex:settings:saveResult', setting: 'API Key', success: false, error: 'Invalid key format' });
+        if (!key) {
+          webview.postMessage({ type: 'ordinex:settings:saveResult', setting: 'Auth Token', success: false, error: 'Token cannot be empty' });
           return;
         }
-        await ctx._context.secrets.store('ordinex.apiKey', key);
-        emitSettingsChangedEvent(ctx, 'apiKey', 'updated');
-        webview.postMessage({ type: 'ordinex:settings:saveResult', setting: 'API Key', success: true });
+        await ctx.getBackendClient().setToken(key);
+        emitSettingsChangedEvent(ctx, 'authToken', 'updated');
+        webview.postMessage({ type: 'ordinex:settings:saveResult', setting: 'Auth Token', success: true });
       } catch (err: any) {
-        webview.postMessage({ type: 'ordinex:settings:saveResult', setting: 'API Key', success: false, error: err.message });
+        webview.postMessage({ type: 'ordinex:settings:saveResult', setting: 'Auth Token', success: false, error: err.message });
       }
       break;
     }
 
     case 'ordinex:settings:clearApiKey': {
       try {
-        await ctx._context.secrets.delete('ordinex.apiKey');
-        emitSettingsChangedEvent(ctx, 'apiKey', 'cleared');
+        await ctx.getBackendClient().clearToken();
+        emitSettingsChangedEvent(ctx, 'authToken', 'cleared');
         await sendCurrentSettings(ctx, webview);
       } catch (err: any) {
-        webview.postMessage({ type: 'ordinex:settings:saveResult', setting: 'API Key', success: false, error: err.message });
+        webview.postMessage({ type: 'ordinex:settings:saveResult', setting: 'Auth Token', success: false, error: err.message });
       }
       break;
     }
@@ -138,10 +138,10 @@ export async function sendCurrentSettings(
   let apiKeyConfigured = false;
   let apiKeyPreview = '';
   try {
-    const storedKey = await ctx._context.secrets.get('ordinex.apiKey');
-    if (storedKey) {
+    const token = await ctx.getBackendClient().getToken();
+    if (token) {
       apiKeyConfigured = true;
-      apiKeyPreview = 'sk-ant-...' + storedKey.slice(-4);
+      apiKeyPreview = 'Signed in (JWT)';
     }
   } catch { /* ignore */ }
 
